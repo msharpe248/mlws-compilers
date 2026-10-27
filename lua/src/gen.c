@@ -1325,10 +1325,12 @@ static Val gen_arith(FS *fs, int op, Val a, Val b, int dst, const char *da, cons
     bool fpref = ta == TY_FLT || tb == TY_FLT || op == A_DIV || op == A_POW;
     if (is_bitwise(op))
         fpref = false;
+    /* past a check of a slot's tag, the slot has that type on this path */
+    bool same = a.k == V_SLOT && b.k == V_SLOT && a.slot == b.slot;
     if (!fpref) {
         if (ta != TY_INT)
             branch(fs, slow, "bnz %s", VR(&a));
-        if (tb != TY_INT)
+        if (tb != TY_INT && !same)
             branch(fs, slow, "bnz %s", VR(&b));
         if ((op == A_IDIV || op == A_MOD) && b.k != V_INT)
             branch(fs, gen, "bz %s", VI(&b));     /* rt$arith reports it */
@@ -1338,7 +1340,7 @@ static Val gen_arith(FS *fs, int op, Val a, Val b, int dst, const char *da, cons
         const char *y = tb == TY_ANY ? VF(&b) : as_float(fs, &b, "F29");
         if (ta == TY_ANY)
             branch(fs, slow, "bne.r %s, " FLT, VR(&a));
-        if (tb == TY_ANY)
+        if (tb == TY_ANY && !same)
             branch(fs, slow, "bne.r %s, " FLT, VR(&b));
         flt_op(fs, op, d, x, y);
     }
@@ -1349,7 +1351,8 @@ static Val gen_arith(FS *fs, int op, Val a, Val b, int dst, const char *da, cons
             /* two floats, first: the common case that is not two integers */
             int mixed = new_label(fs);
             branch(fs, mixed, "bne.r %s, " FLT, VR(&a));
-            branch(fs, mixed, "bne.r %s, " FLT, VR(&b));
+            if (!same)
+                branch(fs, mixed, "bne.r %s, " FLT, VR(&b));
             flt_op(fs, op, d, VF(&a), VF(&b));
             ty_set(fs, d, TY_ANY);
             jump(fs, cont);
@@ -3450,7 +3453,69 @@ static void each_reg(Buf *b, int map[4][32], bool used[4][32]) {
     }
 }
 
+/* Jumps to the next instruction, and a branch over a jump, which is
+   turned into the opposite branch. */
+static bool is_label(const char *t, const char *name) {
+    size_t n = strlen(name);
+    return strncmp(t, name, n) == 0 && t[n] == ':' && t[n + 1] == 0;
+}
+
+static bool label_follows(Buf *b, int i, const char *name) {
+    for (int j = i + 1; j < b->n && b->v[j].text[0] == '.'; j++)
+        if (is_label(b->v[j].text, name))
+            return true;
+    return false;
+}
+
+static const char *opposite(const char *t, size_t *len) {
+    static const char *pairs[][2] = {{"bz", "bnz"}, {"beq", "bne"}, {"blt", "bge"}, {"bgt", "ble"}};
+    const char *m = t + 4, *e = m;
+    while (*e && *e != ' ' && *e != '.')
+        e++;
+    *len = (size_t)(e - m);
+    bool ordered = !(m[0] == 'b' && (m[1] == 'z' || m[1] == 'n' || (m[1] == 'e' && m[2] == 'q')));
+    if (ordered && (strchr(e, '.') != strrchr(t, '.') || strstr(t, " F") || strstr(t, ", F") ||
+                    strstr(t, ".f")))
+        return NULL;   /* a float order (NaN) or a memory operand: leave it */
+    for (int k = 0; k < 4; k++)
+        for (int s = 0; s < 2; s++)
+            if (strlen(pairs[k][s]) == *len && strncmp(m, pairs[k][s], *len) == 0)
+                return pairs[k][1 - s];
+    return NULL;
+}
+
+static void peephole(Buf *b) {
+    int o = 0;
+    for (int i = 0; i < b->n; i++) {
+        char *t = b->v[i].text;
+        if (strncmp(t, "    jmp .L", 10) == 0 && label_follows(b, i, t + 8)) {
+            free(t);
+            continue;
+        }
+        if (strncmp(t, "    b", 5) == 0 && i + 1 < b->n && strncmp(b->v[i + 1].text, "    jmp .L", 10) == 0) {
+            char *target = strrchr(t, ' ');
+            size_t len;
+            const char *opp = target && target[-1] == ',' ? opposite(t, &len) : NULL;
+            if (opp && label_follows(b, i + 1, target + 1)) {
+                char out[4096];
+                *target = 0;   /* "    bxx ops," */
+                snprintf(out, sizeof out, "    %s%s %s", opp, t + 4 + len, b->v[i + 1].text + 8);
+                free(t);
+                free(b->v[i + 1].text);
+                b->v[o] = b->v[i];
+                b->v[o++].text = xstrdup(out);
+                i++;
+                continue;
+            }
+        }
+        b->v[o++] = b->v[i];
+    }
+    b->n = o;
+}
+
 static void pack_scratch(FS *fs) {
+    peephole(&fs->code);
+    peephole(&fs->cold);
     bool used[4][32] = {{false}};
     each_reg(&fs->code, NULL, used);
     each_reg(&fs->cold, NULL, used);
