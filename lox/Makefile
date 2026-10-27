@@ -1,5 +1,6 @@
 CC ?= cc
 CFLAGS ?= -std=c11 -O2 -Wall -Wextra -pedantic
+VERSION := $(shell cat VERSION)
 
 SRCS = src/main.c src/scanner.c src/parser.c src/resolver.c src/codegen.c
 OBJS = $(SRCS:.c=.o) src/runtime_masm.o
@@ -11,6 +12,10 @@ mlws-vm-loxc: $(OBJS)
 
 src/%.o: src/%.c src/lox.h
 	$(CC) $(CFLAGS) -c -o $@ $<
+
+# The version, from VERSION.
+src/main.o src/codegen.o: VERSION
+src/main.o src/codegen.o: CFLAGS += -DVERSION='"$(VERSION)"'
 
 # The runtime, as a C string.
 src/runtime_masm.c: src/runtime.masm

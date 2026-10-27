@@ -35,7 +35,8 @@ static char *read_file(const char *path, size_t *len) {
 static void usage(void) {
     fprintf(stderr, "usage: mlws-vm-luac [-o FILE] [-n NAME] program.lua\n"
                     "  -o FILE   write the assembly to FILE (default: program.masm; '-' for stdout)\n"
-                    "  -n NAME   the chunk name in error messages (default: the path)\n");
+                    "  -n NAME   the chunk name in error messages (default: the path)\n"
+                    "  --version print the version\n");
     exit(2);
 }
 
@@ -46,6 +47,10 @@ int main(int argc, char **argv) {
             out = argv[++i];
         else if (strcmp(argv[i], "-n") == 0 && i + 1 < argc)
             name = argv[++i];
+        else if (strcmp(argv[i], "--version") == 0) {
+            printf("mlws-vm-luac %s\n", VERSION);
+            return 0;
+        }
         else if (argv[i][0] == '-' && argv[i][1])
             usage();
         else if (!path)

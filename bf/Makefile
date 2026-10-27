@@ -1,10 +1,11 @@
 CC ?= cc
 CFLAGS ?= -std=c11 -O2 -Wall -Wextra -pedantic
+VERSION := $(shell cat VERSION)
 
 all: mlws-vm-bfc
 
-mlws-vm-bfc: bfc.c
-	$(CC) $(CFLAGS) -o $@ bfc.c
+mlws-vm-bfc: bfc.c VERSION
+	$(CC) $(CFLAGS) -DVERSION='"$(VERSION)"' -o $@ bfc.c
 
 test: mlws-vm-bfc
 	../tools/run-tests.py bf tests

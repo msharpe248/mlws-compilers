@@ -86,7 +86,8 @@ static char *read_file(const char *path) {
 static void usage(void) {
     fprintf(stderr,
         "usage: mlws-vm-loxc [-o FILE] program.lox\n"
-        "  -o FILE        write the assembly to FILE (default: program.masm; '-' for stdout)\n");
+        "  -o FILE        write the assembly to FILE (default: program.masm; '-' for stdout)\n"
+        "  --version      print the version\n");
     exit(64);
 }
 
@@ -94,6 +95,10 @@ int main(int argc, char **argv) {
     const char *output = NULL;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) output = argv[++i];
+        else if (strcmp(argv[i], "--version") == 0) {
+            printf("mlws-vm-loxc %s\n", VERSION);
+            return 0;
+        }
         else if (argv[i][0] == '-' && argv[i][1]) usage();
         else if (!source_path) source_path = argv[i];
         else usage();

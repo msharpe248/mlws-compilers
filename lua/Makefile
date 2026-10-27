@@ -1,5 +1,6 @@
 CC ?= cc
 CFLAGS ?= -std=c11 -O2 -Wall -Wextra -pedantic
+VERSION := $(shell cat VERSION)
 
 SRCS = src/main.c src/lex.c src/parse.c src/gen.c
 OBJS = $(SRCS:.c=.o) src/embedded.o
@@ -11,6 +12,10 @@ mlws-vm-luac: $(OBJS)
 
 src/%.o: src/%.c src/lua.h
 	$(CC) $(CFLAGS) -c -o $@ $<
+
+# The version, from VERSION.
+src/main.o src/gen.o: VERSION
+src/main.o src/gen.o: CFLAGS += -DVERSION='"$(VERSION)"'
 
 src/gen.o: src/builtins.h
 

@@ -235,4 +235,9 @@ void generate(GenInput *in, FILE *out);
 extern const char *runtime_masm;
 extern const char *prelude_lua;
 
+/* The compiler's version (the Makefile passes lua/VERSION). */
+#ifndef VERSION
+#define VERSION "unknown"
+#endif
+
 #endif

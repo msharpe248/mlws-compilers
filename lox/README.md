@@ -18,6 +18,7 @@ mlws-vm-lox [options] program.lox [args...]
   -k             keep the assembly after running the program
   -o FILE        the assembly file (default: program.masm next to the source);
                  with -S, '-' writes it to standard output
+  --version      print the compiler's version (lox/VERSION)
 ```
 
 `mlws-vm-loxc` is the compiler itself; it only compiles:
@@ -25,6 +26,7 @@ mlws-vm-lox [options] program.lox [args...]
 ```
 mlws-vm-loxc [-o FILE] program.lox
   -o FILE        write the assembly to FILE (default: program.masm; '-' for stdout)
+  --version      print the version
 ```
 
 The assembly is one self-contained file: the program, the runtime

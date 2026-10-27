@@ -33,6 +33,20 @@ The compilers themselves take `-o FILE`, defaulting to `program.masm` next
 to the source: `lox/mlws-vm-loxc program.lox`, `lua/mlws-vm-luac
 program.lua` and `bf/mlws-vm-bfc program.b` only compile.
 
+## Versions
+
+Each compiler has its own version, in its `VERSION` file (`bf/VERSION`,
+`lox/VERSION`, `lua/VERSION`), printed by `--version` (on the compiler and
+its driver) and written into the header of every `.masm` file it produces.
+The compilers are released together as releases of this repository, tagged
+`vX.Y.Z` (the top-level `VERSION`); a compiler's own versions are tagged
+`bf-vX.Y.Z`, `lox-vX.Y.Z` and `lua-vX.Y.Z`. [CHANGELOG.md](CHANGELOG.md)
+says what changed in each.
+
+| Release | bf | Lox | Lua |
+|---|---|---|---|
+| 0.1.0 | 0.1.0 | 0.1.0 | 0.1.0 |
+
 ## Naming
 
 Every executable is named `mlws-vm-LANG` (the driver: compile and run, or

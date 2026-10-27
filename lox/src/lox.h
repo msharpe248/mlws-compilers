@@ -155,4 +155,9 @@ Func *parse_program(void);                       /* the script as a FN_SCRIPT fu
 void resolve_program(Func *script, Globals *g);
 void generate(Func *script, Globals *g, const char *runtime, FILE *out);
 
+/* The compiler's version (the Makefile passes lox/VERSION). */
+#ifndef VERSION
+#define VERSION "unknown"
+#endif
+
 #endif

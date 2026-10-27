@@ -6,12 +6,13 @@
 #     -k           keep the assembly after running it
 #     -o FILE      the assembly file (default: program.masm next to the
 #                  source); with -S, '-' writes it to standard output
+#     --version    print the compiler's version
 #
 # The VM is found as $MLWSVM, then mlwsvm on PATH, then ../mlws-vm/mlwsvm
 # next to this repository.
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 usage() {
-    echo "usage: mlws-vm-lox [-S | -k] [-o FILE] program.lox [args...]" >&2
+    echo "usage: mlws-vm-lox [--version] [-S | -k] [-o FILE] program.lox [args...]" >&2
     exit 64
 }
 
@@ -21,6 +22,7 @@ while [ $# -gt 0 ]; do
         -S) compile_only=1; shift ;;
         -k) keep=1; shift ;;
         -o) [ $# -ge 2 ] || usage; out=$2; shift 2 ;;
+        --version) exec "$here/mlws-vm-loxc" --version ;;
         -h|--help) usage ;;
         -*) usage ;;
         *) prog=$1; shift; break ;;

@@ -18,6 +18,7 @@ mlws-vm-lua [options] program.lua [args...]
   -k             keep the assembly after running the program
   -o FILE        the assembly file (default: program.masm next to the source);
                  with -S, '-' writes it to standard output
+  --version      print the compiler's version (lua/VERSION)
 ```
 
 `mlws-vm-luac` is the compiler itself; it only compiles:
@@ -26,6 +27,7 @@ mlws-vm-lua [options] program.lua [args...]
 mlws-vm-luac [-o FILE] [-n NAME] program.lua
   -o FILE        write the assembly to FILE (default: program.masm; '-' for stdout)
   -n NAME        the chunk name in error messages (default: the path as given)
+  --version      print the version
 ```
 
 The assembly is one self-contained file: the program, the runtime and the

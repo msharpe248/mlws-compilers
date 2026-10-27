@@ -16,6 +16,7 @@ mlws-vm-bf [options] program.b [args...]
   -o FILE        the assembly file (default: program.masm next to the source);
                  with -S, '-' writes it to standard output
   --tape N, --eof MODE, -O0   as for mlws-vm-bfc
+  --version      print the compiler's version (bf/VERSION)
 ```
 
 `mlws-vm-bfc` is the compiler itself; it only compiles:
@@ -26,6 +27,7 @@ mlws-vm-bfc [options] program.b
   --tape N       number of tape cells (default 30000)
   --eof MODE     what ',' does at end of input: unchanged (default), zero, minus1
   -O0            disable optimisations
+  --version      print the version
 ```
 
 The assembly is one self-contained file (no imports), so it can also be

@@ -6,6 +6,7 @@
 #     -k           keep the assembly after running it
 #     -o FILE      the assembly file (default: program.masm next to the
 #                  source); with -S, '-' writes it to standard output
+#     --version    print the compiler's version
 #     --tape N, --eof MODE, -O0
 #                  passed to mlws-vm-bfc (see mlws-vm-bfc --help)
 #
@@ -13,7 +14,7 @@
 # next to this repository.
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 usage() {
-    echo "usage: mlws-vm-bf [-S | -k] [-o FILE] [--tape N] [--eof unchanged|zero|minus1] [-O0] program.b [args...]" >&2
+    echo "usage: mlws-vm-bf [--version] [-S | -k] [-o FILE] [--tape N] [--eof unchanged|zero|minus1] [-O0] program.b [args...]" >&2
     exit 2
 }
 
@@ -25,6 +26,7 @@ while [ $# -gt 0 ]; do
         -o) [ $# -ge 2 ] || usage; out=$2; shift 2 ;;
         --tape|--eof) [ $# -ge 2 ] || usage; opts="$opts $1 $2"; shift 2 ;;
         -O0) opts="$opts $1"; shift ;;
+        --version) exec "$here/mlws-vm-bfc" --version ;;
         -h|--help) usage ;;
         -*) usage ;;
         *) prog=$1; shift; break ;;
