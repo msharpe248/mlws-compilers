@@ -80,3 +80,10 @@ lua/       the Lua 5.5 compiler: src/ (lexer, parser, code generator; runtime.ma
            prelude.lua, the library written in Lua), tests/, bench/
 tools/     the test runners and the VM locator shared by the driver scripts
 ```
+
+## License
+
+MIT; see [LICENSE](LICENSE). The test suite in
+`lox/tests/craftinginterpreters` comes from
+[munificent/craftinginterpreters](https://github.com/munificent/craftinginterpreters)
+and keeps its own MIT license (`lox/tests/craftinginterpreters/LICENSE`).
