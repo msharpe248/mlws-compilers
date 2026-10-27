@@ -1,0 +1,23 @@
+#!/bin/sh
+# Compile a brainfuck program with bfc and run it on MLWSVM.
+#   bf [bfc options] program.b
+# The VM is found as $MLWSVM, then mlwsvm on PATH, then ../mlws-vm/mlwsvm
+# next to this repository.
+here=$(cd "$(dirname "$0")" && pwd)
+. "$here/../tools/find-vm.sh"
+
+opts=
+prog=
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --tape|--eof) opts="$opts $1 $2"; shift 2 ;;
+        -*) opts="$opts $1"; shift ;;
+        *) prog=$1; shift; break ;;
+    esac
+done
+[ -n "$prog" ] || { echo "usage: bf [--tape N] [--eof unchanged|zero|minus1] program.b" >&2; exit 2; }
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/bf.XXXXXX") || exit 1
+trap 'rm -rf "$tmp"' EXIT INT TERM
+"$here/bfc" $opts -o "$tmp/prog.masm" "$prog" || exit $?
+"$MLWSVM" run "$tmp/prog.masm" "$@"

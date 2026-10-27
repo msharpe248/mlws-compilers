@@ -1,0 +1,24 @@
+#!/bin/sh
+# Compile a Lox program with loxc and run it on MLWSVM.
+#   lox [-k] program.lox [args...]
+# -k keeps the generated assembly (program.masm next to the source).
+# The VM is found as $MLWSVM, then mlwsvm on PATH, then ../mlws-vm/mlwsvm
+# next to this repository.
+here=$(cd "$(dirname "$0")" && pwd)
+. "$here/../tools/find-vm.sh"
+
+keep=
+if [ "$1" = "-k" ]; then keep=1; shift; fi
+prog=$1
+[ -n "$prog" ] || { echo "usage: lox [-k] program.lox" >&2; exit 64; }
+shift
+
+if [ -n "$keep" ]; then
+    out="${prog%.lox}.masm"
+else
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/lox.XXXXXX") || exit 1
+    trap 'rm -rf "$tmp"' EXIT INT TERM
+    out="$tmp/program.masm"
+fi
+"$here/loxc" -o "$out" "$prog" || exit $?
+"$MLWSVM" run "$out" "$@"

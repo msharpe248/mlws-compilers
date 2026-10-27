@@ -1,0 +1,271 @@
+; ---------------------------------------------------------------------------
+; The Lox runtime (lox/src/runtime.masm, compiled into loxc).
+;
+; A Lox value is an (f64, ref) pair: a null reference means a number (the
+; f64); nil, true and false are the constant strings "\"nil", "\"true" and
+; "\"false" (no Lox string contains a '"'); strings are strings; functions,
+; classes, instances and bound methods are the structs below.
+; ---------------------------------------------------------------------------
+
+.struct Box                     ; a captured variable that is assigned
+    f: f64
+    r: ref
+.ends
+
+.struct Fn                      ; a function or method
+    clo: ref                    ; its closure
+    arity: i64
+    name: ref
+.ends
+
+.struct Native                  ; a built-in function (clock)
+    name: ref
+.ends
+
+.struct Class
+    name: ref
+    methods: ref                ; map: name -> Fn (inherited ones copied in)
+    init: ref                   ; the initializer Fn, or null
+.ends
+
+.struct Inst
+    cls: ref
+    fields: ref                 ; map: name -> Box
+.ends
+
+.struct Bound                   ; a method bound to its receiver
+    recv: ref
+    fn: ref
+.ends
+
+; Report a runtime error, as jlox does, and exit with status 70.
+.func rt$error(ref msg, i64 line)
+    ncall "fs.stderr" -> (R1)
+    tostr R2, line
+    strcat R3, msg, "\n[line ", R2, "] in script\n"
+    ncall "fs.write" (R1, R3)
+    ncall "os.exit" (70)
+    ret
+.endf
+
+.func rt$arity_error(i64 line, i64 want, i64 got)
+    tostr R0, want
+    tostr R1, got
+    strcat R2, "Expected ", R0, " arguments but got ", R1, "."
+    call rt$error (R2, line)
+    ret
+.endf
+
+; A runtime fault raised by the VM itself (a stack overflow, or running out
+; of memory): report it with the Lox line it happened on.
+.func rt$fault(ref err)
+    mov.r R1, err->Error.code
+    strcmp I0, R1, "E_CALL_DEPTH"
+    bnz I0, 1f
+    mov.r R2, "Stack overflow."
+    jmp 2f
+1:  strcat R2, "Runtime fault ", R1, ": ", err->Error.message
+2:  mov.r R3, err->Error.trace
+    call rt$trace_line (R3) -> (I1)
+    tostr R5, I1
+    strcat R6, R2, "\n[line ", R5, "] in script\n"
+    ncall "fs.stderr" -> (R4)
+    ncall "fs.write" (R4, R6)
+    ncall "os.exit" (70)
+    ret
+.endf
+
+; The Lox line of the innermost frame of a backtrace that is in compiled Lox
+; code, from the frames' "(file.masm:LINE)" and the line map; 0 if none.
+.func rt$trace_line(ref trace) -> i64
+    mov I0, 0
+.try 9f
+1:  strfind I1, trace, ".masm:", I0
+    blt I1, 0, 8f
+    add I2, I1, 6
+    strfind I3, trace, ")", I2
+    blt I3, 0, 8f
+    sub I4, I3, I2
+    substr R1, trace, I2, I4
+    parse.i64 I5, R1
+    mov I0, I3
+    blt I5, 1, 1b
+    bgt I5, @rt$nlines, 1b
+    sub I5, 1
+    mul I5, 4
+    mov.i32 I6, @rt$linemap{I5}
+    bz I6, 1b
+    ret I6
+.endtry
+8:  ret 0
+9:  catch R2
+    ret 0
+.endf
+
+; print: integers (below 1e18) as integers, other numbers in their shortest
+; exact form, and other values as Lox shows them.
+.func rt$print(f64 n, ref v)
+    bnz.r v, 1f
+    trunc F1, n
+    bne.f64 F1, n, 3f           ; a fraction (or NaN)
+    abs F2, n
+    bge.f64 F2, 1e18, 3f        ; large (or infinite)
+    cvt.i64.f64 I0, n
+    bnz I0, 2f
+    bitcast.i64.f64 I1, n       ; zero: -0 prints as -0
+    bge I1, 0, 2f
+    ncall "io.print_s" ("-0")
+    ncall "io.nl"
+    ret
+2:  ncall "io.print_i" (I0)
+    ncall "io.nl"
+    ret
+3:  ncall "io.print_f" (n)
+    ncall "io.nl"
+    ret
+1:  call rt$tostr (v) -> (R1)
+    ncall "io.print_s" (R1)
+    ncall "io.nl"
+    ret
+.endf
+
+; The text of a value that is not a number.
+.func rt$tostr(ref v) -> ref
+    beq.r v, "\"nil", 1f
+    beq.r v, "\"true", 2f
+    beq.r v, "\"false", 3f
+    typeof I0, v
+    beq I0, 1, 4f
+    isa I0, v, Fn
+    bnz I0, 5f
+    isa I0, v, Bound
+    bnz I0, 6f
+    isa I0, v, Class
+    bnz I0, 7f
+    isa I0, v, Inst
+    bnz I0, 8f
+    ret "<native fn>"
+1:  ret "nil"
+2:  ret "true"
+3:  ret "false"
+4:  ret v
+5:  strcat R1, "<fn ", v->Fn.name, ">"
+    ret R1
+6:  mov.r R2, v->Bound.fn
+    strcat R1, "<fn ", R2->Fn.name, ">"
+    ret R1
+7:  ret v->Class.name
+8:  mov.r R2, v->Inst.cls
+    strcat R1, R2->Class.name, " instance"
+    ret R1
+.endf
+
+; a + b when they are not both numbers: two strings concatenate.
+.func rt$add(i64 line, f64 af, ref a, f64 bf, ref b) -> (f64, ref)
+    typeof I1, a
+    bne I1, 1, 9f
+    typeof I1, b
+    bne I1, 1, 9f
+    beq.r a, "\"nil", 9f
+    beq.r a, "\"true", 9f
+    beq.r a, "\"false", 9f
+    beq.r b, "\"nil", 9f
+    beq.r b, "\"true", 9f
+    beq.r b, "\"false", 9f
+    strcat R2, a, b
+    ret 0.0, R2
+9:  call rt$error ("Operands must be two numbers or two strings.", line)
+    halt 70
+.endf
+
+; a == b for two references (either may be null, a number): strings compare
+; by content, everything else by identity.
+.func rt$eq(ref a, ref b) -> i64
+    beq.r a, b, 1f
+    typeof I0, a
+    bne I0, 1, 2f
+    typeof I0, b
+    bne I0, 1, 2f
+    strcmp I1, a, b
+    bnz I1, 2f
+1:  ret 1
+2:  ret 0
+.endf
+
+; obj.name: a field, else a method bound to obj.
+.func rt$get(i64 line, ref obj, ref name) -> (f64, ref)
+    isa I1, obj, Inst
+    bz I1, 8f
+    mov.r R2, obj->Inst.fields
+    mget.r R3, R2, name, null
+    bz.r R3, 1f
+    mov.f64 F0, R3->Box.f
+    mov.r R4, R3->Box.r
+    ret F0, R4
+1:  mov.r R2, obj->Inst.cls
+    mov.r R2, R2->Class.methods
+    mget.r R3, R2, name, null
+    bz.r R3, 9f
+    new R4, Bound
+    mov.r R4->Bound.recv, obj
+    mov.r R4->Bound.fn, R3
+    ret 0.0, R4
+8:  call rt$error ("Only instances have properties.", line)
+    halt 70
+9:  strcat R5, "Undefined property '", name, "'."
+    call rt$error (R5, line)
+    halt 70
+.endf
+
+; A new class, inheriting (copying down) the methods of super if not null.
+.func rt$class(ref name, ref super) -> ref
+    new R2, Class
+    mov.r R2->Class.name, name
+    mnew R3
+    bz.r super, 1f
+    mov.r R4, super->Class.methods
+    ncall "map.union" (R4, R3) -> (R3)
+    mov.r R2->Class.init, super->Class.init
+1:  mov.r R2->Class.methods, R3
+    ret R2
+.endf
+
+.func rt$new_instance(ref cls) -> ref
+    new R1, Inst
+    mov.r R1->Inst.cls, cls
+    mnew R2
+    mov.r R1->Inst.fields, R2
+    ret R1
+.endf
+
+; super.name as a value: the superclass's method bound to this.
+.func rt$super_get(i64 line, ref super, ref this, ref name) -> (f64, ref)
+    call rt$super_method (line, super, name) -> (R3)
+    new R4, Bound
+    mov.r R4->Bound.recv, this
+    mov.r R4->Bound.fn, R3
+    ret 0.0, R4
+.endf
+
+; The superclass's method Fn for super.name(...).
+.func rt$super_method(i64 line, ref super, ref name) -> ref
+    mov.r R2, super->Class.methods
+    mget.r R3, R2, name, null
+    bz.r R3, 9f
+    ret R3
+9:  strcat R5, "Undefined property '", name, "'."
+    call rt$error (R5, line)
+    halt 70
+.endf
+
+; Call a native function (there is one: clock).
+.func rt$native(ref fn) -> (f64, ref)
+    ncall "time.monotonic" -> (I0)
+    cvt.f64.i64 F0, I0
+    div F0, 1e9
+    ret F0, null
+.endf
+
+; ---------------------------------------------------------------------------
+; The compiled program.
+; ---------------------------------------------------------------------------

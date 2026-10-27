@@ -1,0 +1,62 @@
+// Locals beyond the register slots are spilled to the stack; closures
+// that capture many variables keep them in a list.
+fun many() {
+  var v0 = 0;
+  var v1 = 1;
+  var v2 = 2;
+  var v3 = 3;
+  var v4 = 4;
+  var v5 = 5;
+  var v6 = 6;
+  var v7 = 7;
+  var v8 = 8;
+  var v9 = 9;
+  var v10 = 10;
+  var v11 = 11;
+  var v12 = 12;
+  var v13 = 13;
+  var v14 = 14;
+  var v15 = 15;
+  var v16 = 16;
+  var v17 = 17;
+  var v18 = 18;
+  var v19 = 19;
+  var v20 = 20;
+  var v21 = 21;
+  var v22 = 22;
+  var v23 = 23;
+  var v24 = 24;
+  var v25 = 25;
+  var v26 = 26;
+  var v27 = 27;
+  var v28 = 28;
+  var v29 = 29;
+  var v30 = 30;
+  var v31 = 31;
+  var v32 = 32;
+  var v33 = 33;
+  var v34 = 34;
+  var v35 = 35;
+  var v36 = 36;
+  var v37 = 37;
+  var v38 = 38;
+  var v39 = 39;
+  v39 = v39 + v0 + v38;
+  fun inner() {
+    var sum = 0;
+    sum = sum + v0; sum = sum + v1; sum = sum + v2; sum = sum + v3; sum = sum + v4; sum = sum + v5; sum = sum + v6; sum = sum + v7; sum = sum + v8; sum = sum + v9; sum = sum + v10; sum = sum + v11; sum = sum + v12; sum = sum + v13; sum = sum + v14; sum = sum + v15; sum = sum + v16; sum = sum + v17; sum = sum + v18; sum = sum + v19; sum = sum + v20; sum = sum + v21; sum = sum + v22; sum = sum + v23; sum = sum + v24; sum = sum + v25; sum = sum + v26; sum = sum + v27; sum = sum + v28; sum = sum + v29; sum = sum + v30; sum = sum + v31; sum = sum + v32; sum = sum + v33; sum = sum + v34; sum = sum + v35; sum = sum + v36; sum = sum + v37; sum = sum + v38; sum = sum + v39;
+    v20 = "twenty";
+    return sum;
+  }
+  print inner();
+  print v20;
+  print v39;
+  var s = "";
+  var t = v38 + 1;
+  print t;
+}
+many();
+// expect: 818
+// expect: twenty
+// expect: 77
+// expect: 39

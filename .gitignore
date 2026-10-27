@@ -1,0 +1,13 @@
+# Build outputs
+bf/bfc
+lox/loxc
+*.o
+lox/src/runtime_masm.c
+
+# Assembly kept by `lox -k` or written by bfc next to a program
+bf/examples/*.masm
+bf/tests/*.masm
+lox/tests/**/*.masm
+
+.DS_Store
+__pycache__/

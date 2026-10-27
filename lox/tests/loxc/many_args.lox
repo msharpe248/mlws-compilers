@@ -1,0 +1,23 @@
+// More than 12 arguments are passed in a list.
+fun sum(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o) {
+  return a + b + c + d + e + f + g + h + i + j + k + l + m + n + o;
+}
+print sum(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15); // expect: 120
+var s = sum;
+print s(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1); // expect: 15
+
+class P {
+  init(a, b, c, d, e, f, g, h, i, j, k, l, m) { this.total = a + m; }
+  m(a, b, c, d, e, f, g, h, i, j, k, l, m) { return this.total + a + m; }
+}
+var p = P(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2);
+print p.total; // expect: 3
+print p.m(10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20); // expect: 33
+var bound = p.m;
+print bound(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1); // expect: 5
+var cls = P;
+print cls(5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5).total; // expect: 10
+
+fun twelve(a, b, c, d, e, f, g, h, i, j, k, l) { return l; }
+print twelve(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12); // expect: 12
+print sum(1, 2); // expect runtime error: Expected 15 arguments but got 2.

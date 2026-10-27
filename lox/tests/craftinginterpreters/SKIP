@@ -1,0 +1,16 @@
+# Tests from github.com/munificent/craftinginterpreters that do not apply,
+# following that repository's configuration for jlox (tool/bin/test.dart).
+
+# Only for the scanner and parser chapters
+scanning
+expressions
+
+# Limits that only clox has (constants per chunk, locals, upvalues, jump size)
+limit/loop_too_large.lox
+limit/no_reuse_constants.lox
+limit/too_many_constants.lox
+limit/too_many_locals.lox
+limit/too_many_upvalues.lox
+
+# Benchmarks: not tests (they take a while); see lox/bench
+benchmark

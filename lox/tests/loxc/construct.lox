@@ -1,0 +1,25 @@
+// Constructing instances of classes, with initializers declared, inherited
+// through a chain, missing, and reached through a variable.
+class Base { init(x) { this.x = x; } }
+class Mid < Base {}
+class Leaf < Mid { get() { return this.x; } }
+class Plain {}
+class Sub < Base { init(x, y) { super.init(x); this.y = y; } }
+
+print Leaf(7).get(); // expect: 7
+print Plain(); // expect: Plain instance
+var s = Sub(1, 2);
+print s.x + s.y; // expect: 3
+print s.init(5, 6) == s; // expect: true
+print s.x; // expect: 5
+
+{
+  class Local { init(v) { this.v = v; } }
+  print Local(3).v; // expect: 3
+}
+
+var Later = Plain;
+class Plain2 { init() { this.ok = true; } }
+Later = Plain2;
+print Later().ok; // expect: true
+print Leaf(); // expect runtime error: Expected 1 arguments but got 0.

@@ -1,0 +1,46 @@
+// What the compiler knows about a variable's type must not survive
+// anything that can change it.
+var g = 1;
+fun makeString() { g = "s"; }
+print g + 1; // expect: 2
+makeString();
+print g + "!"; // expect: s!
+
+fun loop() {
+  var x = 1;
+  var i = 0;
+  while (i < 3) {
+    if (i == 1) x = "str";
+    else x = 2;
+    i = i + 1;
+  }
+  print x; // expect: 2
+  var y = 0;
+  while (y < 2) {
+    y = y + 1;
+    if (y == 2) y = "done";
+    if (y == "done") {
+      print y; // expect: done
+      return;
+    }
+  }
+}
+loop();
+
+fun branches(flag) {
+  var v = 1;
+  if (flag) v = "text";
+  return v + v;
+}
+print branches(false); // expect: 2
+print branches(true); // expect: texttext
+
+fun capture() {
+  var c = 1;
+  fun set() { c = "changed"; }
+  print c + 1; // expect: 2
+  set();
+  print c; // expect: changed
+  print c + 1; // expect runtime error: Operands must be two numbers or two strings.
+}
+capture();

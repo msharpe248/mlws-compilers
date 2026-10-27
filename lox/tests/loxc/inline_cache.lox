@@ -1,0 +1,33 @@
+// One method call site sees several classes, a subclass, and an instance
+// whose field shadows the method.
+class A { name() { return "A"; } }
+class B { name() { return "B"; } }
+class C < A {}
+class D { name() { return "D"; } }
+fun fieldName() { return "field"; }
+
+fun show(o) { print o.name(); }
+
+var shadowed = D();
+shadowed.name = fieldName;
+
+var i = 0;
+while (i < 2) {
+  show(A());       // expect: A
+  show(B());       // expect: B
+  show(C());       // expect: A
+  show(shadowed);  // expect: field
+  show(D());       // expect: D
+  i = i + 1;
+}
+// expect: A
+// expect: B
+// expect: A
+// expect: field
+// expect: D
+
+// Wrong arity at a cached site.
+fun call1(o) {
+  return o.name(1); // expect runtime error: Expected 0 arguments but got 1.
+}
+call1(A());
