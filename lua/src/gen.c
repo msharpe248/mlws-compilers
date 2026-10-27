@@ -2199,7 +2199,20 @@ static Val gen_table(FS *fs, Expr *e, int dst) {
                  VF(&v), vr);
         } else {
             seen++;
-            if (seen == npos && is_multi(f->val)) {
+            if (seen == npos && is_multi(f->val) && f->val->k != X_VARARG && npos == e->nfields) {
+                /* {..., g()}: usually one value */
+                int t = alloc_slot(fs), many = new_label(fs), got = new_label(fs);
+                gen_multi_call(fs, f->val, t);
+                branch(fs, many, "bne I31, 1");
+                Val tv = vslot(t);
+                push_val(fs, SR(l), &tv);
+                cold_begin(fs);
+                place(fs, many);
+                emit(fs, "    call rt$appendmv (%s, I31, %s, %s, %s)", SR(l), SI(t), SF(t), SR(t));
+                jump(fs, got);
+                cold_end(fs);
+                place(fs, got);
+            } else if (seen == npos && is_multi(f->val)) {
                 append_multi(fs, l, f->val);
             } else {
                 Val v = gen(fs, f->val, -1);
@@ -2208,8 +2221,30 @@ static Val gen_table(FS *fs, Expr *e, int dst) {
         }
         fs->nslots = mark;
     }
-    if (npos)
+    if (npos && npos == e->nfields) {
+        /* only positional values: the list is the array part, less any
+           nils at its end */
+        int done = new_label(fs), trim = new_label(fs);
+        const char *t = RB(fs, d, "R28");
+        const char *lr = RB(fs, l, "R29");
+        emit(fs, "    mov %s->Tab.arr, %s", t, lr);
+        emit(fs, "    len I31, %s", lr);
+        emit(fs, "    shr I31, I31, 1");
+        emit(fs, "    mov %s->Tab.n, I31", t);
+        branch(fs, done, "bz I31");
+        emit(fs, "    add I30, I31, I31");
+        emit(fs, "    sub I30, I30, 2");
+        emit(fs, "    mov R30, %s[I30]", lr);
+        branch(fs, trim, "beq.r R30, " NIL);
+        cold_begin(fs);
+        place(fs, trim);
+        emit(fs, "    call rt$trimarr (%s)", SR(d));
+        jump(fs, done);
+        cold_end(fs);
+        place(fs, done);
+    } else if (npos) {
         emit(fs, "    call rt$setarr (%s, %s)", SR(d), SR(l));
+    }
     ty_set(fs, d, TY_TAB);
     return vslot(d);
 }

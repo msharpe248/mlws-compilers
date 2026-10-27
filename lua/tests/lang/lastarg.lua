@@ -53,3 +53,28 @@ end)
 print(co())
 print(co(1))
 print(co(1, 2, 3))
+
+-- a call at the end of a constructor
+local function onenil() return nil end
+local function midnil() return 1, nil, 3 end
+local function endnil() return 1, 2, nil end
+local function dump(t)
+  local out = {}
+  for i = 1, 5 do out[i] = tostring(t[i]) end
+  local keys = 0
+  for _ in pairs(t) do keys = keys + 1 end
+  -- #t may be any border of a table with holes: check that it is one
+  local n = #t
+  local border = (n == 0 or t[n] ~= nil) and t[n + 1] == nil
+  return tostring(border) .. " " .. keys .. " " .. table.concat(out, ",")
+end
+for _, g in ipairs({none, one, two, three, nils, onenil, midnil, endnil}) do
+  print(dump({g()}), dump({0, g()}), dump({nil, g()}), dump({g(), 9}))
+end
+print(dump({nil}), dump({1, nil}), dump({1, nil, 3}), dump({nil, nil}), dump({o:sum(1, 2)}))
+local t = {one()}
+t[#t + 1] = "x"; t[#t + 1] = "y"
+print(dump(t))
+local u = {onenil()}
+u[1] = "a"; u[2] = "b"
+print(dump(u))

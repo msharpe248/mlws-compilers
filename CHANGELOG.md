@@ -22,6 +22,8 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   half the time.
 * A call as the last argument (`f(a, g())`) calls `f` directly when `g`
   returns one value, instead of building a list of arguments.
+* Table constructors of positional values (`{a, b}`, `{f(x), g()}`) set up
+  their array part inline (binarytrees: 0.81s to 0.73s).
 * Float arithmetic on values of unknown type takes a shorter path
   (nbody: 2.7s to 1.8s).
 * Values are read from tables and lists with MLWSVM M30's `ldv`, without

@@ -178,6 +178,8 @@ metatable's `__index` table through an inline cache, with no runtime call.
   runtime. Constant expressions are folded.
 * **Calls** whose last argument is a call (`f(a, g())`) are made directly
   when `g` returns one value; any other count builds a list of arguments.
+  A constructor of positional values (`{a, g()}`) builds its array part
+  inline, the same way.
 * **Generic `for`** over `pairs` and `ipairs` is recognised at run time:
   `pairs` walks the table by position and `ipairs` reads the array part
   inline, instead of calling `next` or the iterator.
@@ -213,7 +215,7 @@ Apple M5 Pro, MLWSVM M30), in seconds, with Lua 5.5.1 for comparison:
 | methods (2M method calls and objects) | 0.89 | 0.34 |
 | strings (format, gmatch, gsub) | 0.41 | 0.13 |
 | iterate (pairs, ipairs) | 0.12 | 0.05 |
-| binarytrees (15) | 0.81 | 0.38 |
+| binarytrees (15) | 0.73 | 0.36 |
 | nbody (500,000) | 1.68 | 0.43 |
 | spectralnorm (500) | 0.47 | 0.18 |
 | fannkuch (10) | 2.75 | 0.76 |
@@ -232,5 +234,4 @@ has its expected output in `NAME.out` (and `NAME.err` for the first line of
 an expected error), made by running the reference `lua` 5.5 with
 `tests/expect.sh`, so the tests need only python3 to run. The tests also
 pass with the VM collecting garbage at every allocation
-(`MLWSVM_GC_STRESS=1`), except `programs/binarytrees`, which allocates too
-much to finish within the runner's timeout that way.
+(`MLWSVM_GC_STRESS=1`).
