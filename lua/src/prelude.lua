@@ -96,57 +96,6 @@ local function posrelat(i, n)
   return n + i + 1
 end
 
-local function str_find_aux(s, pat, init, plain, find, fname)
-  s = checkstr(s, 1, fname)
-  pat = checkstr(pat, 2, fname)
-  local ls = len(s)
-  init = posrelat(optint(init, 3, fname, 1), ls)
-  if init > ls + 1 then return nil end
-  if find and (plain or nospecials(pat)) then
-    local i = pfind(s, pat, init)
-    if i then return i, i + len(pat) - 1 end
-    return nil
-  end
-  local anchor = byte(pat, 1) == 94
-  local caps = {}
-  local e, level, s1 = pmatch(s, pat, init, anchor and 2 or 1, caps, not anchor, nil)
-  if not e then return nil end
-  if find then
-    if level == 0 then return s1, e - 1 end
-    return s1, e - 1, captures(s, caps, level, s1, e, false)
-  end
-  return captures(s, caps, level, s1, e, true)
-end
-
-function string.find(s, pat, init, plain)
-  return str_find_aux(s, pat, init, plain, true, "find")
-end
-
-function string.match(s, pat, init)
-  return str_find_aux(s, pat, init, false, false, "match")
-end
-
-function string.gmatch(s, pat, init)
-  s = checkstr(s, 1, "gmatch")
-  pat = checkstr(pat, 2, "gmatch")
-  local ls = len(s)
-  init = posrelat(optint(init, 3, "gmatch", 1), ls)
-  if init > ls + 1 then init = ls + 1 end
-  local caps = {}
-  local src, lastmatch = init, nil
-  return function()
-    if src > ls + 1 then return nil end
-    local e, level, start = pmatch(s, pat, src, 1, caps, true, lastmatch)
-    if not e then
-      src = ls + 2
-      return nil
-    end
-    src = e
-    lastmatch = e
-    return captures(s, caps, level, start, e, true)
-  end
-end
-
 local function add_value(src, caps, level, out, s, e, repl, tr)
   local whole = sub(src, s, e - 1)
   local v
@@ -208,17 +157,7 @@ function string.gsub(s, pat, repl, max_n)
   local n = 0
   if tr == "string" and len(pat) > 0 and nospecials(pat) and not pfind(repl, "%", 1) then
     -- a plain string replaced by a plain string
-    local src, lp = 1, len(pat)
-    while n < max_n do
-      local i = pfind(s, pat, src)
-      if not i then break end
-      if i > src then out[#out + 1] = sub(s, src, i - 1) end
-      out[#out + 1] = repl
-      n = n + 1
-      src = i + lp
-    end
-    if src <= ls then out[#out + 1] = sub(s, src) end
-    return concat(out), n
+    return P.gsub_plain(s, pat, repl, max_n)
   end
   local anchor = byte(pat, 1) == 94
   local p = anchor and 2 or 1
@@ -269,7 +208,7 @@ local function hexfloat(x, upper)
   return r
 end
 
-local function quoted(v)
+local function quoted(v, argi)
   local t = type(v)
   if t == "string" then
     local out = {'"'}
@@ -301,14 +240,11 @@ local function quoted(v)
     if v == math.huge then return "1e9999" end
     if v == -math.huge then return "-1e9999" end
     if v ~= v then return "(0/0)" end
-    if v == floor(v) and v >= -1e15 and v <= 1e15 then
-      return fmt("{}", v) .. (fmt("{}", v):find("[%.e]") and "" or ".0")
-    end
     return hexfloat(v)
   elseif t == "nil" or t == "boolean" then
     return tostring(v)
   end
-  error("bad argument to 'format' (value has no literal form)")
+  argerror(argi, "format", "value has no literal form")
 end
 
 local function pad(s, width, left, zero)
@@ -390,12 +326,18 @@ local function parse_format(fs)
   return items
 end
 
+-- An integer argument of format: one that is given, so nil is "got nil".
+local function fcheckint(v, n)
+  if v == nil then argerror(n, "format", "number expected, got nil") end
+  return checkint(v, n, "format")
+end
+
 local function format_one(it, arg, argi)
   local c, left, plus, space, alt, zero, width, prec =
     it.c, it.left, it.plus, it.space, it.alt, it.zero, it.width, it.prec
     local s
     if c == 100 or c == 105 then
-      local v = checkint(arg, argi, "format")
+      local v = fcheckint(arg, argi)
       if prec then
         local digits = fmt("{}", v < 0 and -v or v)
         if len(digits) < prec then digits = string.rep("0", prec - len(digits)) .. digits end
@@ -410,7 +352,7 @@ local function format_one(it, arg, argi)
         s = pad(s, width, left, zero)
       end
     elseif c == 120 or c == 88 or c == 111 then
-      local v = checkint(arg, argi, "format")
+      local v = fcheckint(arg, argi)
       local conv = c == 120 and "x" or (c == 88 and "X" or "o")
       s = fmt("{:" .. conv .. "}", v)
       if v < 0 then
@@ -433,15 +375,15 @@ local function format_one(it, arg, argi)
       end
       s = pad(s, width, left, zero and not prec)
     elseif c == 99 then
-      s = char(checkint(arg, argi, "format"))
+      s = char(fcheckint(arg, argi) & 0xFF)
       s = pad(s, width, left, false)
     elseif c == 101 or c == 69 or c == 102 or c == 70 or c == 103 or c == 71 then
       local v = arg
       if type(v) ~= "number" then
         v = tonumber(v)
-        if not v then argerror(argi, "format", "number expected, got " .. typename(arg)) end
+        if not v then argerror(argi, "format", "number expected, got " .. type(arg)) end
       end
-      v = v + 0.0
+      if mtype(v) == "integer" then v = v + 0.0 end
       local conv = char(c)
       if v ~= v or v == math.huge or v == -math.huge then
         if v ~= v then s = "nan" elseif v > 0 then s = "inf" else s = "-inf" end
@@ -453,6 +395,10 @@ local function format_one(it, arg, argi)
       else
         local lower = conv:lower()
         s = fmt(it.fspec, v)
+        if v == 0 and 1 / v < 0 then
+          local c1 = sub(s, 1, 1)
+          if c1 == "+" then s = "-" .. sub(s, 2) elseif c1 ~= "-" then s = "-" .. s end
+        end
         if alt and lower ~= "g" and not s:find("%.") then
           local epos = s:find("e")
           if epos then s = s:sub(1, epos - 1) .. "." .. s:sub(epos) else s = s .. "." end
@@ -463,18 +409,30 @@ local function format_one(it, arg, argi)
       end
     elseif c == 97 or c == 65 then
       local v = arg
-      if type(v) ~= "number" then argerror(argi, "format", "number expected, got " .. typename(arg)) end
-      s = hexfloat(v + 0.0, c == 65)
+      if type(v) ~= "number" then
+        v = tonumber(v)
+        if not v then argerror(argi, "format", "number expected, got " .. type(arg)) end
+      end
+      if mtype(v) == "integer" then v = v + 0.0 end
+      s = hexfloat(v, c == 65)
+      if sub(s, 1, 1) ~= "-" then
+        if plus then s = "+" .. s elseif space then s = " " .. s end
+      end
       s = pad(s, width, left, zero)
     elseif c == 115 then
       s = tostring(arg)
-      if prec then s = sub(s, 1, prec) end
-      s = pad(s, width, left, false)
+      if not it.simple then
+        if pfind(s, "\0", 1) then argerror(argi, "format", "string contains zeros") end
+        if prec or len(s) < 100 then
+          if prec then s = sub(s, 1, prec) end
+          s = pad(s, width, left, false)
+        end
+      end
     elseif c == 113 then
       if width or prec or left or plus then
         error("specifier '%q' cannot have modifiers")
       end
-      s = quoted(arg)
+      s = quoted(arg, argi)
     elseif c == 112 then
       local t = type(arg)
       if t == "table" or t == "function" or t == "thread" then
@@ -491,7 +449,7 @@ end
 
 local fcache, fcount = {}, 0
 
-function string.format(fs, ...)
+local function format(fs, ...)
   fs = checkstr(fs, 1, "format")
   local items = fcache[fs]
   if not items then
@@ -525,6 +483,7 @@ function string.format(fs, ...)
   end
   return concat(out)
 end
+P.setformat(format)
 
 -- ------------------------------------------------------------------- table
 

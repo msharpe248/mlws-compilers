@@ -3,6 +3,26 @@
 Each compiler is versioned on its own (its `VERSION` file); a release of
 this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
+## Unreleased
+
+### Lua
+
+* Faster strings: `string.find`, `match` and `gmatch` and the common
+  `string.format` conversions (`%d`, `%s`, `%%`) are in assembly; patterns
+  are compiled once and searches skip positions that cannot match; plain
+  `gsub` replacements are done in one pass. The strings benchmark runs in
+  a quarter of the time.
+* Calls of library functions that take a count of their arguments (`type`,
+  `tostring`, `pairs`, `table.insert`, ...) no longer go through an
+  adapter.
+* Fixed: a generic `for` whose iterator came from a call and took two
+  parameters called it twice per step.
+* Fixed: `gmatch`'s iterator returns no values at the end, as Lua's does;
+  `string.format`'s `%c` wraps values outside 0..255, `%g`/`%e`/`%f`/`%a`
+  keep the sign of -0.0, `%q` writes floats in hex, `%a` takes `+` and
+  space flags and converts strings, `%s` with a width or precision rejects
+  strings containing zeros, and a nil argument is "got nil".
+
 ## Release 0.1.0
 
 The first release: bf 0.1.0, Lox 0.1.0 and Lua 0.1.0, for MLWSVM 0.1.0

@@ -1,0 +1,20 @@
+42:str|%|1.5 -7 9.2233720368547758e+18
+nil true OBJ
+3 items	12	no conversions
+   42|42   |-0042|+7| 7|ff|FF|0xff|10|A
+0.333|      2.50|-1.2    |1.234568e+04|1e+20|0.1|100
+-0|-0.00|-0.000000e+00|-0| 0
+0x1p+0|0X1P-1| 0x1p+0|+0x1p+0|0x1.8p+3
+0x1.8p+1|-0x0p+0|1e9999|7|0x8000000000000000
+"tab\9here\
+new \"q\" \0 \1z"
+HHA
+       abc|ab    |x|xxx
+3 4.0	10	10
+false	bad argument #2 to 'format' (number has no integer representation)
+false	bad argument #2 to 'format' (no value)
+false	invalid conversion '%y' to 'format'
+false	bad argument #2 to 'format' (string contains zeros)
+false	bad argument #2 to 'format' (value has no literal form)
+false	bad argument #2 to 'format' (number expected, got nil)
+false	specifier '%q' cannot have modifiers

@@ -1,7 +1,8 @@
 ; ---------------------------------------------------------------------------
 ; The built-in library (lua/src/lib.masm): the functions written in
-; assembly. The rest (string.format, patterns, table.sort, io, os.date,
-; utf8) is Lua, in src/prelude.lua. Each function follows the Lua calling
+; assembly (Lua patterns are in src/match.masm). The rest (string.format's
+; less common conversions, gsub, table.sort, io, os.date, utf8) is Lua, in
+; src/prelude.lua. Each function follows the Lua calling
 ; convention; gen.c's table (src/builtins.h) gives their names and Fn.sig.
 ; ---------------------------------------------------------------------------
 
@@ -657,6 +658,70 @@
     add I1, 2
     jmp 1b
 8:  call rt$argerror (I4, "char", "value out of range")
+9:  strcat R2, R1
+    ret 1, 0, 0.0, R2
+.endf
+
+; string.format, when the format has only %d with an integer, %s with a
+; string or a number, and %%: the rest (other conversions, flags, widths,
+; precisions, values to convert, errors) is the prelude's format, which
+; this first checks for, so that it never runs after some of the work.
+.func B$str_format(ref) -> (i64, i64, f64, ref)
+    len I0, R0
+    blt I0, 2, 8f
+    mov R3, R0[0]
+    typeof I4, R3
+    bne I4, 1, 8f
+    len I5, R3
+    ; check
+    mov I6, 0
+    mov I7, 2
+1:  bge I6, I5, 3f
+    mov I8, R3[I6]
+    inc I6
+    bne I8, '%', 1b
+    bge I6, I5, 8f
+    mov I8, R3[I6]
+    inc I6
+    beq I8, '%', 1b
+    bge I7, I0, 8f
+    mov R9, R0[I7]
+    add I7, 2
+    bne I8, 'd', 2f
+    bnz R9, 8f
+    jmp 1b
+2:  bne I8, 's', 8f
+    bz R9, 1b
+    beq.r R9, 4n, 1b
+    typeof I4, R9
+    beq I4, 1, 1b
+    jmp 8f
+3:  ; format
+    bufnew R1, 0
+    mov I6, 0
+    mov I7, 2
+4:  bge I6, I5, 9f
+    mov I8, R3[I6]
+    inc I6
+    beq I8, '%', 5f
+    bufpush R1, I8
+    jmp 4b
+5:  mov I8, R3[I6]
+    inc I6
+    bne I8, '%', 6f
+    bufpush R1, I8
+    jmp 4b
+6:  LOADV R0, I7, I2, I9, F9, R9
+    add I7, 2
+    typeof I4, R9
+    bne I4, 1, 7f
+    bufcat R1, R9
+    jmp 4b
+7:  call rt$tostr_num (I9, F9, R9) -> (R4)
+    bufcat R1, R4
+    jmp 4b
+8:  mov R5, @rt$fmtslow
+    tcall rt$apply (0, 0.0, R5, R0, null)
 9:  strcat R2, R1
     ret 1, 0, 0.0, R2
 .endf
@@ -1363,6 +1428,44 @@ MATHF1 exp, ncall "math.exp" (F0) -> (F0)
 
 .func P$setstdout(i64, f64, ref) -> (i64, i64, f64, ref)
     mov @rt$stdout, R0
+    ret 0, 0, 0.0, 1n
+.endf
+
+; P.gsub_plain(s, pat, repl, max): gsub of a plain, non-empty pat by a
+; plain repl, at most max times: the string and the count.
+.func P$gsub_plain(i64, f64, ref, i64, f64, ref, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    len I4, R0
+    len I5, R1
+    bufnew R4, 0
+    mov I6, 0               ; where the rest of s starts
+    mov I7, 0               ; replacements
+1:  bge I7, I3, 8f
+    strfind I8, R0, R1, I6
+    blt I8, 0, 8f
+    sub I9, I8, I6
+    bz I9, 2f
+    substr R5, R0, I6, I9
+    bufcat R4, R5
+2:  bufcat R4, R2
+    inc I7
+    add I6, I8, I5
+    jmp 1b
+8:  bz I7, 9f
+    sub I9, I4, I6
+    bz I9, 81f
+    substr R5, R0, I6, I9
+    bufcat R4, R5
+81: strcat R0, R4
+9:  mov R10, @rt$mv
+    mov I11, 0
+    mov.r R10[I11], null
+    inc I11
+    mov R10[I11], I7
+    ret 2, 0, 0.0, R0
+.endf
+
+.func P$setformat(i64, f64, ref) -> (i64, i64, f64, ref)
+    mov @rt$fmtslow, R0
     ret 0, 0, 0.0, 1n
 .endf
 

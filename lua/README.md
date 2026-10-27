@@ -102,8 +102,8 @@ recursive-descent parser that builds an AST and resolves names as it goes
 which variables closures capture or assign). `src/gen.c` writes the
 assembly. The runtime is in assembly (`src/runtime.masm`; the library in
 `src/lib.masm`; Lua patterns in `src/match.masm`), and the parts of the
-library that are easier in Lua (`string.format`, the rest of the pattern
-functions, `table.sort`, `utf8`, `io`, `os.date`) are in `src/prelude.lua`,
+library that are easier in Lua (`string.format` beyond `%d`, `%s` and
+`%%`, `gsub`, `table.sort`, `utf8`, `io`, `os.date`) are in `src/prelude.lua`,
 which mlws-vm-luac compiles into every program with the program itself.
 
 ### Values
@@ -175,6 +175,12 @@ lookup in the object and one in the class.
 * **Generic `for`** over `pairs` and `ipairs` is recognised at run time:
   `pairs` walks the table by position and `ipairs` reads the array part
   inline, instead of calling `next` or the iterator.
+* **Patterns** are compiled as they are used, once per pattern: each item's
+  end and a 256-entry set of the characters it matches. A search skips
+  positions where the pattern's first item cannot match, backtracking
+  skips positions where the rest of the pattern cannot begin, and a search
+  for a pattern that starts with `x+` or `x*` and has no captures skips
+  the rest of a run of `x`s after a failure there.
 * Slow paths are placed after the function's last instruction, so the fast
   paths fall straight through; upvalues are copied to registers at the
   start of a function that loops.
@@ -192,19 +198,19 @@ the way Lua does.
 ## Performance
 
 `make bench` (`bench/run.sh`), on the machine this was developed on (an
-Apple M5 Pro, MLWSVM M27), in seconds, with Lua 5.5.1 for comparison:
+Apple M5 Pro, MLWSVM M28), in seconds, with Lua 5.5.1 for comparison:
 
 | Benchmark | mlws-vm-lua | lua 5.5 |
 |---|---|---|
-| fib (32) | 0.18 | 0.05 |
-| loop | 0.23 | 0.21 |
-| methods (2M method calls and objects) | 1.91 | 0.34 |
-| strings (format, gmatch, gsub) | 1.97 | 0.13 |
+| fib (32) | 0.16 | 0.05 |
+| loop | 0.24 | 0.21 |
+| methods (2M method calls and objects) | 1.83 | 0.34 |
+| strings (format, gmatch, gsub) | 0.47 | 0.13 |
 | iterate (pairs, ipairs) | 0.14 | 0.05 |
-| binarytrees (15) | 1.11 | 0.37 |
-| nbody (500,000) | 2.82 | 0.41 |
-| spectralnorm (500) | 0.79 | 0.18 |
-| fannkuch (10) | 2.90 | 0.81 |
+| binarytrees (15) | 0.99 | 0.38 |
+| nbody (500,000) | 2.72 | 0.38 |
+| spectralnorm (500) | 0.76 | 0.18 |
+| fannkuch (10) | 2.91 | 0.79 |
 
 The profiles (`mlwsvm run --profile`) show almost every instruction on the
 VM's fast paths; what remains is instruction count, mostly type checks on

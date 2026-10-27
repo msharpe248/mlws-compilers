@@ -1,0 +1,23 @@
+1: 22: 333: 4444: 4
+3 7	19 27	nil
+4444 8888	1	8 9
+1 4	1 4	1 3
+2 5	aa a	1 3
+hello	[x]	1 3
+a->1;bb->22;ccc->333;
+1a 2b 3c 
+[one][][two][]
+a	b	nil
+0
+aXcaXc 2	-a-b-c- 4	-a-c- 3
+<hello> <world> 2	aabbc 2	a/b/c 2
+aaa 0	xoney22z 2	9798 2
+P text P 2	bb 2	 1
+pctdpctpct 3	2 2	2 2
+1 2 3 4 5 
+false	malformed pattern (ends with '%')
+false	malformed pattern (missing ']')
+false	unfinished capture
+true	xax	2
+false	patterns.lua:31: malformed pattern (missing arguments to '%b')
+false	too many captures

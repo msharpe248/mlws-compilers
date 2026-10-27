@@ -108,7 +108,7 @@ typedef struct FS {
     VEC(int) gotolabel_ids;
     int nactive;        /* active local variables, counted as the parser does */
     int *upslot;        /* capture i copied into this slot at entry, or -1 */
-    struct { Ty *ty; bool dead; Buf *cur; } saved[16];  /* open cold sections */
+    struct { Ty *ty; bool dead; Buf *cur; int skip; } saved[16];  /* open cold sections */
     int nsaved;
 } FS;
 
@@ -322,6 +322,14 @@ static void cold_begin(FS *fs) {
     fs->saved[fs->nsaved].ty = ty_copy(fs);
     fs->saved[fs->nsaved].dead = fs->dead;
     fs->saved[fs->nsaved].cur = fs->cur;
+    fs->saved[fs->nsaved].skip = -1;
+    if (fs->cur == &fs->cold && !fs->dead) {
+        /* a cold section inside one: its code would follow this code, so
+           this code jumps over it */
+        int skip = new_label(fs);
+        jump(fs, skip);
+        fs->saved[fs->nsaved].skip = skip;
+    }
     fs->nsaved++;
     fs->dead = true;
     fs->cur = &fs->cold;
@@ -333,6 +341,8 @@ static void cold_end(FS *fs) {
     free(fs->saved[fs->nsaved].ty);
     fs->dead = fs->saved[fs->nsaved].dead;
     fs->cur = fs->saved[fs->nsaved].cur;
+    if (fs->saved[fs->nsaved].skip >= 0)
+        place(fs, fs->saved[fs->nsaved].skip);
 }
 
 /* ------------------------------------------------------------------ slots */
@@ -1933,7 +1943,8 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
             branch(fs, slow, "bz I30");
         }
         emit(fs, "    mov I30, %s->Fn.sig", RB(fs, fslot, "R28"));
-        branch(fs, slow, "bne I30, %d", n);
+        int counted = new_label(fs);
+        branch(fs, counted, "bne I30, %d", n);
         emit(fs, "    mov R30, %s->Fn.clo", RB(fs, fslot, "R28"));
         int builtin = new_label(fs);
         if (tail) {
@@ -1953,6 +1964,19 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
             emit(fs, "    calli R30 (%s) -> %s", argl, res);
             emit(fs, "    ret I31, %s, %s, %s", SI(d), SF(d), SR(d));
             fs->dead = true;
+        }
+        /* a library function that takes the number of arguments first
+           (Fn.sig 300 + n), as type and tostring do */
+        place(fs, counted);
+        branch(fs, slow, "bne I30, %d", 300 + n);
+        emit(fs, "    mov R30, %s->Fn.clo", RB(fs, fslot, "R28"));
+        emit(fs, "    calli R30 (%d%s%s) -> %s", n, n ? ", " : "", argl, res);
+        ty_set(fs, d, TY_ANY);
+        if (tail) {
+            emit(fs, "    ret I31, %s, %s, %s", SI(d), SF(d), SR(d));
+            fs->dead = true;
+        } else {
+            jump(fs, cont);
         }
         place(fs, slow);
         emit(fs, "    call rt$call%d (%s, %s, %s, %s%s%s) -> %s", n, desc, SI(fslot), SF(fslot), SR(fslot),

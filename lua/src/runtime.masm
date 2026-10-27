@@ -77,6 +77,7 @@ rt$main:    .zero 8     ; the main Thread
 rt$ipairs_aux: .zero 8
 rt$next_fn: .zero 8
 rt$stdout:  .zero 8     ; io.stdout, set by the prelude
+rt$fmtslow: .zero 8     ; the prelude's string.format, for what B$str_format leaves
 rt$start:   .i64 0
 rt$ic:      .zero 8     ; the inline caches: a value word index per site
 rt$shapes:  .zero 8     ; shape -> (key -> the shape with that key added)
