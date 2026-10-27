@@ -39,6 +39,9 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   `^` and math functions, carried through locals, parameters and results
   of local functions, field names and the elements of tables (nbody: 1.58s
   to 1.37s).
+* An expression of several arithmetic operators (`dx*dx + dy*dy`) checks
+  each variable's type once, then runs its operators as straight-line
+  code that writes only the result's tag (spectralnorm: 0.43s to 0.34s).
 * Fixed: unary minus on a string that converts to a number (`-"10"`)
   raised "number has no integer representation".
 * Fixed: errors from a method call on a value that cannot be indexed name

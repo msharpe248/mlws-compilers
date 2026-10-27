@@ -1,0 +1,20 @@
+29.0	34	26.0
+7.625	10.75	5.75
+20.375	24.25	26.0
+13.25	17	11.0
+-9.2233720368547758e+18	3	2.5521177519070385e+38
+-9.2233720368547758e+18	1	2.5521177519070385e+38
+0.0	0.0	-1.0
+nan	inf	inf
+integer	float	float
+false	arithunits.lua:4: attempt to perform arithmetic on a nil value (local 'x')
+false	arithunits.lua:4: attempt to perform arithmetic on a table value (local 'y')
+false	arithunits.lua:5: attempt to mul a 'string' with a 'string'
+false	arithunits.lua:15: attempt to perform arithmetic on a nil value (field 'c')
+mul add unm pow div sub
+5	99	16
+1 2 x y 3 4
+false	arithunits.lua:36: attempt to perform arithmetic on a nil value (local 'a')
+1 2 x y 3 4
+41.0	float
+335825.0

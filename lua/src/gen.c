@@ -110,6 +110,7 @@ typedef struct FS {
     int *upslot;        /* capture i copied into this slot at entry, or -1 */
     struct { Ty *ty; bool dead; Buf *cur; int skip; } saved[16];  /* open cold sections */
     int nsaved;
+    int notags;         /* set_tag records the type and leaves the R half stale */
 } FS;
 
 typedef struct {
@@ -530,6 +531,10 @@ static int in_slot(FS *fs, Val v) {
    F half. */
 static void set_tag(FS *fs, int d, Ty t) {
     Ty have = ty_get(fs, d);
+    if (fs->notags) {
+        ty_set(fs, d, t);
+        return;
+    }
     if (t == TY_INT && have != TY_INT)
         emit(fs, "    mov.r %s, null", SR(d));
     else if (t == TY_FLT && have != TY_FLT)
@@ -2428,6 +2433,128 @@ static int arith_of(int op) {
     return A_BNOT;
 }
 
+/* An arithmetic expression of several operators (`dx*dx + dy*dy`) is
+   generated as a unit: its operands are evaluated, each variable's type is
+   checked once (as an integer, or a float if it is likely one), and the
+   operators follow as straight-line code that writes only the result's
+   tag. If a check fails, cold code does the operators one at a time. */
+#define MAXTREE 32
+
+static bool tree_op(Expr *e) {
+    while (e->k == X_PAREN)
+        e = e->a;
+    if (e->k == X_BIN)
+        return e->op == OP_ADD || e->op == OP_SUB || e->op == OP_MUL || e->op == OP_DIV || e->op == OP_POW;
+    return e->k == X_UN && e->op == OP_UNM;
+}
+
+/* The operands in evaluation order. One with side effects (a call, a field
+   that may have __index) must come before every operator, as they would
+   otherwise run in a different order. */
+static bool tree_leaves(Expr *e, Expr **leaves, int *n, int *nops, bool *seen_op) {
+    while (e->k == X_PAREN)
+        e = e->a;
+    if (tree_op(e)) {
+        if (!tree_leaves(e->a, leaves, n, nops, seen_op))
+            return false;
+        if (e->k == X_BIN && !tree_leaves(e->b, leaves, n, nops, seen_op))
+            return false;
+        ++*nops;
+        *seen_op = true;
+        return true;
+    }
+    bool pure = e->k == X_LOCAL || e->k == X_INT || e->k == X_FLT;
+    if ((!pure && *seen_op) || *n == MAXTREE)
+        return false;
+    leaves[(*n)++] = e;
+    return true;
+}
+
+static Val tree_gen(FS *fs, Expr *e, Val *lv, int *li, int dst) {
+    while (e->k == X_PAREN)
+        e = e->a;
+    if (!tree_op(e))
+        return lv[(*li)++];
+    if (e->line)
+        fs->line = e->line;
+    Val a = tree_gen(fs, e->a, lv, li, -1);
+    Val b = e->k == X_BIN ? tree_gen(fs, e->b, lv, li, -1) : a;
+    if (e->line)
+        fs->line = e->line;
+    char *da = describe(fs, e->a), *db = e->k == X_BIN ? describe(fs, e->b) : xstrdup(da);
+    Val r = gen_arith(fs, arith_of(e->op), a, b, dst, da, db, likely_flt(e));
+    free(da);
+    free(db);
+    return r;
+}
+
+static bool gen_tree(FS *fs, Expr *e, int dst, Val *out) {
+    Expr *leaves[MAXTREE];
+    int n = 0, nops = 0;
+    bool seen_op = false;
+    if (!tree_leaves(e, leaves, &n, &nops, &seen_op) || nops < 2)
+        return false;
+    Val lv[MAXTREE];
+    for (int i = 0; i < n; i++)
+        lv[i] = gen(fs, leaves[i], -1);
+    int d = dst >= 0 ? dst : alloc_slot(fs);
+    /* which operands to check, and as what */
+    Ty want[MAXTREE];
+    bool guards = false;
+    for (int i = 0; i < n; i++) {
+        want[i] = TY_ANY;
+        Ty t = vty(fs, &lv[i]);
+        if (!numeric(t) && t != TY_ANY) {
+            int li = 0;
+            *out = tree_gen(fs, e, lv, &li, d);   /* not numbers: one at a time */
+            return true;
+        }
+        if (t == TY_ANY) {
+            want[i] = likely_flt(leaves[i]) ? TY_FLT : TY_INT;
+            guards = true;
+        }
+    }
+    int li = 0;
+    if (!guards) {
+        *out = tree_gen(fs, e, lv, &li, d);
+        return true;
+    }
+    int slow = new_label(fs), cont = new_label(fs);
+    for (int i = 0; i < n; i++) {
+        if (want[i] == TY_ANY || vty(fs, &lv[i]) != TY_ANY)
+            continue;   /* known, or checked already (the same slot twice) */
+        if (want[i] == TY_INT)
+            branch(fs, slow, "bnz %s", VR(&lv[i]));
+        else
+            branch(fs, slow, "bne.r %s, " FLT, VR(&lv[i]));
+        ty_set(fs, lv[i].slot, want[i]);
+    }
+    int mark = fs->nslots;
+    fs->notags++;
+    Val r = tree_gen(fs, e, lv, &li, d);
+    fs->notags--;
+    if (r.k != V_SLOT || r.slot != d)
+        put(fs, d, r);
+    Ty rt = ty_get(fs, d);
+    emit(fs, "    mov.r %s, %s", SR(d), rt == TY_INT ? "null" : FLT);
+    for (int k = mark; k < fs->nslots; k++)
+        if (k != d)
+            ty_set(fs, k, TY_ANY);   /* their R halves were not written */
+    fs->nslots = mark;
+    cold_begin(fs);
+    place(fs, slow);
+    li = 0;
+    r = tree_gen(fs, e, lv, &li, d);
+    if (r.k != V_SLOT || r.slot != d)
+        put(fs, d, r);
+    fs->nslots = mark;
+    jump(fs, cont);
+    cold_end(fs);
+    place(fs, cont);
+    *out = vslot(d);
+    return true;
+}
+
 /* A destination for an expression that writes it before it has read
    everything: a temporary if dst is a variable's slot. */
 static int fresh_dst(FS *fs, int dst) { return dst >= 0 && is_temp(fs, dst) ? dst : alloc_slot(fs); }
@@ -2492,6 +2619,8 @@ static Val gen(FS *fs, Expr *e, int dst) {
             r = gen_bool(fs, e, dst);
             break;
         }
+        if (e->op == OP_UNM && gen_tree(fs, e, dst, &r))
+            break;
         Val a = gen(fs, e->a, -1);
         char *desc = describe(fs, e->a);
         if (e->op == OP_LEN) {
@@ -2515,6 +2644,8 @@ static Val gen(FS *fs, Expr *e, int dst) {
             r = gen_concat(fs, e, dst);
             break;
         }
+        if (gen_tree(fs, e, dst, &r))
+            break;
         Val a = gen(fs, e->a, -1);
         /* the right operand may use the destination as its temporary */
         bool free_dst = dst >= 0 && !(a.k == V_SLOT && a.slot == dst);

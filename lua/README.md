@@ -180,6 +180,10 @@ metatable's `__index` table through an inline cache, with no runtime call.
   follows them through locals, the parameters and results of local
   functions, field names (`p.x`, across the program) and the elements of
   tables held in locals.
+* **Arithmetic expressions** of several operators (`+ - * / ^` and unary
+  minus) are generated as a unit: each variable's type is checked once,
+  then the operators run as straight-line code that writes only the
+  result's tag; if a check fails, cold code does them one at a time.
 * **Calls** whose last argument is a call (`f(a, g())`) are made directly
   when `g` returns one value; any other count builds a list of arguments.
   A constructor of positional values (`{a, g()}`) builds its array part
@@ -223,8 +227,8 @@ Apple M5 Pro, MLWSVM M31), in seconds, with Lua 5.5.1 for comparison:
 | strings (format, gmatch, gsub) | 0.40 | 0.13 |
 | iterate (pairs, ipairs) | 0.12 | 0.05 |
 | binarytrees (15) | 0.66 | 0.37 |
-| nbody (500,000) | 1.37 | 0.39 |
-| spectralnorm (500) | 0.43 | 0.18 |
+| nbody (500,000) | 1.31 | 0.39 |
+| spectralnorm (500) | 0.34 | 0.18 |
 | fannkuch (10) | 2.75 | 0.80 |
 
 The profiles (`mlwsvm run --profile`) show almost every instruction on the
