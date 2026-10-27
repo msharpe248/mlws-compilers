@@ -637,6 +637,7 @@ static void gen_closure(FS *fs, Func *f, int d, bool self_first);
 static int gen_multi_call(FS *fs, Expr *e, int d);
 static void gen_function(Func *f, FS *parent);
 static bool has_loop(Block *b);
+static void pack_scratch(FS *fs);
 
 static bool is_multi(Expr *e) { return e->k == X_CALL || e->k == X_METHOD || e->k == X_VARARG; }
 
@@ -3369,6 +3370,7 @@ static void gen_function(Func *f, FS *parent) {
         close_to(&fs, 0);
         emit(&fs, "    ret 0, 0, 0.0, " NIL);
     }
+    pack_scratch(&fs);
     char params[1024];
     sig_params(f, params, sizeof params);
     char head[1200];
@@ -3395,6 +3397,87 @@ static void gen_function(Func *f, FS *parent) {
     buf_add(&G.out, 0, "");
     buf_truncate(&fs.code, 0);
     buf_truncate(&fs.cold, 0);
+}
+
+/* Scratch registers are written as NREG..31 of each bank while a function
+   is generated. A call zeroes the callee's whole window, which runs to the
+   highest register of each bank, so afterwards the scratch registers a
+   function uses are moved down to just above the other registers of their
+   bank (and its parameters). */
+static bool reg_char(char c) { return isalnum((unsigned char)c) || c == '_' || c == '$' || c == '.' || c == '@'; }
+
+static void each_reg(Buf *b, int map[4][32], bool used[4][32]) {
+    static const char banks[] = "IFRP";
+    for (int i = 0; i < b->n; i++) {
+        char *t = b->v[i].text, out[4096];
+        size_t o = 0;
+        bool changed = false;
+        for (char *p = t; *p;) {
+            if (*p == '"') {                       /* a string operand */
+                char *q = p + 1;
+                while (*q && *q != '"')
+                    q += q[0] == '\\' && q[1] ? 2 : 1;
+                if (*q)
+                    q++;
+                memcpy(out + o, p, (size_t)(q - p));
+                o += (size_t)(q - p);
+                p = q;
+                continue;
+            }
+            const char *bk = *p ? strchr(banks, *p) : NULL;
+            if (bk && (p == t || !reg_char(p[-1])) && isdigit((unsigned char)p[1])) {
+                char *q = p + 1;
+                int r = 0;
+                while (isdigit((unsigned char)*q))
+                    r = r * 10 + (*q++ - '0');
+                if (!reg_char(*q) && r < 32) {
+                    int bank = (int)(bk - banks);
+                    if (used)
+                        used[bank][r] = true;
+                    o += (size_t)sprintf(out + o, "%c%d", *p, map ? map[bank][r] : r);
+                    changed |= map && map[bank][r] != r;
+                    p = q;
+                    continue;
+                }
+            }
+            out[o++] = *p++;
+        }
+        out[o] = 0;
+        if (changed) {
+            free(b->v[i].text);
+            b->v[i].text = xstrdup(out);
+        }
+    }
+}
+
+static void pack_scratch(FS *fs) {
+    bool used[4][32] = {{false}};
+    each_reg(&fs->code, NULL, used);
+    each_reg(&fs->cold, NULL, used);
+    Func *f = fs->f;
+    int np = f->np > MAXARGS ? 0 : f->np;
+    int floor[4] = {np, np, f->np > MAXARGS ? 1 : np + (f->vararg ? 1 : 0), 0};
+    int map[4][32];
+    bool any = false;
+    for (int b = 0; b < 4; b++) {
+        int lo = floor[b];
+        for (int r = 0; r < NREG; r++) {
+            map[b][r] = r;
+            if (used[b][r] && r + 1 > lo)
+                lo = r + 1;
+        }
+        for (int r = NREG; r < 32; r++) {
+            map[b][r] = r;
+            if (used[b][r]) {
+                map[b][r] = lo++;
+                any |= map[b][r] != r;
+            }
+        }
+    }
+    if (any) {
+        each_reg(&fs->code, map, NULL);
+        each_reg(&fs->cold, map, NULL);
+    }
 }
 
 static bool has_loop(Block *b) {

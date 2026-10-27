@@ -28,6 +28,9 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   (nbody: 2.7s to 1.8s).
 * Values are read from tables and lists with MLWSVM M30's `ldv`, without
   a branch on their type.
+* Each function's scratch registers are placed just above the registers
+  it uses, instead of at the top of each bank, so a call has a smaller
+  window to clear (fib: 0.15s to 0.13s; binarytrees: 0.72s to 0.67s).
 * Fixed: errors from a method call on a value that cannot be indexed name
   the variable (`attempt to index a number value (local 'o')`).
 * Fixed: a generic `for` whose iterator came from a call and took two

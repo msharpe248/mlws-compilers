@@ -192,6 +192,9 @@ metatable's `__index` table through an inline cache, with no runtime call.
 * Slow paths are placed after the function's last instruction, so the fast
   paths fall straight through; upvalues are copied to registers at the
   start of a function that loops.
+* **Register windows.** Scratch registers are generated at the top of each
+  bank and then moved down to just above the registers the function uses,
+  since a call zeroes the callee's whole window.
 
 ### Errors
 
@@ -206,19 +209,19 @@ the way Lua does.
 ## Performance
 
 `make bench` (`bench/run.sh`), on the machine this was developed on (an
-Apple M5 Pro, MLWSVM M30), in seconds, with Lua 5.5.1 for comparison:
+Apple M5 Pro, MLWSVM M31), in seconds, with Lua 5.5.1 for comparison:
 
 | Benchmark | mlws-vm-lua | lua 5.5 |
 |---|---|---|
-| fib (32) | 0.15 | 0.05 |
+| fib (32) | 0.13 | 0.05 |
 | loop | 0.24 | 0.21 |
-| methods (2M method calls and objects) | 0.89 | 0.34 |
-| strings (format, gmatch, gsub) | 0.41 | 0.13 |
+| methods (2M method calls and objects) | 0.82 | 0.34 |
+| strings (format, gmatch, gsub) | 0.40 | 0.13 |
 | iterate (pairs, ipairs) | 0.12 | 0.05 |
-| binarytrees (15) | 0.73 | 0.36 |
-| nbody (500,000) | 1.68 | 0.43 |
-| spectralnorm (500) | 0.47 | 0.18 |
-| fannkuch (10) | 2.75 | 0.76 |
+| binarytrees (15) | 0.67 | 0.37 |
+| nbody (500,000) | 1.69 | 0.42 |
+| spectralnorm (500) | 0.46 | 0.17 |
+| fannkuch (10) | 2.75 | 0.80 |
 
 The profiles (`mlwsvm run --profile`) show almost every instruction on the
 VM's fast paths; what remains is instruction count, mostly type checks on
