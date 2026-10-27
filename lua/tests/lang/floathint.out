@@ -1,0 +1,17 @@
+1.75
+8.0	-2.0
+9.5	5.5	15.0	3.0	1.5	-7.5	56.25
+9	5	14	3	1	-7	49
+-5	-9	-14	-4	1	7	49
+-9223372036854775808	9223372036854775806	9223372036854775807	9223372036854775807	0	-9223372036854775807	1
+9.5	4.5	17.5	2.0	2.0	-7	49
+13	7	30	3	1	-10	100
+false	floathint.lua:9: attempt to divide by zero
+7.0	7.0	0.0	inf	nan	-7.0	49.0
+false	floathint.lua:6: attempt to perform arithmetic on a table value (local 'a')
+false	floathint.lua:6: attempt to perform arithmetic on a nil value (local 'b')
+add	sub	mul	idiv	mod	unm	mul
+10.0
+20	integer
+5.0	8.0	float
+27.5

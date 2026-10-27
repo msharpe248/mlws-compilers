@@ -95,6 +95,7 @@ struct Var {
     Func *localfn;      /* local function f: its function */
     Expr *init;         /* local x = e: e (when it gives x its value alone) */
     int sty;            /* code generation: its type, if never assigned and known */
+    bool lf, elf;       /* code generation: likely a float; likely holds floats */
     /* code generation */
     int slot;
     bool boxed;         /* lives in a Box, shared with closures */
@@ -213,6 +214,7 @@ struct Func {
     bool direct;        /* called with call, not calli (no captures) */
     bool generated;
     int sig;
+    bool retlf;         /* its first result is likely a float */
 };
 
 typedef struct {

@@ -172,10 +172,14 @@ metatable's `__index` table through an inline cache, with no runtime call.
   facts at their entry, and regenerated with weaker ones if the loop body
   changes them, so a counter or accumulator stays an integer.
 * **Arithmetic** has an inline path for integers, or for floats when an
-  operand is known to be one, and in out-of-line code a path for two
-  floats, then one that converts mixed integer and float operands; only
-  strings and metamethods call the
-  runtime. Constant expressions are folded.
+  operand is known or likely to be one, and in out-of-line code a path for
+  the other kind, then one that converts mixed integer and float operands;
+  only strings and metamethods call the runtime. Constant expressions are
+  folded. "Likely" is a guess made before code generation: float
+  constants, `/`, `^` and math functions make floats, and the guess
+  follows them through locals, the parameters and results of local
+  functions, field names (`p.x`, across the program) and the elements of
+  tables held in locals.
 * **Calls** whose last argument is a call (`f(a, g())`) are made directly
   when `g` returns one value; any other count builds a list of arguments.
   A constructor of positional values (`{a, g()}`) builds its array part
@@ -214,13 +218,13 @@ Apple M5 Pro, MLWSVM M31), in seconds, with Lua 5.5.1 for comparison:
 | Benchmark | mlws-vm-lua | lua 5.5 |
 |---|---|---|
 | fib (32) | 0.13 | 0.05 |
-| loop | 0.24 | 0.21 |
+| loop | 0.23 | 0.21 |
 | methods (2M method calls and objects) | 0.82 | 0.34 |
 | strings (format, gmatch, gsub) | 0.40 | 0.13 |
 | iterate (pairs, ipairs) | 0.12 | 0.05 |
-| binarytrees (15) | 0.67 | 0.37 |
-| nbody (500,000) | 1.69 | 0.42 |
-| spectralnorm (500) | 0.46 | 0.17 |
+| binarytrees (15) | 0.66 | 0.37 |
+| nbody (500,000) | 1.37 | 0.39 |
+| spectralnorm (500) | 0.43 | 0.18 |
 | fannkuch (10) | 2.75 | 0.80 |
 
 The profiles (`mlwsvm run --profile`) show almost every instruction on the

@@ -638,6 +638,7 @@ static int gen_multi_call(FS *fs, Expr *e, int d);
 static void gen_function(Func *f, FS *parent);
 static bool has_loop(Block *b);
 static void pack_scratch(FS *fs);
+static bool likely_flt(Expr *e);
 
 static bool is_multi(Expr *e) { return e->k == X_CALL || e->k == X_METHOD || e->k == X_VARARG; }
 
@@ -1281,7 +1282,7 @@ static void call_arith(FS *fs, int op, Val *a, Val *b, int d, const char *da, co
     ty_set(fs, d, TY_ANY);
 }
 
-static Val gen_arith(FS *fs, int op, Val a, Val b, int dst, const char *da, const char *db) {
+static Val gen_arith(FS *fs, int op, Val a, Val b, int dst, const char *da, const char *db, bool hint) {
     Val folded;
     if (fold(op, &a, &b, &folded))
         return folded;
@@ -1318,13 +1319,13 @@ static Val gen_arith(FS *fs, int op, Val a, Val b, int dst, const char *da, cons
         call_arith(fs, op, &a, &b, d, da, db);
         return vslot(d);
     }
-    /* dynamic: an inline path for integers (or for floats, when an operand
-       is known to be a float or the result always is), and in cold code a
-       second chance that converts integers to floats, then rt$arith */
+    /* dynamic: an inline path for integers (or for floats, when the result
+       always is one or the operands are likely floats), and in cold code
+       the other kind, then one that converts integers to floats, then
+       rt$arith */
     int slow = new_label(fs), cont = new_label(fs), gen = new_label(fs);
-    bool fpref = ta == TY_FLT || tb == TY_FLT || op == A_DIV || op == A_POW;
-    if (is_bitwise(op))
-        fpref = false;
+    bool certain = ta == TY_FLT || tb == TY_FLT || op == A_DIV || op == A_POW;
+    bool fpref = !is_bitwise(op) && (certain || hint);
     /* past a check of a slot's tag, the slot has that type on this path */
     bool same = a.k == V_SLOT && b.k == V_SLOT && a.slot == b.slot;
     if (!fpref) {
@@ -1357,6 +1358,20 @@ static Val gen_arith(FS *fs, int op, Val a, Val b, int dst, const char *da, cons
             ty_set(fs, d, TY_ANY);
             jump(fs, cont);
             place(fs, mixed);
+        }
+        if (fpref && !certain) {
+            /* two integers */
+            int notint = new_label(fs);
+            if (ta != TY_INT)
+                branch(fs, notint, "bnz %s", VR(&a));
+            if (tb != TY_INT && !same)
+                branch(fs, notint, "bnz %s", VR(&b));
+            if ((op == A_IDIV || op == A_MOD) && b.k != V_INT)
+                branch(fs, gen, "bz %s", VI(&b));
+            ty_set(fs, d, TY_ANY);
+            int_op(fs, op, d, VI(&a), VI(&b), &b);
+            jump(fs, cont);
+            place(fs, notint);
         }
         /* both numbers: as floats */
         const char *xs[2] = {"F30", "F29"};
@@ -2486,7 +2501,7 @@ static Val gen(FS *fs, Expr *e, int dst) {
                 r = gen_len(fs, a, dst, desc);
             }
         } else {
-            r = gen_arith(fs, arith_of(e->op), a, a, dst, desc, desc);
+            r = gen_arith(fs, arith_of(e->op), a, a, dst, desc, desc, likely_flt(e));
         }
         free(desc);
         break;
@@ -2505,7 +2520,7 @@ static Val gen(FS *fs, Expr *e, int dst) {
         bool free_dst = dst >= 0 && !(a.k == V_SLOT && a.slot == dst);
         Val b = gen(fs, e->b, free_dst ? dst : -1);
         char *da = describe(fs, e->a), *db = describe(fs, e->b);
-        r = gen_arith(fs, arith_of(e->op), a, b, dst, da, db);
+        r = gen_arith(fs, arith_of(e->op), a, b, dst, da, db, likely_flt(e));
         free(da);
         free(db);
         break;
@@ -3663,6 +3678,215 @@ static void analyze(Func *top, FuncVec *all) {
     }
 }
 
+/* --------------------------------------------------------- likely floats */
+
+/* Which values are likely floats: a guess from the program's text, used to
+   choose which path of arithmetic on values of unknown type is inline.
+   Floats come from float constants, `/`, `^` and math functions, and flow
+   through locals, parameters of local functions, results, field names
+   (program-wide) and the elements of tables held in locals. */
+
+static VEC(Str) flt_fields;
+static bool lf_changed;
+
+static bool field_flt(Str s) {
+    for (int i = 0; i < flt_fields.n; i++)
+        if (str_same(flt_fields.v[i], s))
+            return true;
+    return false;
+}
+
+static void mark_field(Str s) {
+    if (!field_flt(s)) {
+        vec_push(flt_fields, s);
+        lf_changed = true;
+    }
+}
+
+static void mark_var(Var *v) {
+    if (!v->lf) {
+        v->lf = true;
+        lf_changed = true;
+    }
+}
+
+static void mark_elems(Var *v) {
+    if (!v->elf) {
+        v->elf = true;
+        lf_changed = true;
+    }
+}
+
+static bool is_str(Expr *e, const char *s) {
+    return e->k == X_STR && (size_t)e->s.len == strlen(s) && memcmp(e->s.s, s, (size_t)e->s.len) == 0;
+}
+
+static bool flt_math_fn(Expr *e) {
+    if (e->k == X_LOCAL && !e->var->assigned && e->var->init)
+        e = e->var->init;
+    if (e->k != X_INDEX || e->a->k != X_GLOBAL || e->a->env || e->a->s.len != 4 ||
+        memcmp(e->a->s.s, "math", 4) != 0)
+        return false;
+    static const char *fns[] = {"sqrt", "sin", "cos", "tan", "asin", "acos", "atan", "exp", "log"};
+    for (size_t i = 0; i < sizeof fns / sizeof *fns; i++)
+        if (is_str(e->b, fns[i]))
+            return true;
+    return false;
+}
+
+static Func *direct_fn(Expr *callee) {
+    if (callee->k == X_LOCAL && callee->var->localfn && !callee->var->assigned)
+        return callee->var->localfn;
+    return NULL;
+}
+
+static bool likely_flt(Expr *e) {
+    switch (e->k) {
+    case X_FLT: return true;
+    case X_LOCAL: return e->var->lf;
+    case X_INDEX:
+        if (e->b->k == X_STR)
+            return field_flt(e->b->s);
+        return e->a->k == X_LOCAL && e->a->var->elf;
+    case X_CALL: {
+        if (flt_math_fn(e->a))
+            return true;
+        Func *f = direct_fn(e->a);
+        return f && f->retlf;
+    }
+    case X_BIN:
+        switch (e->op) {
+        case OP_DIV: case OP_POW: return true;
+        case OP_ADD: case OP_SUB: case OP_MUL: case OP_MOD: case OP_IDIV:
+            return likely_flt(e->a) || likely_flt(e->b);
+        default: return false;
+        }
+    case X_UN: return e->op == OP_UNM && likely_flt(e->a);
+    case X_PAREN: return likely_flt(e->a);
+    case X_AND: case X_OR: return likely_flt(e->a) || likely_flt(e->b);
+    default: return false;
+    }
+}
+
+static void lf_exprs(Expr **v, int n);
+
+static void lf_expr(Expr *e) {
+    if (!e)
+        return;
+    switch (e->k) {
+    case X_CALL: {
+        Func *f = direct_fn(e->a);
+        for (int i = 0; f && i < e->nargs && i < f->np; i++) {
+            Expr *x = e->args[i];
+            Var *p = f->params[i];
+            if (likely_flt(x))
+                mark_var(p);
+            /* a table passed in: the caller's and the callee's are one */
+            if (x->k == X_LOCAL) {
+                if (x->var->elf)
+                    mark_elems(p);
+                else if (p->elf)
+                    mark_elems(x->var);
+            }
+        }
+        break;
+    }
+    case X_TABLE:
+        for (int i = 0; i < e->nfields; i++) {
+            Expr *k = e->fields[i].key;
+            if (k && k->k == X_STR && likely_flt(e->fields[i].val))
+                mark_field(k->s);
+            lf_expr(k);
+            lf_expr(e->fields[i].val);
+        }
+        return;
+    case X_FUNC:
+        return;
+    default:
+        break;
+    }
+    lf_expr(e->a);
+    lf_expr(e->b);
+    lf_exprs(e->args, e->nargs);
+}
+
+static void lf_exprs(Expr **v, int n) {
+    for (int i = 0; i < n; i++)
+        lf_expr(v[i]);
+}
+
+static void lf_assign(Expr *t, Expr *x) {
+    if (!x || !likely_flt(x))
+        return;
+    if (t->k == X_LOCAL)
+        mark_var(t->var);
+    else if (t->k == X_INDEX && t->b->k == X_STR)
+        mark_field(t->b->s);
+    else if (t->k == X_INDEX && t->a->k == X_LOCAL)
+        mark_elems(t->a->var);
+}
+
+static void lf_block(Block *b, Func *f) {
+    if (!b)
+        return;
+    for (int i = 0; i < b->n; i++) {
+        Stmt *s = b->stmts[i];
+        lf_exprs(s->exprs, s->nexprs);
+        lf_exprs(s->targets, s->ntargets);
+        switch (s->k) {
+        case S_LOCAL:
+            for (int j = 0; j < s->nvars && j < s->nexprs; j++) {
+                Expr *x = s->exprs[j];
+                if (likely_flt(x))
+                    mark_var(s->vars[j]);
+                if (x->k == X_TABLE)
+                    for (int k = 0; k < x->nfields; k++)
+                        if (!x->fields[k].key && likely_flt(x->fields[k].val))
+                            mark_elems(s->vars[j]);
+            }
+            break;
+        case S_ASSIGN:
+            for (int j = 0; j < s->ntargets && j < s->nexprs; j++)
+                lf_assign(s->targets[j], s->exprs[j]);
+            break;
+        case S_RETURN:
+            if (s->nexprs >= 1 && !f->retlf && likely_flt(s->exprs[0])) {
+                f->retlf = true;
+                lf_changed = true;
+            }
+            break;
+        case S_NUMFOR:
+            lf_expr(s->start);
+            lf_expr(s->limit);
+            lf_expr(s->step);
+            if (likely_flt(s->start) || (s->step && likely_flt(s->step)))
+                mark_var(s->var);
+            break;
+        case S_IF:
+            lf_exprs(s->conds, s->nconds);
+            for (int j = 0; j <= s->nconds; j++)
+                lf_block(s->blocks[j], f);
+            break;
+        case S_WHILE: case S_REPEAT:
+            lf_expr(s->cond);
+            break;
+        default:
+            break;
+        }
+        lf_block(s->body, f);
+    }
+}
+
+static void likely_floats(FuncVec *all) {
+    mark_field((Str){"pi", 2});
+    mark_field((Str){"huge", 4});
+    do {
+        lf_changed = false;
+        for (int i = 0; i < all->n; i++)
+            lf_block(all->v[i]->body, all->v[i]);
+    } while (lf_changed);
+}
+
 static void pin_expr(Expr *e);
 static void pin_block(Block *b);
 
@@ -3901,6 +4125,7 @@ void generate(GenInput *in, FILE *f) {
     FuncVec all = {0};
     analyze(in->prelude, &all);
     analyze(in->main, &all);
+    likely_floats(&all);
     /* the library's globals, then the program's */
     for (size_t i = 0; i < sizeof builtins / sizeof *builtins; i++) {
         const char *lib = builtins[i].lib ? builtins[i].lib : builtins[i].name;

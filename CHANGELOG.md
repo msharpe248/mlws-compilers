@@ -34,6 +34,13 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 * Jumps to the next instruction are removed, a branch over a jump becomes
   the opposite branch, and `x * x` checks `x`'s type once (nbody: 1.68s
   to 1.58s).
+* Arithmetic on values whose type is not known puts the float path inline
+  when the operands are likely floats: a guess from float constants, `/`,
+  `^` and math functions, carried through locals, parameters and results
+  of local functions, field names and the elements of tables (nbody: 1.58s
+  to 1.37s).
+* Fixed: unary minus on a string that converts to a number (`-"10"`)
+  raised "number has no integer representation".
 * Fixed: errors from a method call on a value that cannot be indexed name
   the variable (`attempt to index a number value (local 'o')`).
 * Fixed: a generic `for` whose iterator came from a call and took two

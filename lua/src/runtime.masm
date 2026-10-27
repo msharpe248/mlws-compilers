@@ -1550,8 +1550,8 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     bz I3, 80f
     call rt$tonum (I2, F1, R1) -> (I5, I6, F3, R5)
     bz I5, 80f
-    bge I0, 7, 40f
     beq I0, 12, 30f
+    bge I0, 7, 40f
     beq I0, 3, 20f
     beq I0, 5, 20f
     bnz R4, 20f
