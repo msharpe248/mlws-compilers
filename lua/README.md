@@ -184,6 +184,13 @@ metatable's `__index` table through an inline cache, with no runtime call.
   minus) are generated as a unit: each variable's type is checked once,
   then the operators run as straight-line code that writes only the
   result's tag; if a check fails, cold code does them one at a time.
+* **Versions.** A function whose parameters are used as tables or numbers
+  checks them once on entry and is generated twice: with those facts, and
+  as a generic copy for other arguments. In a loop, a local that the rest
+  of the block uses as a table twice or more is checked once, and the rest
+  of the block has a generic copy in cold code. A fact that holds through
+  a whole body survives its joins, where one learnt from a check inside it
+  would not, since the check's slow path joins it again without it.
 * **Calls** whose last argument is a call (`f(a, g())`) are made directly
   when `g` returns one value; any other count builds a list of arguments.
   A constructor of positional values (`{a, g()}`) builds its array part
@@ -222,14 +229,14 @@ Apple M5 Pro, MLWSVM M31), in seconds, with Lua 5.5.1 for comparison:
 | Benchmark | mlws-vm-lua | lua 5.5 |
 |---|---|---|
 | fib (32) | 0.13 | 0.05 |
-| loop | 0.23 | 0.21 |
-| methods (2M method calls and objects) | 0.82 | 0.34 |
+| loop | 0.22 | 0.21 |
+| methods (2M method calls and objects) | 0.79 | 0.34 |
 | strings (format, gmatch, gsub) | 0.40 | 0.13 |
 | iterate (pairs, ipairs) | 0.12 | 0.05 |
-| binarytrees (15) | 0.66 | 0.37 |
-| nbody (500,000) | 1.31 | 0.39 |
-| spectralnorm (500) | 0.34 | 0.18 |
-| fannkuch (10) | 2.75 | 0.80 |
+| binarytrees (15) | 0.65 | 0.37 |
+| nbody (500,000) | 1.19 | 0.41 |
+| spectralnorm (500) | 0.32 | 0.18 |
+| fannkuch (10) | 2.36 | 0.80 |
 
 The profiles (`mlwsvm run --profile`) show almost every instruction on the
 VM's fast paths; what remains is instruction count, mostly type checks on

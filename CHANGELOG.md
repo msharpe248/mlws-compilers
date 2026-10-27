@@ -42,6 +42,16 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 * An expression of several arithmetic operators (`dx*dx + dy*dy`) checks
   each variable's type once, then runs its operators as straight-line
   code that writes only the result's tag (spectralnorm: 0.43s to 0.34s).
+* Functions check their parameters once on entry (a table, or an integer
+  or float, from how the body uses them) and have a second, generic copy
+  for other arguments; in a loop, a local used as a table twice or more is
+  checked once and the rest of the block has a generic copy. The facts
+  then hold through the whole body, where a check's slow path would
+  otherwise erase them (fannkuch: 2.72s to 2.36s; nbody: 1.31s to 1.19s).
+* A `for` loop whose limit was already known to be an integer (a constant,
+  say) entered its body knowing nothing about any variable.
+* Errors name `t[i]` as `field '?'` and `t[1]` as `field 'integer index'`,
+  as Lua does.
 * Fixed: unary minus on a string that converts to a number (`-"10"`)
   raised "number has no integer representation".
 * Fixed: errors from a method call on a value that cannot be indexed name

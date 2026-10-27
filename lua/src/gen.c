@@ -111,6 +111,7 @@ typedef struct FS {
     struct { Ty *ty; bool dead; Buf *cur; int skip; } saved[16];  /* open cold sections */
     int nsaved;
     int notags;         /* set_tag records the type and leaves the R half stale */
+    int noversion;      /* in a generic copy: no further versions */
 } FS;
 
 typedef struct {
@@ -620,9 +621,14 @@ static char *describe(FS *fs, Expr *e) {
         snprintf(buf, sizeof buf, "global '%.*s'", e->s.len, e->s.s);
         break;
     case X_INDEX:
-        if (e->b->k != X_STR)
-            return xstrdup("null");
-        snprintf(buf, sizeof buf, "field '%.*s'", e->b->s.len > 200 ? 200 : e->b->s.len, e->b->s.s);
+        /* as Lua names them: a constant string key, a small integer
+           constant (Lua's GETI), anything else */
+        if (e->b->k == X_STR)
+            snprintf(buf, sizeof buf, "field '%.*s'", e->b->s.len > 200 ? 200 : e->b->s.len, e->b->s.s);
+        else if (e->b->k == X_INT && e->b->i >= 0 && e->b->i <= 255)
+            snprintf(buf, sizeof buf, "field 'integer index'");
+        else
+            snprintf(buf, sizeof buf, "field '?'");
         break;
     case X_STR:
         snprintf(buf, sizeof buf, "constant '%.*s'", e->s.len > 200 ? 200 : e->s.len, e->s.s);
@@ -2804,11 +2810,223 @@ static void scope_close(FS *fs, Scope sc) {
 
 static void gen_stmt(FS *fs, Stmt *s);
 
-static void gen_stmts(FS *fs, Block *b) {
-    for (int i = 0; i < b->n; i++) {
+/* ------------------------------------------------------------- versions */
+
+/* Facts that hold on every path through a stretch of code survive its
+   joins, where a fact learnt from a check inside it would not (its slow
+   path joins it again without the fact). So a variable that is used as a
+   table, or a parameter used as a number or table, is checked once and
+   the code after the check is generated twice: with the fact, and as a
+   generic copy for when the check fails. */
+typedef struct {
+    Var *v;
+    int tab, num;       /* uses as a table, as an operand of arithmetic or an order */
+    int nodes;
+    bool gotos;
+} Uses;
+
+static void uses_expr(Expr *e, Uses *u);
+
+static bool is_var(Expr *e, Var *v) { return e && e->k == X_LOCAL && e->var == v; }
+
+static void uses_exprs(Expr **v, int n, Uses *u) {
+    for (int i = 0; i < n; i++)
+        uses_expr(v[i], u);
+}
+
+static void uses_expr(Expr *e, Uses *u) {
+    if (!e)
+        return;
+    u->nodes++;
+    switch (e->k) {
+    case X_FUNC:
+        return;
+    case X_INDEX: case X_METHOD:
+        if (is_var(e->a, u->v))
+            u->tab++;
+        break;
+    case X_BIN:
+        if (e->op <= OP_IDIV || (e->op >= OP_LT && e->op <= OP_GE))
+            u->num += is_var(e->a, u->v) + is_var(e->b, u->v);
+        break;
+    case X_UN:
+        if (e->op == OP_UNM)
+            u->num += is_var(e->a, u->v);
+        break;
+    case X_TABLE:
+        for (int i = 0; i < e->nfields; i++) {
+            uses_expr(e->fields[i].key, u);
+            uses_expr(e->fields[i].val, u);
+        }
+        return;
+    default:
+        break;
+    }
+    uses_expr(e->a, u);
+    uses_expr(e->b, u);
+    uses_exprs(e->args, e->nargs, u);
+}
+
+static void uses_block(Block *b, Uses *u);
+
+static void uses_stmt(Stmt *s, Uses *u) {
+    u->nodes++;
+    if (s->k == S_GOTO || s->k == S_LABEL)
+        u->gotos = true;
+    uses_exprs(s->exprs, s->nexprs, u);
+    uses_exprs(s->targets, s->ntargets, u);
+    uses_expr(s->cond, u);
+    uses_exprs(s->conds, s->nconds, u);
+    if (s->k == S_NUMFOR) {
+        u->num += is_var(s->start, u->v) + is_var(s->limit, u->v) + is_var(s->step, u->v);
+        uses_expr(s->start, u);
+        uses_expr(s->limit, u);
+        uses_expr(s->step, u);
+    }
+    if (s->k == S_IF)
+        for (int j = 0; j <= s->nconds; j++)
+            uses_block(s->blocks[j], u);
+    uses_block(s->body, u);
+}
+
+static void uses_block(Block *b, Uses *u) {
+    if (b)
+        for (int i = 0; i < b->n; i++)
+            uses_stmt(b->stmts[i], u);
+}
+
+static void gen_stmts_from(FS *fs, Block *b, int from);
+
+/* After `local x = e` in a loop: if the rest of the block uses x as a table
+   twice or more, check it once and generate the rest with and without the
+   fact. */
+#define TAILMAX 1500
+
+static bool version_tail(FS *fs, Block *b, int i) {
+    Stmt *s = b->stmts[i];
+    if (s->k != S_LOCAL || i + 1 >= b->n || fs->noversion || fs->cur == &fs->cold || fs->dead || !fs->loops.n)
+        return false;
+    Var *tabs[8];
+    int n = 0;
+    for (int j = 0; j < s->nvars && n < 8; j++) {
+        Var *v = s->vars[j];
+        if (v->assigned || v->boxed || v->attrib != ATTR_NONE || ty_get(fs, v->slot) != TY_ANY)
+            continue;
+        Uses u = {v, 0, 0, 0, false};
+        for (int k = i + 1; k < b->n; k++)
+            uses_stmt(b->stmts[k], &u);
+        if (u.gotos || u.nodes > TAILMAX)
+            return false;
+        if (u.tab >= 2)
+            tabs[n++] = v;
+    }
+    if (!n)
+        return false;
+    int generic = new_label(fs);
+    for (int j = 0; j < n; j++) {
+        emit(fs, "    isa I31, %s, Tab", SR(tabs[j]->slot));
+        branch(fs, generic, "bz I31");
+        ty_set(fs, tabs[j]->slot, TY_TAB);
+    }
+    Scope sc = scope_open(fs);
+    gen_stmts_from(fs, b, i + 1);
+    Scope end = scope_open(fs);
+    int cont = new_label(fs);
+    jump(fs, cont);
+    fs->nslots = sc.nslots;
+    fs->nlocals = sc.nlocals;
+    fs->nactive = sc.nactive;
+    fs->closes.n = sc.closes;
+    cold_begin(fs);
+    place(fs, generic);
+    fs->noversion++;
+    gen_stmts_from(fs, b, i + 1);
+    fs->noversion--;
+    jump(fs, cont);
+    cold_end(fs);
+    bool reached = label_facts(fs, cont)->has;
+    place(fs, cont);
+    fs->dead = !reached;
+    fs->nslots = end.nslots;
+    fs->nlocals = end.nlocals;
+    fs->nactive = end.nactive;
+    fs->closes.n = end.closes;
+    return true;
+}
+
+static void gen_stmts_from(FS *fs, Block *b, int from) {
+    for (int i = from; i < b->n; i++) {
         gen_stmt(fs, b->stmts[i]);
         fs->nslots = fs->nlocals;
+        if (version_tail(fs, b, i))
+            return;
     }
+}
+
+static void gen_stmts(FS *fs, Block *b) { gen_stmts_from(fs, b, 0); }
+
+/* A function's body, ending with a return. */
+static void gen_body(FS *fs, Func *f) {
+    gen_stmts(fs, f->body);
+    if (!fs->dead) {
+        fs->line = f->lastline;
+        close_to(fs, 0);
+        emit(fs, "    ret 0, 0, 0.0, " NIL);
+    }
+}
+
+/* A function whose parameters are used as tables or numbers: check them on
+   entry and generate the body with those facts, and a generic copy. */
+#define BODYMAX 3000
+
+static bool version_entry(FS *fs, Func *f) {
+    if (f->prelude || f->is_main || f->np == 0 || f->np > MAXARGS)
+        return false;
+    Ty want[MAXARGS];
+    bool any = false;
+    for (int i = 0; i < f->np; i++) {
+        Var *v = f->params[i];
+        want[i] = TY_ANY;
+        if (v->boxed || ty_get(fs, v->slot) != TY_ANY)
+            continue;
+        Uses u = {v, 0, 0, 0, false};
+        uses_block(f->body, &u);
+        if (u.gotos || u.nodes > BODYMAX)
+            return false;
+        if (u.tab && !u.num)
+            want[i] = TY_TAB;
+        else if (u.num && !u.tab)
+            want[i] = v->lf ? TY_FLT : TY_INT;
+        any |= want[i] != TY_ANY;
+    }
+    if (!any)
+        return false;
+    int generic = new_label(fs);
+    for (int i = 0; i < f->np; i++) {
+        int k = f->params[i]->slot;
+        if (want[i] == TY_TAB) {
+            emit(fs, "    isa I31, %s, Tab", SR(k));
+            branch(fs, generic, "bz I31");
+        } else if (want[i] == TY_INT) {
+            branch(fs, generic, "bnz %s", SR(k));
+        } else if (want[i] == TY_FLT) {
+            branch(fs, generic, "bne.r %s, " FLT, SR(k));
+        }
+        if (want[i] != TY_ANY)
+            ty_set(fs, k, want[i]);
+    }
+    Scope sc = scope_open(fs);
+    gen_body(fs, f);
+    fs->nslots = sc.nslots;
+    fs->nlocals = sc.nlocals;
+    fs->nactive = sc.nactive;
+    fs->closes.n = sc.closes;
+    fs->dead = true;
+    place(fs, generic);
+    fs->noversion++;
+    gen_body(fs, f);
+    fs->noversion--;
+    return true;
 }
 
 static void gen_block(FS *fs, Block *b) {
@@ -3148,27 +3366,32 @@ static void gen_numfor(FS *fs, Stmt *s) {
         if (x.const_step && x.cstep == 0)
             emit(fs, "    call rt$forzero");
         int slow = new_label(fs), cont = new_label(fs);
-        if (unit) {
-            /* an integer limit: inline */
-            if (ty_get(fs, x.lim) != TY_INT) {
-                branch(fs, slow, "bnz %s", SR(x.lim));
-                set_tag(fs, x.lim, TY_INT);
-            }
+        /* an integer limit with a unit step: inline (and a limit of
+           another type clipped by rt$forprepi in cold code) */
+        bool clip = !unit || ty_get(fs, x.lim) != TY_INT;
+        if (unit && clip) {
+            branch(fs, slow, "bnz %s", SR(x.lim));
+            set_tag(fs, x.lim, TY_INT);
             cold_begin(fs);
             place(fs, slow);
         }
-        /* the limit, clipped to an integer; I31 = 0 when the loop does not run */
-        emit(fs, "    call rt$forprepi (%s, %s, %s, %s, %s) -> (I31, %s, %s)", SI(x.var), SI(x.step), SI(x.lim),
-             SF(x.lim), SR(x.lim), SI(x.lim), unit ? "I30" : SI(x.count));
-        set_tag(fs, x.lim, TY_INT);
-        if (!unit)
-            set_tag(fs, x.count, TY_INT);
-        branch(fs, x.exit, "bz I31");
+        if (clip) {
+            /* the limit, clipped to an integer; I31 = 0 when the loop does not run */
+            emit(fs, "    call rt$forprepi (%s, %s, %s, %s, %s) -> (I31, %s, %s)", SI(x.var), SI(x.step), SI(x.lim),
+                 SF(x.lim), SR(x.lim), SI(x.lim), unit ? "I30" : SI(x.count));
+            set_tag(fs, x.lim, TY_INT);
+            if (!unit)
+                set_tag(fs, x.count, TY_INT);
+            branch(fs, x.exit, "bz I31");
+        }
         if (unit) {
-            jump(fs, cont);
-            cold_end(fs);
+            if (clip) {
+                jump(fs, cont);
+                cold_end(fs);
+            }
             branch(fs, x.exit, "%s %s, %s", x.cstep == 1 ? "bgt" : "blt", SI(x.var), SI(x.lim));
-            place(fs, cont);
+            if (clip)
+                place(fs, cont);
         }
         fs->nlocals = fs->nslots;
         fs->nactive++;
@@ -3513,12 +3736,8 @@ static void gen_function(Func *f, FS *parent) {
         declare(&fs, f->vaname, k);
     }
     fs.nlocals = fs.nslots;
-    gen_stmts(&fs, f->body);
-    if (!fs.dead) {
-        fs.line = f->lastline;
-        close_to(&fs, 0);
-        emit(&fs, "    ret 0, 0, 0.0, " NIL);
-    }
+    if (!version_entry(&fs, f))
+        gen_body(&fs, f);
     pack_scratch(&fs);
     char params[1024];
     sig_params(f, params, sizeof params);
