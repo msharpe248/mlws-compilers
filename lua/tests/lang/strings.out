@@ -1,0 +1,19 @@
+12	HELLO, WORLD	hello, world	Hello	World	llo, Wor	Hello, World|Hello, World
+72	100	72	Hi
+8	9	nil	3	Hello	World
+	ba	5	12!
+one.two.three.
+hell0 w0rld	heLLo	AaBbCc	3
+key	"a \"quoted\"\
+\0x"
+trim|	2024	01	15
+[     0.333] [7         ] [+3] [-0042] [10] [BEE] [1.234560e+02] [A]
+nil	false	12	31	100.0	35	nil	2
+2	2	a-b	1
+6	a	b	"	'	long
+string	with ]] inside
+1, 4, 9, 16, 25
+k=1.5	1	    a|
+0.1 100000 1e+06 1e-05	0.667|1.2346e+04
+ Camel Case String	3	(a(b)c)
+5	world hello lua from	2

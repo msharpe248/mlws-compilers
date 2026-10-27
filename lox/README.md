@@ -1,15 +1,37 @@
-# loxc: Lox for MLWSVM
+# Lox for MLWSVM: mlws-vm-lox
 
 A compiler for [Lox](https://craftinginterpreters.com/the-lox-language.html),
 the language of *Crafting Interpreters*, that produces MLWSVM assembly.
 
 ```sh
 make
-./lox program.lox            # compile and run
-./lox -k program.lox         # ... keeping program.masm next to the source
-./loxc -o out.masm program.lox
-mlwsvm run out.masm
+./mlws-vm-lox program.lox         # compile and run
+./mlws-vm-lox -S program.lox      # export the assembly: program.masm
+mlwsvm run program.masm           # which runs on its own
 ```
+
+`mlws-vm-lox` compiles a program and runs it:
+
+```
+mlws-vm-lox [options] program.lox [args...]
+  -S             only compile: write the assembly and do not run it
+  -k             keep the assembly after running the program
+  -o FILE        the assembly file (default: program.masm next to the source);
+                 with -S, '-' writes it to standard output
+```
+
+`mlws-vm-loxc` is the compiler itself; it only compiles:
+
+```
+mlws-vm-loxc [-o FILE] program.lox
+  -o FILE        write the assembly to FILE (default: program.masm; '-' for stdout)
+```
+
+The assembly is one self-contained file: the program, the runtime
+(`src/runtime.masm`) and a line map, with no imports. It can also be
+assembled to a binary module (`mlwsvm asm program.masm -o program.mlwso`),
+or run under `mlwsvm debug`, `--profile` or `--trace`; each function is named
+`L<n>$name` after the Lox function it came from.
 
 It implements the whole language (closures, classes, inheritance, `super`,
 initializers, `clock()`) and behaves like jlox: it passes all 241 applicable
@@ -18,7 +40,8 @@ recovery and the same runtime error messages. Compile errors exit with status
 65 and runtime errors with 70, as in the book.
 
 ```
-make test     # the book's tests (tests/craftinginterpreters) and loxc's own (tests/loxc)
+make test     # the book's tests (tests/craftinginterpreters), mlws-vm-loxc's own
+              # (tests/compiler), and the mlws-vm-lox driver's -S, -o and -k options
 make bench    # the book's benchmarks
 ```
 
@@ -40,7 +63,7 @@ make bench    # the book's benchmarks
 desugars to `while`). `src/resolver.c` binds variables and reports jlox's
 static errors, and also works out which locals nested functions capture and
 which variables are ever assigned. `src/codegen.c` writes the assembly, and
-`src/runtime.masm` (compiled into loxc and copied into every output file) has
+`src/runtime.masm` (compiled into mlws-vm-loxc and copied into every output file) has
 the struct types and the slow paths. The output is a single self-contained
 `.masm` file.
 
@@ -145,7 +168,7 @@ with per-site caches of field positions, would be the next step.
 `tests/craftinginterpreters` is the test suite from
 [munificent/craftinginterpreters](https://github.com/munificent/craftinginterpreters)
 (MIT licence in that directory); its `SKIP` file lists what does not apply,
-following the book's own configuration for jlox. `tests/loxc` covers what the
+following the book's own configuration for jlox. `tests/compiler` covers what the
 optimisations could get wrong: polymorphic and shadowed method calls, type
 changes through calls, loops and closures, spilled slots, packed arguments
 and captures, construction, and number formatting. Everything also passes

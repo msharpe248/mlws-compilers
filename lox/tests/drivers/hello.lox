@@ -1,0 +1,6 @@
+// Used by tools/test-drivers.sh to check lox -S, -o and -k.
+class Greeter {
+  init(name) { this.name = name; }
+  greet() { return "Hello, " + this.name + "!"; }
+}
+print Greeter("MLWSVM").greet(); // expect: Hello, MLWSVM!

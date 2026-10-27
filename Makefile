@@ -1,5 +1,5 @@
 # Build and test every compiler.
-DIRS = bf lox
+DIRS = bf lox lua
 
 all:
 	@for d in $(DIRS); do $(MAKE) -C $$d || exit 1; done

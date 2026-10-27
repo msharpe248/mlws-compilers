@@ -3,7 +3,7 @@ if [ -z "$MLWSVM" ]; then
     if command -v mlwsvm >/dev/null 2>&1; then
         MLWSVM=$(command -v mlwsvm)
     else
-        repo=$(cd "$(dirname "$0")/.." && pwd)
+        repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
         MLWSVM="$repo/../mlws-vm/mlwsvm"
     fi
 fi

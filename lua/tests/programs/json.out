@@ -1,0 +1,3 @@
+{"count":42,"name":"mlws","nested":{"a":[1,2,{"b":false}],"e":"tab\there"},"tags":["vm","lua","compiler"],"version":5.5}
+mlws	5.5	compiler	false	tab	here	42	integer
+[1,2.5,"xAy",{"k":[true,false]},[]]

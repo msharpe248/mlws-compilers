@@ -1,0 +1,1491 @@
+; ---------------------------------------------------------------------------
+; The built-in library (lua/src/lib.masm): the functions written in
+; assembly. The rest (string.format, patterns, table.sort, io, os.date,
+; utf8) is Lua, in src/prelude.lua. Each function follows the Lua calling
+; convention; gen.c's table (src/builtins.h) gives their names and Fn.sig.
+; ---------------------------------------------------------------------------
+
+; ------------------------------------------------------------ argument checks
+
+.func rt$checkint(i64 argn, ref fname, i64, f64, ref) -> i64
+    bz R1, 1f
+    beq.r R1, 4n, 2f
+    typeof I2, R1
+    bne I2, 1, 9f
+    call rt$str2num (R1) -> (I2, I3, F1, R2)
+    bz I2, 9f
+    mov I1, I3
+    mov F0, F1
+    bz R2, 1f
+2:  call rt$flt2int (F0) -> (I2, I1)
+    bnz I2, 1f
+    call rt$argerror (I0, R0, "number has no integer representation")
+1:  ret I1
+9:  call rt$argtype (I0, R0, "number", I1, F0, R1)
+    ret 0
+.endf
+
+.func rt$optint(i64 argn, ref fname, i64, f64, ref, i64 def) -> i64
+    beq.r R1, 1n, 1f
+    call rt$checkint (I0, R0, I1, F0, R1) -> (I3)
+    ret I3
+1:  ret I2
+.endf
+
+; A number argument (strings convert): the number as a triple.
+.func rt$checknum(i64 argn, ref fname, i64, f64, ref) -> (i64, f64, ref)
+    bz R1, 1f
+    beq.r R1, 4n, 1f
+    typeof I2, R1
+    bne I2, 1, 9f
+    call rt$str2num (R1) -> (I2, I3, F1, R2)
+    bz I2, 9f
+    ret I3, F1, R2
+1:  ret I1, F0, R1
+9:  call rt$argtype (I0, R0, "number", I1, F0, R1)
+    ret 0, 0.0, null
+.endf
+
+; A number argument as a float.
+.func rt$checkflt(i64 argn, ref fname, i64, f64, ref) -> f64
+    call rt$checknum (I0, R0, I1, F0, R1) -> (I1, F0, R1)
+    bnz R1, 1f
+    cvt.f64.i64 F0, I1
+1:  ret F0
+.endf
+
+; A string argument (numbers convert).
+.func rt$checkstr(i64 argn, ref fname, i64, f64, ref) -> ref
+    typeof I2, R1
+    bne I2, 1, 1f
+    ret R1
+1:  bz R1, 2f
+    beq.r R1, 4n, 2f
+    call rt$argtype (I0, R0, "string", I1, F0, R1)
+2:  call rt$tostr_num (I1, F0, R1) -> (R2)
+    ret R2
+.endf
+
+.func rt$checktab(i64 argn, ref fname, i64, f64, ref)
+    isa I2, R1, Tab
+    bnz I2, 1f
+    call rt$argtype (I0, R0, "table", I1, F0, R1)
+1:  ret
+.endf
+
+; Results: one value, or none.
+.macro RET1 i, f, r
+    ret 1, \i, \f, \r
+.endm
+
+; ------------------------------------------------------------------- base
+
+.func B$print(ref) -> (i64, i64, f64, ref)
+    len I0, R0
+    mov I1, 0
+    bufnew R1, 0
+1:  bge I1, I0, 9f
+    bz I1, 2f
+    bufpush R1, 9
+2:  LOADV R0, I1, I2, I3, F3, R3
+    typeof I4, R3
+    bne I4, 1, 3f
+    bufcat R1, R3
+    jmp 4f
+3:  call rt$tostring (I3, F3, R3) -> (R4)
+    bufcat R1, R4
+4:  add I1, 2
+    jmp 1b
+9:  bufpush R1, 10
+    ncall "io.print_s" (R1)
+    ret 0, 0, 0.0, 1n
+.endf
+
+.func B$type(i64 nargs, i64, f64, ref) -> (i64, i64, f64, ref)
+    bz I0, 9f
+    call rt$typename (I1, F0, R0) -> (R1)
+    ret 1, 0, 0.0, R1
+9:  call rt$argerror (1, "type", "value expected")
+    ret 0, 0, 0.0, 1n
+.endf
+
+.func B$tostring(i64 nargs, i64, f64, ref) -> (i64, i64, f64, ref)
+    bz I0, 9f
+    call rt$tostring (I1, F0, R0) -> (R1)
+    ret 1, 0, 0.0, R1
+9:  call rt$argerror (1, "tostring", "value expected")
+    ret 0, 0, 0.0, 1n
+.endf
+
+.func B$tonumber(i64 nargs, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    blt I0, 2, 1f
+    beq.r R1, 1n, 1f
+    tcall rt$tonumber_base (I1, F0, R0, I2, F1, R1)
+1:  bz R0, 8f
+    beq.r R0, 4n, 8f
+    typeof I3, R0
+    bne I3, 1, 2f
+    call rt$str2num (R0) -> (I4, I1, F0, R0)
+    bz I4, 7f
+8:  ret 1, I1, F0, R0
+2:  bnz I0, 7f
+    call rt$argerror (1, "tonumber", "value expected")
+7:  ret 1, 0, 0.0, 1n
+.endf
+
+.func rt$tonumber_base(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checkint (2, "tonumber", I1, F1, R1) -> (I2)
+    typeof I3, R0
+    beq I3, 1, 1f
+    call rt$argtype (1, "tonumber", "string", I0, F0, R0)
+1:  blt I2, 2, 2f
+    ble I2, 36, 3f
+2:  call rt$argerror (2, "tonumber", "base out of range")
+3:  len I4, R0
+    mov I5, 0
+    ; spaces
+4:  bge I5, I4, 90f
+    mov I6, R0[I5]
+    call rt$isspace (I6) -> (I7)
+    bz I7, 5f
+    inc I5
+    jmp 4b
+5:  mov I8, 0           ; negative
+    bne I6, '-', 6f
+    mov I8, 1
+    inc I5
+6:  mov I9, 0           ; value
+    mov I10, 0          ; digits
+7:  bge I5, I4, 20f
+    mov I6, R0[I5]
+    call rt$isspace (I6) -> (I7)
+    bnz I7, 10f
+    blt I6, '0', 90f
+    ble I6, '9', 8f
+    or I6, 32
+    blt I6, 'a', 90f
+    bgt I6, 'z', 90f
+    sub I6, 'a' - 10
+    jmp 9f
+8:  sub I6, '0'
+9:  bge I6, I2, 90f
+    mul I9, I2
+    add I9, I6
+    inc I10
+    inc I5
+    jmp 7b
+10: inc I5              ; trailing spaces
+    bge I5, I4, 20f
+    mov I6, R0[I5]
+    call rt$isspace (I6) -> (I7)
+    bz I7, 90f
+    jmp 10b
+20: bz I10, 90f
+    bz I8, 21f
+    neg I9
+21: ret 1, I9, 0.0, null
+90: ret 1, 0, 0.0, 1n
+.endf
+
+; ipairs(t): the iterator, t, 0
+.func B$ipairs(i64 nargs, i64, f64, ref) -> (i64, i64, f64, ref)
+    bnz I0, 1f
+    call rt$argtype (1, "ipairs", "table", I1, F0, R0)
+1:  mov R1, @rt$mv
+    STOREV R1, 0, I2, I1, F0, R0
+    mov.r R1[2], null
+    mov.i64 R1[3], 0
+    mov R2, @rt$ipairs_aux
+    ret 3, 0, 0.0, R2
+.endf
+
+.func P$ipairs_aux(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    add I1, 1
+    isa I2, R0, Tab
+    bz I2, 5f
+    mov R2, R0->Tab.meta
+    bnz R2, 5f
+    sub I3, I1, 1
+    mov I4, R0->Tab.n
+    bge I3, I4, 5f
+    mov R3, R0->Tab.arr
+    add I3, I3
+    LOADV R3, I3, I5, I6, F6, R6
+    jmp 6f
+5:  call rt$index (I0, F0, R0, I1, 0.0, null, null) -> (I6, F6, R6)
+6:  beq.r R6, 1n, 9f
+    mov R7, @rt$mv
+    STOREV R7, 0, I5, I6, F6, R6
+    ret 2, I1, 0.0, null
+9:  ret 1, 0, 0.0, 1n
+.endf
+
+; pairs(t): __pairs, or next, t, nil
+.func B$pairs(i64 nargs, i64, f64, ref) -> (i64, i64, f64, ref)
+    bnz I0, 1f
+    call rt$argtype (1, "pairs", "table", I1, F0, R0)
+1:  call rt$getmm (I1, F0, R0, "__pairs") -> (I2, F2, R2)
+    beq.r R2, 1n, 2f
+    call rt$call1 (null, I2, F2, R2, I1, F0, R0) -> (I3, I4, F4, R4)
+    call rt$mvget (I3, 2) -> (I5, F5, R5)
+    call rt$mvget (I3, 3) -> (I6, F6, R6)
+    mov R7, @rt$mv
+    STOREV R7, 0, I8, I5, F5, R5
+    STOREV R7, 2, I8, I6, F6, R6
+    ret 3, I4, F4, R4
+2:  mov R7, @rt$mv
+    STOREV R7, 0, I8, I1, F0, R0
+    mov.r R7[2], 1n
+    mov.f64 R7[3], 0.0
+    mov R3, @rt$next_fn
+    ret 3, 0, 0.0, R3
+.endf
+
+.func B$next(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    isa I2, R0, Tab
+    bnz I2, 1f
+    call rt$argtype (1, "next", "table", I0, F0, R0)
+1:  call rt$next (R0, I1, F1, R1) -> (I3, F3, R3, I4, F4, R4)
+    beq.r R3, 1n, 9f
+    mov R5, @rt$mv
+    STOREV R5, 0, I5, I4, F4, R4
+    ret 2, I3, F3, R3
+9:  ret 1, 0, 0.0, 1n
+.endf
+
+.func B$select(i64, f64, ref, ref) -> (i64, i64, f64, ref)
+    len I1, R1
+    shr I1, 1
+    typeof I2, R0
+    bne I2, 1, 1f
+    mov I3, R0[0]
+    bne I3, '#', 1f
+    ret 1, I1, 0.0, null
+1:  call rt$checkint (1, "select", I0, F0, R0) -> (I4)
+    bge I4, 0, 2f
+    add I4, I1
+    blt I4, 0, 8f
+    jmp 3f
+2:  bz I4, 8f
+    dec I4
+3:  call rt$sublist (R1, I4) -> (R2)
+    tcall rt$retlist (R2)
+8:  call rt$argerror (1, "select", "index out of range")
+    ret 0, 0, 0.0, 1n
+.endf
+
+.func B$rawget(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checktab (1, "rawget", I0, F0, R0)
+    call rt$rawget (R0, I1, F1, R1) -> (I2, F2, R2)
+    ret 1, I2, F2, R2
+.endf
+
+.func B$rawset(i64, f64, ref, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checktab (1, "rawset", I0, F0, R0)
+    call rt$rawset (R0, I1, F1, R1, I2, F2, R2)
+    ret 1, 0, 0.0, R0
+.endf
+
+.func rt$rawequal(i64, f64, ref, i64, f64, ref) -> i64
+    beq.r R0, R1, 1f
+    bz R0, 2f
+    bz R1, 2f
+    beq.r R0, 4n, 2f
+    beq.r R1, 4n, 2f
+    typeof I2, R0
+    bne I2, 1, 8f
+    typeof I2, R1
+    bne I2, 1, 8f
+    strcmp I3, R0, R1
+    bz I3, 9f
+8:  ret 0
+2:  call rt$eq (I0, F0, R0, I1, F1, R1) -> (I3)
+    ret I3
+1:  bnz R0, 3f
+    seq I3, I0, I1
+    ret I3
+3:  bne.r R0, 4n, 9f
+    seq.f64 I3, F0, F1
+    ret I3
+9:  ret 1
+.endf
+
+.func B$rawequal(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$rawequal (I0, F0, R0, I1, F1, R1) -> (I2)
+    mov.r R2, 2n
+    bz I2, 1f
+    mov.r R2, 3n
+1:  ret 1, 0, 0.0, R2
+.endf
+
+.func B$rawlen(i64, f64, ref) -> (i64, i64, f64, ref)
+    isa I1, R0, Tab
+    bz I1, 1f
+    mov I2, R0->Tab.n
+    ret 1, I2, 0.0, null
+1:  typeof I1, R0
+    bne I1, 1, 2f
+    len I2, R0
+    ret 1, I2, 0.0, null
+2:  call rt$argerror (1, "rawlen", "table or string expected")
+    ret 0, 0, 0.0, 1n
+.endf
+
+.func B$setmetatable(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checktab (1, "setmetatable", I0, F0, R0)
+    beq.r R1, 1n, 1f
+    isa I2, R1, Tab
+    bnz I2, 1f
+    call rt$argtype (2, "setmetatable", "nil or table", I1, F1, R1)
+1:  mov R2, R0->Tab.meta
+    bz R2, 2f
+    mov I3, R2->Tab.prot
+    bz I3, 2f
+    call rt$rterror ("cannot change a protected metatable")
+2:  bne.r R1, 1n, 3f
+    mov.r R1, null
+3:  mov R0->Tab.meta, R1
+    ret 1, 0, 0.0, R0
+.endf
+
+.func B$getmetatable(i64, f64, ref) -> (i64, i64, f64, ref)
+    isa I1, R0, Tab
+    bz I1, 1f
+    mov R1, R0->Tab.meta
+    bz R1, 9f
+    jmp 2f
+1:  typeof I1, R0
+    bne I1, 1, 9f
+    mov R1, @rt$strmeta
+2:  mov I4, R1->Tab.prot
+    bz I4, 3f
+    call rt$rawget (R1, 0, 0.0, "__metatable") -> (I3, F3, R3)
+    beq.r R3, 1n, 3f
+    ret 1, I3, F3, R3
+3:  ret 1, 0, 0.0, R1
+9:  ret 1, 0, 0.0, 1n
+.endf
+
+.func B$assert(ref) -> (i64, i64, f64, ref)
+    len I0, R0
+    bnz I0, 1f
+    call rt$argerror (1, "assert", "value expected")
+1:  mov R1, R0[0]
+    call rt$truthy (R1) -> (I1)
+    bz I1, 2f
+    tcall rt$retlist (R0)
+2:  blt I0, 4, 3f
+    call rt$listget (R0, 1) -> (I2, F2, R2)
+    typeof I3, R2
+    bne I3, 1, 21f
+    call rt$where (1) -> (R3)
+    strcat R2, R3, R2
+21: call rt$throw (I2, F2, R2)
+3:  call rt$rterror ("assertion failed!")
+    ret 0, 0, 0.0, 1n
+.endf
+
+.func B$error(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    beq.r R0, 1n, 5f
+    typeof I2, R0
+    bne I2, 1, 9f
+    call rt$optint (2, "error", I1, F1, R1, 1) -> (I3)
+    ble I3, 0, 9f
+    call rt$where (I3) -> (R2)
+    strcat R0, R2, R0
+    jmp 9f
+5:  mov R0, "<no error object>"
+9:  call rt$throw (I0, F0, R0)
+    ret 0, 0, 0.0, 1n
+.endf
+
+; Put first in front of the results in @rt$mv (n of them).
+.func rt$shiftmv(i64 n, i64, f64, ref)
+    blt I0, 1, 9f
+    add I2, I0, I0
+    call rt$mvreserve (I2) -> (R1)
+    sub I3, I2, 3           ; last word to move
+1:  blt I3, 0, 2f
+    add I4, I3, 2
+    mov R1[I4], R1[I3]
+    dec I3
+    jmp 1b
+2:  STOREV R1, 0, I5, I1, F0, R0
+9:  ret
+.endf
+
+.func B$pcall(i64, f64, ref, ref) -> (i64, i64, f64, ref)
+.try 8f
+    call rt$apply (I0, F0, R0, R1, null) -> (I1, I2, F2, R2)
+.endtry
+    call rt$shiftmv (I1, I2, F2, R2)
+    add I1, 1
+    ret I1, 0, 0.0, 3n
+8:  catch R3
+    call rt$errvalue (R3) -> (I4, F4, R4)
+    mov R5, @rt$mv
+    STOREV R5, 0, I5, I4, F4, R4
+    ret 2, 0, 0.0, 2n
+.endf
+
+.func B$xpcall(i64, f64, ref, i64, f64, ref, ref) -> (i64, i64, f64, ref)
+.try 8f
+    call rt$apply (I0, F0, R0, R2, null) -> (I2, I3, F3, R3)
+.endtry
+    call rt$shiftmv (I2, I3, F3, R3)
+    add I2, 1
+    ret I2, 0, 0.0, 3n
+8:  catch R4
+    call rt$errvalue (R4) -> (I4, F4, R4)
+    call rt$call1 (null, I1, F1, R1, I4, F4, R4) -> (I5, I6, F6, R6)
+    mov R5, @rt$mv
+    STOREV R5, 0, I7, I6, F6, R6
+    ret 2, 0, 0.0, 2n
+.endf
+
+.func B$collectgarbage(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    beq.r R0, 1n, 1f
+    typeof I2, R0
+    bne I2, 1, 1f
+    strcmp I2, R0, "count"
+    bz I2, 2f
+    strcmp I2, R0, "collect"
+    bz I2, 1f
+    strcmp I2, R0, "step"
+    bz I2, 3f
+    strcmp I2, R0, "isrunning"
+    bz I2, 3f
+    strcmp I2, R0, "incremental"
+    bz I2, 4f
+    strcmp I2, R0, "generational"
+    bz I2, 4f
+    ret 1, 0, 0.0, null
+1:  ncall "gc.collect"
+    ret 1, 0, 0.0, null
+2:  ncall "gc.heap_bytes" -> (I3)
+    cvt.f64.i64 F3, I3
+    div F3, 1024.0
+    ret 1, 0, F3, 4n
+3:  ret 1, 0, 0.0, 3n
+4:  ret 1, 0, 0.0, "incremental"
+.endf
+
+.func B$load(ref) -> (i64, i64, f64, ref)
+    mov R1, @rt$mv
+    mov.r R1[0], "load is not supported by mlws-vm-lua (programs are compiled ahead of time)"
+    mov.f64 R1[1], 0.0
+    ret 2, 0, 0.0, 1n
+.endf
+
+.func B$dofile(ref) -> (i64, i64, f64, ref)
+    call rt$rterror ("dofile is not supported by mlws-vm-lua (programs are compiled ahead of time)")
+    ret 0, 0, 0.0, 1n
+.endf
+
+; ----------------------------------------------------------------- string
+
+.func B$str_len(i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checkstr (1, "len", I0, F0, R0) -> (R1)
+    len I1, R1
+    ret 1, I1, 0.0, null
+.endf
+
+; The start position of a range (posrelatI) and its end (getendpos).
+.func rt$posstart(i64 pos, i64 len) -> i64
+    bgt I0, 0, 9f
+    bz I0, 1f
+    neg I2, I1
+    blt I0, I2, 1f
+    add I0, I1
+    inc I0
+9:  ret I0
+1:  ret 1
+.endf
+
+.func rt$posend(i64 pos, i64 len) -> i64
+    bgt I0, I1, 1f
+    bge I0, 0, 9f
+    neg I2, I1
+    blt I0, I2, 2f
+    add I0, I1
+    inc I0
+9:  ret I0
+1:  ret I1
+2:  ret 0
+.endf
+
+.func B$str_sub(i64, f64, ref, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    typeof I3, R0
+    bne I3, 1, 1f
+    bnz R1, 1f
+    mov R3, R0
+    len I3, R3
+    mov I4, I1
+    mov I5, -1
+    beq.r R2, 1n, 2f
+    bnz R2, 1f
+    mov I5, I2
+    jmp 2f
+1:  call rt$checkstr (1, "sub", I0, F0, R0) -> (R3)
+    len I3, R3
+    call rt$optint (2, "sub", I1, F1, R1, 1) -> (I4)
+    call rt$optint (3, "sub", I2, F2, R2, -1) -> (I5)
+2:  call rt$posstart (I4, I3) -> (I4)
+    call rt$posend (I5, I3) -> (I5)
+    bgt I4, I5, 9f
+    sub I6, I5, I4
+    inc I6
+    dec I4
+    substr R4, R3, I4, I6
+    ret 1, 0, 0.0, R4
+9:  ret 1, 0, 0.0, ""
+.endf
+
+.func B$str_upper(i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checkstr (1, "upper", I0, F0, R0) -> (R1)
+    ncall "text.upper" (R1) -> (R2)
+    ret 1, 0, 0.0, R2
+.endf
+
+.func B$str_lower(i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checkstr (1, "lower", I0, F0, R0) -> (R1)
+    ncall "text.lower" (R1) -> (R2)
+    ret 1, 0, 0.0, R2
+.endf
+
+.func B$str_rep(i64, f64, ref, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checkstr (1, "rep", I0, F0, R0) -> (R3)
+    call rt$checkint (2, "rep", I1, F1, R1) -> (I3)
+    ble I3, 0, 8f
+    beq.r R2, 1n, 5f
+    call rt$checkstr (3, "rep", I2, F2, R2) -> (R4)
+    len I4, R3
+    len I5, R4
+    add I6, I4, I5
+    mul I6, I3
+    bgt I6, 2000000000, 7f
+    bufnew R5, 0
+    mov I7, 0
+1:  bge I7, I3, 2f
+    bz I7, 11f
+    bufcat R5, R4
+11: bufcat R5, R3
+    inc I7
+    jmp 1b
+2:  strcat R6, R5
+    ret 1, 0, 0.0, R6
+5:  len I4, R3
+    mul I6, I4, I3
+    bgt I6, 2000000000, 7f
+    ncall "text.repeat" (R3, I3) -> (R6)
+    ret 1, 0, 0.0, R6
+7:  call rt$rterror ("resulting string too large")
+8:  ret 1, 0, 0.0, ""
+.endf
+
+.func B$str_reverse(i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checkstr (1, "reverse", I0, F0, R0) -> (R1)
+    len I1, R1
+    bufnew R2, 0
+1:  bz I1, 2f
+    dec I1
+    mov I2, R1[I1]
+    bufpush R2, I2
+    jmp 1b
+2:  strcat R3, R2
+    ret 1, 0, 0.0, R3
+.endf
+
+.func B$str_byte(i64, f64, ref, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    ; s:byte(i) for a string and an integer in range
+    bne.r R2, 1n, 10f
+    typeof I3, R0
+    bne I3, 1, 10f
+    beq.r R1, 1n, 5f
+    bnz R1, 10f
+    len I3, R0
+    mov I4, I1
+    bgt I4, 0, 4f
+    bz I4, 10f
+    add I4, I3
+    inc I4
+4:  dec I4
+    blt I4, 0, 10f
+    bge I4, I3, 9f
+    mov I5, R0[I4]
+    ret 1, I5, 0.0, null
+5:  len I3, R0
+    bz I3, 9f
+    mov I5, R0[0]
+    ret 1, I5, 0.0, null
+9:  ret 0, 0, 0.0, 1n
+10: call rt$checkstr (1, "byte", I0, F0, R0) -> (R3)
+    len I3, R3
+    call rt$optint (2, "byte", I1, F1, R1, 1) -> (I4)
+    call rt$optint (3, "byte", I2, F2, R2, I4) -> (I5)
+    call rt$posstart (I4, I3) -> (I4)
+    call rt$posend (I5, I3) -> (I5)
+    bgt I4, I5, 9f
+    beq I4, I5, 5f
+    lnew R4
+1:  bgt I4, I5, 2f
+    sub I6, I4, 1
+    mov I7, R3[I6]
+    lpush.r R4, null
+    lpush R4, I7
+    inc I4
+    jmp 1b
+2:  tcall rt$retlist (R4)
+5:  sub I6, I4, 1
+    mov I7, R3[I6]
+    ret 1, I7, 0.0, null
+9:  ret 0, 0, 0.0, 1n
+.endf
+
+.func B$str_char(ref) -> (i64, i64, f64, ref)
+    len I0, R0
+    mov I1, 0
+    bufnew R1, 0
+1:  bge I1, I0, 9f
+    LOADV R0, I1, I2, I3, F3, R3
+    shr I4, I1, 1
+    inc I4
+    call rt$checkint (I4, "char", I3, F3, R3) -> (I5)
+    blt I5, 0, 8f
+    bgt I5, 255, 8f
+    bufpush R1, I5
+    add I1, 2
+    jmp 1b
+8:  call rt$argerror (I4, "char", "value out of range")
+9:  strcat R2, R1
+    ret 1, 0, 0.0, R2
+.endf
+
+; ------------------------------------------------------------------ table
+
+.func B$tab_insert(i64 nargs, i64, f64, ref, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checktab (1, "insert", I1, F0, R0)
+    mov R3, R0->Tab.meta
+    bnz R3, 50f
+    mov I4, R0->Tab.n           ; #t
+    beq I0, 2, 10f
+    bne I0, 3, 90f
+    call rt$checkint (2, "insert", I2, F1, R1) -> (I5)
+    sub I6, I5, 1
+    blt I6, 0, 91f
+    bgt I6, I4, 91f
+    beq I6, I4, 20f
+    ; insert inside the array part
+    mov R4, R0->Tab.arr
+    add I6, I6
+    bnz R2, 1f
+    lins R4, I6, I3
+    jmp 2f
+1:  lins R4, I6, F2
+2:  lins R4, I6, R2
+    inc I4
+    mov R0->Tab.n, I4
+    beq.r R2, 1n, 3f
+    ret 0, 0, 0.0, 1n
+3:  ; a nil went in: the array may end in nils
+    call rt$trimarr (R0)
+    ret 0, 0, 0.0, 1n
+10: ; t[#t+1] = v
+    beq.r R1, 1n, 11f
+    call rt$append (R0, I2, F1, R1)
+11: ret 0, 0, 0.0, 1n
+20: beq.r R2, 1n, 11b
+    call rt$append (R0, I3, F2, R2)
+    ret 0, 0, 0.0, 1n
+50: ; with metamethods
+    call rt$len (I1, F0, R0, null) -> (I4, F4, R4)
+    call rt$checkint (1, "insert", I4, F4, R4) -> (I4)
+    beq I0, 2, 60f
+    bne I0, 3, 90f
+    call rt$checkint (2, "insert", I2, F1, R1) -> (I5)
+    sub I6, I5, 1
+    blt I6, 0, 91f
+    bgt I6, I4, 91f
+    mov I7, I4
+51: blt I7, I5, 52f
+    call rt$index (I1, F0, R0, I7, 0.0, null, null) -> (I8, F8, R8)
+    add I9, I7, 1
+    call rt$setindex (I1, F0, R0, I9, 0.0, null, I8, F8, R8, null)
+    dec I7
+    jmp 51b
+52: call rt$setindex (I1, F0, R0, I5, 0.0, null, I3, F2, R2, null)
+    ret 0, 0, 0.0, 1n
+60: add I5, I4, 1
+    call rt$setindex (I1, F0, R0, I5, 0.0, null, I2, F1, R1, null)
+    ret 0, 0, 0.0, 1n
+90: call rt$rterror ("wrong number of arguments to 'insert'")
+91: call rt$argerror (2, "insert", "position out of bounds")
+    ret 0, 0, 0.0, 1n
+.endf
+
+.func B$tab_remove(i64 nargs, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checktab (1, "remove", I1, F0, R0)
+    mov R3, R0->Tab.meta
+    bnz R3, 50f
+    mov I4, R0->Tab.n
+    mov I5, I4
+    blt I0, 2, 1f
+    beq.r R1, 1n, 1f
+    call rt$checkint (2, "remove", I2, F1, R1) -> (I5)
+1:  beq I5, I4, 2f
+    sub I6, I5, 1
+    blt I6, 0, 91f
+    bgt I6, I4, 91f
+2:  sub I6, I5, 1
+    blt I6, 0, 50f
+    bge I6, I4, 50f
+    ; inside the array part
+    mov R4, R0->Tab.arr
+    add I6, I6
+    LOADV R4, I6, I7, I8, F8, R8
+    ldel R4, I6
+    ldel R4, I6
+    dec I4
+    mov R0->Tab.n, I4
+    call rt$trimarr (R0)
+    ret 1, I8, F8, R8
+50: ; with metamethods, or outside the array part
+    call rt$len (I1, F0, R0, null) -> (I4, F4, R4)
+    call rt$checkint (1, "remove", I4, F4, R4) -> (I4)
+    mov I5, I4
+    blt I0, 2, 51f
+    beq.r R1, 1n, 51f
+    call rt$checkint (2, "remove", I2, F1, R1) -> (I5)
+51: beq I5, I4, 52f
+    sub I6, I5, 1
+    blt I6, 0, 91f
+    bgt I6, I4, 91f
+52: call rt$index (I1, F0, R0, I5, 0.0, null, null) -> (I8, F8, R8)
+53: bge I5, I4, 54f
+    add I9, I5, 1
+    call rt$index (I1, F0, R0, I9, 0.0, null, null) -> (I10, F10, R10)
+    call rt$setindex (I1, F0, R0, I5, 0.0, null, I10, F10, R10, null)
+    mov I5, I9
+    jmp 53b
+54: call rt$setindex (I1, F0, R0, I5, 0.0, null, 0, 0.0, 1n, null)
+    ret 1, I8, F8, R8
+91: call rt$argerror (2, "remove", "position out of bounds")
+    ret 0, 0, 0.0, 1n
+.endf
+
+.func B$tab_concat(i64, f64, ref, i64, f64, ref, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checktab (1, "concat", I0, F0, R0)
+    mov R4, ""
+    beq.r R1, 1n, 1f
+    call rt$checkstr (2, "concat", I1, F1, R1) -> (R4)
+1:  call rt$optint (3, "concat", I2, F2, R2, 1) -> (I4)
+    beq.r R3, 1n, 2f
+    call rt$checkint (4, "concat", I3, F3, R3) -> (I5)
+    jmp 3f
+2:  call rt$len (I0, F0, R0, null) -> (I5, F5, R5)
+    call rt$checkint (1, "concat", I5, F5, R5) -> (I5)
+3:  bufnew R6, 0
+    mov I6, I4
+4:  bgt I6, I5, 9f
+    call rt$index (I0, F0, R0, I6, 0.0, null, null) -> (I7, F7, R7)
+    call rt$tostr_num (I7, F7, R7) -> (R8)
+    bz R8, 8f
+    bufcat R6, R8
+    beq I6, I5, 9f
+    bufcat R6, R4
+    inc I6
+    jmp 4b
+8:  call rt$typename (I7, F7, R7) -> (R9)
+    tostr R10, I6
+    strcat R11, "invalid value (", R9, ") at index ", R10, " in table for 'concat'"
+    call rt$rterror (R11)
+9:  strcat R12, R6
+    ret 1, 0, 0.0, R12
+.endf
+
+.func B$tab_unpack(i64, f64, ref, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$optint (2, "unpack", I1, F1, R1, 1) -> (I3)
+    beq.r R2, 1n, 1f
+    call rt$checkint (3, "unpack", I2, F2, R2) -> (I4)
+    jmp 2f
+1:  call rt$len (I0, F0, R0, null) -> (I4, F4, R4)
+    call rt$checkint (1, "unpack", I4, F4, R4) -> (I4)
+2:  bgt I3, I4, 9f
+    sub I5, I4, I3
+    bge I5, 10000000, 8f
+    lnew R5
+    isa I6, R0, Tab
+    bz I6, 5f
+    mov R6, R0->Tab.meta
+    bnz R6, 5f
+3:  bgt I3, I4, 4f
+    call rt$rawget (R0, I3, 0.0, null) -> (I7, F7, R7)
+    PUSHV R5, I7, F7, R7
+    inc I3
+    jmp 3b
+4:  tcall rt$retlist (R5)
+5:  bgt I3, I4, 4b
+    call rt$index (I0, F0, R0, I3, 0.0, null, null) -> (I7, F7, R7)
+    PUSHV R5, I7, F7, R7
+    inc I3
+    jmp 5b
+8:  call rt$rterror ("too many results to unpack")
+9:  ret 0, 0, 0.0, 1n
+.endf
+
+.func B$tab_pack(ref) -> (i64, i64, f64, ref)
+    call rt$vatable (R0) -> (R1)
+    ret 1, 0, 0.0, R1
+.endf
+
+.func B$tab_create(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checkint (1, "create", I0, F0, R0) -> (I2)
+    new R2, Tab
+    blt I2, 1, 1f
+    add I3, I2, I2
+    lnew R3, I3
+    mov R2->Tab.arr, R3
+1:  ret 1, 0, 0.0, R2
+.endf
+
+; ------------------------------------------------------------------- math
+
+.func B$math_floor(i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checknum (1, "floor", I0, F0, R0) -> (I0, F0, R0)
+    bnz R0, 1f
+    ret 1, I0, 0.0, null
+1:  floor F0, F0
+    call rt$flt2int (F0) -> (I1, I2)
+    bz I1, 2f
+    ret 1, I2, 0.0, null
+2:  ret 1, 0, F0, 4n
+.endf
+
+.func B$math_ceil(i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checknum (1, "ceil", I0, F0, R0) -> (I0, F0, R0)
+    bnz R0, 1f
+    ret 1, I0, 0.0, null
+1:  ceil F0, F0
+    call rt$flt2int (F0) -> (I1, I2)
+    bz I1, 2f
+    ret 1, I2, 0.0, null
+2:  ret 1, 0, F0, 4n
+.endf
+
+.func B$math_abs(i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checknum (1, "abs", I0, F0, R0) -> (I0, F0, R0)
+    bnz R0, 1f
+    abs I0
+    ret 1, I0, 0.0, null
+1:  abs F0
+    ret 1, 0, F0, 4n
+.endf
+
+.macro MATHF1 name, op
+.func B$math_\name(i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checkflt (1, "\name", I0, F0, R0) -> (F0)
+    \op
+    ret 1, 0, F0, 4n
+.endf
+.endm
+
+MATHF1 sqrt, sqrt F0
+MATHF1 sin, ncall "math.sin" (F0) -> (F0)
+MATHF1 cos, ncall "math.cos" (F0) -> (F0)
+MATHF1 tan, ncall "math.tan" (F0) -> (F0)
+MATHF1 asin, ncall "math.asin" (F0) -> (F0)
+MATHF1 acos, ncall "math.acos" (F0) -> (F0)
+MATHF1 exp, ncall "math.exp" (F0) -> (F0)
+
+.func B$math_atan(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checkflt (1, "atan", I0, F0, R0) -> (F2)
+    mov F3, 1.0
+    beq.r R1, 1n, 1f
+    call rt$checkflt (2, "atan", I1, F1, R1) -> (F3)
+1:  ncall "math.atan2" (F2, F3) -> (F4)
+    ret 1, 0, F4, 4n
+.endf
+
+.func B$math_log(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checkflt (1, "log", I0, F0, R0) -> (F2)
+    beq.r R1, 1n, 1f
+    call rt$checkflt (2, "log", I1, F1, R1) -> (F3)
+    beq.f64 F3, 2.0, 2f
+    beq.f64 F3, 10.0, 3f
+    ncall "math.log" (F2) -> (F4)
+    ncall "math.log" (F3) -> (F5)
+    div F4, F5
+    ret 1, 0, F4, 4n
+1:  ncall "math.log" (F2) -> (F4)
+    ret 1, 0, F4, 4n
+2:  ncall "math.log2" (F2) -> (F4)
+    ret 1, 0, F4, 4n
+3:  ncall "math.log10" (F2) -> (F4)
+    ret 1, 0, F4, 4n
+.endf
+
+.func B$math_fmod(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checknum (1, "fmod", I0, F0, R0) -> (I0, F0, R0)
+    call rt$checknum (2, "fmod", I1, F1, R1) -> (I1, F1, R1)
+    bnz R0, 5f
+    bnz R1, 5f
+    bnz I1, 1f
+    call rt$argerror (2, "fmod", "zero")
+1:  beq I1, -1, 2f
+    rem I2, I0, I1
+    ret 1, I2, 0.0, null
+2:  ret 1, 0, 0.0, null
+5:  bnz R0, 6f
+    cvt.f64.i64 F0, I0
+6:  bnz R1, 7f
+    cvt.f64.i64 F1, I1
+7:  rem F2, F0, F1
+    ret 1, 0, F2, 4n
+.endf
+
+.func B$math_modf(i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checkflt (1, "modf", I0, F0, R0) -> (F0)
+    beq.f64 F0, inf, 3f
+    beq.f64 F0, -inf, 3f
+    trunc F1, F0
+    sub F2, F0, F1
+    jmp 4f
+3:  mov F1, F0
+    mov F2, 0.0
+4:  mov R1, @rt$mv
+    mov I3, 0
+    mov.r R1[I3], 4n
+    inc I3
+    mov R1[I3], F2
+    call rt$flt2int (F1) -> (I1, I2)
+    bz I1, 5f
+    ret 2, I2, 0.0, null
+5:  ret 2, 0, F1, 4n
+.endf
+
+.func B$math_tointeger(i64, f64, ref) -> (i64, i64, f64, ref)
+    bnz R0, 1f
+    ret 1, I0, 0.0, null
+1:  bne.r R0, 4n, 2f
+    call rt$flt2int (F0) -> (I1, I2)
+    bz I1, 9f
+    ret 1, I2, 0.0, null
+2:  typeof I1, R0
+    bne I1, 1, 9f
+    call rt$str2num (R0) -> (I1, I0, F0, R0)
+    bz I1, 9f
+    bz R0, 3f
+    call rt$flt2int (F0) -> (I1, I0)
+    bz I1, 9f
+3:  ret 1, I0, 0.0, null
+9:  ret 1, 0, 0.0, 1n
+.endf
+
+.func B$math_type(i64 nargs, i64, f64, ref) -> (i64, i64, f64, ref)
+    bnz I0, 1f
+    call rt$argerror (1, "type", "value expected")
+1:  bnz R0, 2f
+    ret 1, 0, 0.0, "integer"
+2:  bne.r R0, 4n, 3f
+    ret 1, 0, 0.0, "float"
+3:  ret 1, 0, 0.0, 1n
+.endf
+
+.func rt$minmax(i64 max, i64, f64, ref, ref rest, ref fname) -> (i64, i64, f64, ref)
+    call rt$checknum (1, R2, I1, F0, R0) -> (I1, F0, R0)
+    len I2, R1
+    mov I3, 0
+1:  bge I3, I2, 9f
+    LOADV R1, I3, I4, I5, F5, R5
+    shr I6, I3, 1
+    add I6, 2
+    call rt$checknum (I6, R2, I5, F5, R5) -> (I5, F5, R5)
+    bz I0, 2f
+    call rt$lt (I1, F0, R0, I5, F5, R5) -> (I7)
+    jmp 3f
+2:  call rt$lt (I5, F5, R5, I1, F0, R0) -> (I7)
+3:  bz I7, 4f
+    mov I1, I5
+    mov F0, F5
+    mov R0, R5
+4:  add I3, 2
+    jmp 1b
+9:  ret 1, I1, F0, R0
+.endf
+
+.func B$math_max(i64, f64, ref, ref) -> (i64, i64, f64, ref)
+    tcall rt$minmax (1, I0, F0, R0, R1, "max")
+.endf
+
+.func B$math_min(i64, f64, ref, ref) -> (i64, i64, f64, ref)
+    tcall rt$minmax (0, I0, F0, R0, R1, "min")
+.endf
+
+.func B$math_random(i64 nargs, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    bnz I0, 1f
+    ncall "random.float" -> (F2)
+    ret 1, 0, F2, 4n
+1:  mov I3, 1
+    call rt$checkint (1, "random", I1, F0, R0) -> (I4)
+    beq I0, 1, 2f
+    bne I0, 2, 8f
+    mov I3, I4
+    call rt$checkint (2, "random", I2, F1, R1) -> (I4)
+2:  ble I3, I4, 3f
+    sub I5, I0, 1
+    add I5, 1
+    call rt$argerror (I0, "random", "interval is empty")
+3:  ncall "random.int" (I3, I4) -> (I6)
+    ret 1, I6, 0.0, null
+8:  call rt$rterror ("wrong number of arguments")
+    ret 0, 0, 0.0, 1n
+.endf
+
+.func B$math_randomseed(i64 nargs, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    bz I0, 9f
+    call rt$checknum (1, "randomseed", I1, F0, R0) -> (I1, F0, R0)
+    bz R0, 1f
+    bitcast.i64.f64 I1, F0
+1:  ncall "random.seed" (I1)
+9:  ret 0, 0, 0.0, 1n
+.endf
+
+.func B$math_ult(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checkint (1, "ult", I0, F0, R0) -> (I2)
+    call rt$checkint (2, "ult", I1, F1, R1) -> (I3)
+    blt.u64 I2, I3, 1f
+    ret 1, 0, 0.0, 2n
+1:  ret 1, 0, 0.0, 3n
+.endf
+
+; --------------------------------------------------------------------- io
+
+.func B$io_write(ref) -> (i64, i64, f64, ref)
+    len I0, R0
+    mov I1, 0
+1:  bge I1, I0, 9f
+    LOADV R0, I1, I2, I3, F3, R3
+    shr I4, I1, 1
+    inc I4
+    call rt$checkstr (I4, "write", I3, F3, R3) -> (R4)
+    ncall "io.print_s" (R4)
+    add I1, 2
+    jmp 1b
+9:  mov R5, @rt$stdout
+    ret 1, 0, 0.0, R5
+.endf
+
+; --------------------------------------------------------------------- os
+
+.func B$os_clock -> (i64, i64, f64, ref)
+    ncall "time.monotonic" -> (I0)
+    sub I0, @rt$start
+    cvt.f64.i64 F0, I0
+    div F0, 1e9
+    ret 1, 0, F0, 4n
+.endf
+
+.func B$os_getenv(i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checkstr (1, "getenv", I0, F0, R0) -> (R1)
+    ncall "os.env" (R1) -> (R2)
+    bnz R2, 1f
+    mov.r R2, 1n
+1:  ret 1, 0, 0.0, R2
+.endf
+
+.func B$os_exit(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    mov I2, 0
+    beq.r R0, 1n, 9f
+    beq.r R0, 3n, 9f
+    mov I2, 1
+    beq.r R0, 2n, 9f
+    call rt$checkint (1, "exit", I0, F0, R0) -> (I2)
+9:  ncall "os.exit" (I2)
+    ret 0, 0, 0.0, 1n
+.endf
+
+.func B$os_remove(i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checkstr (1, "remove", I0, F0, R0) -> (R1)
+.try 8f
+    ncall "fs.remove" (R1)
+.endtry
+    ret 1, 0, 0.0, 3n
+8:  catch R2
+    tcall rt$ioerror (R1, R2)
+.endf
+
+.func B$os_rename(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$checkstr (1, "rename", I0, F0, R0) -> (R2)
+    call rt$checkstr (2, "rename", I1, F1, R1) -> (R3)
+.try 8f
+    ncall "fs.rename" (R2, R3)
+.endtry
+    ret 1, 0, 0.0, 3n
+8:  catch R4
+    tcall rt$ioerror (R2, R4)
+.endf
+
+; nil, "name: message", code for a failed file operation.
+.func rt$ioerror(ref name, ref err) -> (i64, i64, f64, ref)
+    isa I0, R1, Error
+    bz I0, 1f
+    mov R2, R1->Error.message
+    ; "fs.open: path: reason" is already "path: reason" after its prefix
+    ncall "text.starts_with" (R2, "fs.") -> (I1)
+    bz I1, 2f
+    strfind I2, R2, ": "
+    blt I2, 0, 2f
+    add I2, 2
+    len I3, R2
+    sub I3, I2
+    substr R3, R2, I2, I3
+    jmp 3f
+1:  mov R2, "error"
+2:  strcat R3, R0, ": ", R2
+3:
+    mov R4, @rt$mv
+    mov.r R4[0], R3
+    mov.f64 R4[1], 0.0
+    mov.r R4[2], null
+    mov.i64 R4[3], 2
+    ret 3, 0, 0.0, 1n
+.endf
+
+; -------------------------------------------------------------- coroutine
+
+; The body of every coroutine: call its function (UP[0]) with the first
+; resume's arguments, and hand back its results.
+.func rt$co_body(ref args) -> ref
+    mov R1, UP[0]
+    call rt$apply (0, 0.0, R1, R0, null) -> (I0, I1, F1, R2)
+    call rt$collect (I0, I1, F1, R2) -> (R3)
+    ret R3
+.endf
+
+.func rt$newthread(i64, f64, ref) -> ref
+    isa I1, R0, Fn
+    bnz I1, 1f
+    call rt$argtype (1, "create", "function", I0, F0, R0)
+1:  closure rt$co_body (R0) -> (R1)
+    conew R2, R1, 4096
+    new R3, Thread
+    mov R3->Thread.co, R2
+    mov R3->Thread.fn, R0
+    ret R3
+.endf
+
+.func B$co_create(i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$newthread (I0, F0, R0) -> (R1)
+    ret 1, 0, 0.0, R1
+.endf
+
+; Resume a Thread with a list of values: (ok, results list or error value).
+.func rt$resume(ref thread, ref args) -> (i64, i64, f64, ref)
+    mov R2, R0->Thread.co
+    bz R2, 7f
+    costatus I0, R2
+    beq I0, 3, 6f
+    bnz I0, 7f
+    mov R3, @rt$cur
+    mov @rt$cur, R0
+.try 8f
+    coresume R2 (R1) -> (R4)
+.endtry
+    mov @rt$cur, R3
+    ret 1, 0, 0.0, R4
+6:  ret 0, 0, 0.0, "cannot resume dead coroutine"
+7:  ret 0, 0, 0.0, "cannot resume non-suspended coroutine"
+8:  catch R5
+    mov @rt$cur, R3
+    call rt$errvalue (R5) -> (I1, F1, R6)
+    mov R0->Thread.ei, I1
+    mov R0->Thread.ef, F1
+    mov R0->Thread.er, R6
+    mov R0->Thread.failed, 1
+    ret 0, I1, F1, R6
+.endf
+
+.func B$co_resume(i64, f64, ref, ref) -> (i64, i64, f64, ref)
+    isa I1, R0, Thread
+    bnz I1, 1f
+    call rt$argtype (1, "resume", "coroutine", I0, F0, R0)
+1:  call rt$resume (R0, R1) -> (I2, I3, F3, R3)
+    bz I2, 5f
+    lnew R4
+    lpush.r R4, 3n
+    lpush R4, 0.0
+    call rt$appendlist (R4, R3)
+    tcall rt$retlist (R4)
+5:  mov R5, @rt$mv
+    STOREV R5, 0, I4, I3, F3, R3
+    ret 2, 0, 0.0, 2n
+.endf
+
+.func B$co_yield(ref) -> (i64, i64, f64, ref)
+    cocur R1
+    bnz R1, 1f
+    call rt$rterror ("attempt to yield from outside a coroutine")
+1:  coyield (R0) -> (R2)
+    tcall rt$retlist (R2)
+.endf
+
+.func rt$costatus(ref) -> ref
+    mov R1, @rt$cur
+    beq.r R0, R1, 1f
+    mov R2, R0->Thread.co
+    bz R2, 2f
+    costatus I0, R2
+    beq I0, 0, 3f
+    beq I0, 1, 1f
+    beq I0, 2, 2f
+    ret "dead"
+1:  ret "running"
+2:  ret "normal"
+3:  ret "suspended"
+.endf
+
+.func B$co_status(i64, f64, ref) -> (i64, i64, f64, ref)
+    isa I1, R0, Thread
+    bnz I1, 1f
+    call rt$argtype (1, "status", "coroutine", I0, F0, R0)
+1:  call rt$costatus (R0) -> (R1)
+    ret 1, 0, 0.0, R1
+.endf
+
+.func B$co_running -> (i64, i64, f64, ref)
+    mov R0, @rt$cur
+    mov R1, @rt$mv
+    mov.r R1[0], 2n
+    mov R2, R0->Thread.co
+    bnz R2, 1f
+    mov.r R1[0], 3n
+1:  mov.f64 R1[1], 0.0
+    ret 2, 0, 0.0, R0
+.endf
+
+.func B$co_isyieldable -> (i64, i64, f64, ref)
+    cocur R0
+    bz R0, 1f
+    ret 1, 0, 0.0, 3n
+1:  ret 1, 0, 0.0, 2n
+.endf
+
+; The function coroutine.wrap returns (UP[0] is the Thread).
+.func B$wrap_call(ref args) -> (i64, i64, f64, ref)
+    mov R1, UP[0]
+    call rt$resume (R1, R0) -> (I0, I1, F1, R2)
+    bz I0, 5f
+    tcall rt$retlist (R2)
+5:  typeof I2, R2
+    bne I2, 1, 6f
+    call rt$where (1) -> (R3)
+    strcat R2, R3, R2
+6:  call rt$throw (I1, F1, R2)
+    ret 0, 0, 0.0, 1n
+.endf
+
+.func B$co_wrap(i64, f64, ref) -> (i64, i64, f64, ref)
+    isa I1, R0, Fn
+    bnz I1, 1f
+    call rt$argtype (1, "wrap", "function", I0, F0, R0)
+1:  call rt$newthread (I0, F0, R0) -> (R1)
+    closure B$wrap_call (R1) -> (R2)
+    new R3, Fn
+    mov R3->Fn.clo, R2
+    mov R3->Fn.sig, 100
+    ret 1, 0, 0.0, R3
+.endf
+
+.func B$co_close(i64, f64, ref) -> (i64, i64, f64, ref)
+    isa I1, R0, Thread
+    bnz I1, 1f
+    call rt$argtype (1, "close", "coroutine", I0, F0, R0)
+1:  call rt$costatus (R0) -> (R1)
+    strcmp I2, R1, "running"
+    bnz I2, 2f
+    call rt$rterror ("cannot close a running coroutine")
+2:  strcmp I2, R1, "normal"
+    bnz I2, 3f
+    call rt$rterror ("cannot close a normal coroutine")
+3:  mov R2, R0->Thread.co
+    coclose R2
+    mov I3, R0->Thread.failed
+    bnz I3, 4f
+    ret 1, 0, 0.0, 3n
+4:  mov I4, R0->Thread.ei
+    mov F4, R0->Thread.ef
+    mov R4, R0->Thread.er
+    mov R5, @rt$mv
+    STOREV R5, 0, I5, I4, F4, R4
+    mov R0->Thread.failed, 0
+    ret 2, 0, 0.0, 2n
+.endf
+
+; --------------------------------------------------------- prelude primitives
+
+; P.fmt(spec, value): text.format of one value.
+.func P$fmt(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    lnew R2
+    bnz R1, 1f
+    lpush R2, I1
+    jmp 3f
+1:  bne.r R1, 4n, 2f
+    lpush R2, F1
+    jmp 3f
+2:  lpush R2, R1
+3:  ncall "text.format" (R0, R2) -> (R3)
+    ret 1, 0, 0.0, R3
+.endf
+
+; P.find(s, needle, init): plain search from byte init (1-based), or nil.
+.func P$find(i64, f64, ref, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    sub I3, I2, 1
+    len I4, R0
+    bgt I3, I4, 9f
+    strfind I5, R0, R1, I3
+    blt I5, 0, 9f
+    inc I5
+    ret 1, I5, 0.0, null
+9:  ret 1, 0, 0.0, 1n
+.endf
+
+; P.std(n): the standard stream n (0 in, 1 out, 2 err).
+.func P$std(i64, f64, ref) -> (i64, i64, f64, ref)
+    beq I0, 0, 1f
+    beq I0, 1, 2f
+    ncall "fs.stderr" -> (R1)
+    ret 1, 0, 0.0, R1
+1:  ncall "fs.stdin" -> (R1)
+    ret 1, 0, 0.0, R1
+2:  ncall "fs.stdout" -> (R1)
+    ret 1, 0, 0.0, R1
+.endf
+
+.func P$setstdout(i64, f64, ref) -> (i64, i64, f64, ref)
+    mov @rt$stdout, R0
+    ret 0, 0, 0.0, 1n
+.endf
+
+; P.write(h, s): stdout goes through the VM's print buffer.
+.func P$write(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    beq I0, 1, 1f
+.try 8f
+    ncall "fs.write" (R0, R1)
+.endtry
+    ret 1, 0, 0.0, 3n
+1:  ncall "io.print_s" (R1)
+    ret 1, 0, 0.0, 3n
+8:  catch R2
+    tcall rt$ioerror ("write", R2)
+.endf
+
+; P.open(path, mode): a handle, or nil and a message.
+.func P$open(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+.try 8f
+    ncall "fs.open" (R0, R1) -> (R2)
+.endtry
+    ret 1, 0, 0.0, R2
+8:  catch R3
+    tcall rt$ioerror (R0, R3)
+.endf
+
+.func P$close(i64, f64, ref) -> (i64, i64, f64, ref)
+.try 8f
+    ncall "fs.close" (R0)
+.endtry
+8:  ret 1, 0, 0.0, 3n
+.endf
+
+; P.readline(h): a line without its newline, or nil at the end.
+.func P$readline(i64, f64, ref) -> (i64, i64, f64, ref)
+.try 8f
+    ncall "fs.read_line" (R0) -> (R1)
+.endtry
+    bnz R1, 1f
+    mov.r R1, 1n
+1:  ret 1, 0, 0.0, R1
+8:  catch R2
+    ret 1, 0, 0.0, 1n
+.endf
+
+; P.read(h, n): up to n bytes (n <= 0: all), or nil at the end.
+.func P$read(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+.try 8f
+    ble I1, 0, 2f
+    ncall "fs.read" (R0, I1) -> (R2)
+    jmp 3f
+2:  ncall "fs.read_all" (R0) -> (R2)
+.endtry
+3:  len I2, R2
+    bgt I1, 0, 4f
+    strcat R3, R2
+    ret 1, 0, 0.0, R3
+4:  bz I2, 9f
+    strcat R3, R2
+    ret 1, 0, 0.0, R3
+8:  catch R4
+9:  ret 1, 0, 0.0, 1n
+.endf
+
+.func P$seek(i64, f64, ref, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+.try 8f
+    ncall "fs.seek" (R0, I2, I1) -> (I3)
+.endtry
+    ret 1, I3, 0.0, null
+8:  catch R3
+    tcall rt$ioerror ("seek", R3)
+.endf
+
+; P.now(): seconds since the epoch.
+.func P$now -> (i64, i64, f64, ref)
+    ncall "time.now" -> (I0)
+    div I0, 1000000000
+    ret 1, I0, 0.0, null
+.endf
+
+; P.date(t, utc): a table of the fields of time t (seconds).
+.func P$date(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    mul I2, I0, 1000000000
+    mov I3, 0
+    beq.r R1, 3n, 1f
+    ncall "time.local_offset" (I2) -> (I3)
+1:  ncall "time.date" (I2, I3) -> (R2)
+    new R3, Tab
+    mov I4, R2->Date.year
+    call rt$setfield (R3, "year", I4, 0.0, null)
+    mov I4, R2->Date.month
+    call rt$setfield (R3, "month", I4, 0.0, null)
+    mov I4, R2->Date.day
+    call rt$setfield (R3, "day", I4, 0.0, null)
+    mov I4, R2->Date.hour
+    call rt$setfield (R3, "hour", I4, 0.0, null)
+    mov I4, R2->Date.minute
+    call rt$setfield (R3, "min", I4, 0.0, null)
+    mov I4, R2->Date.second
+    call rt$setfield (R3, "sec", I4, 0.0, null)
+    mov I4, R2->Date.weekday
+    rem I4, 7
+    inc I4
+    call rt$setfield (R3, "wday", I4, 0.0, null)
+    mov I4, R2->Date.yday
+    call rt$setfield (R3, "yday", I4, 0.0, null)
+    call rt$setfield (R3, "isdst", 0, 0.0, 2n)
+    ret 1, 0, 0.0, R3
+.endf
+
+; P.time(year, month, day, hour, min, sec): seconds, in local time.
+.func P$time(i64, f64, ref, i64, f64, ref, i64, f64, ref, i64, f64, ref, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    new R6, Date
+    mov R6->Date.year, I0
+    mov R6->Date.month, I1
+    mov R6->Date.day, I2
+    mov R6->Date.hour, I3
+    mov R6->Date.minute, I4
+    mov R6->Date.second, I5
+    ncall "time.from_date" (R6) -> (I6)
+    ncall "time.local_offset" (I6) -> (I7)
+    mul I7, 60000000000
+    sub I6, I7
+    div I6, 1000000000
+    ret 1, I6, 0.0, null
+.endf

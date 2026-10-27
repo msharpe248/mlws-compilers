@@ -1,13 +1,17 @@
 # Build outputs
-bf/bfc
-lox/loxc
+bf/mlws-vm-bfc
+lox/mlws-vm-loxc
+lua/mlws-vm-luac
 *.o
 lox/src/runtime_masm.c
+lua/src/embedded.c
 
-# Assembly kept by `lox -k` or written by bfc next to a program
+# Assembly kept by `mlws-vm-lox -k` or written by mlws-vm-bfc next to a program
 bf/examples/*.masm
 bf/tests/*.masm
 lox/tests/**/*.masm
+lua/tests/**/*.masm
+lua/bench/*.masm
 
 .DS_Store
 __pycache__/

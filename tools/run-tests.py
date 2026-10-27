@@ -4,9 +4,10 @@ compare the results with the expectations.
 
     run-tests.py bf  DIR...     brainfuck tests (see bf/tests)
     run-tests.py lox DIR...     Lox tests in the Crafting Interpreters format
+    run-tests.py lua DIR...     Lua tests (see lua/tests)
 
 brainfuck: NAME.b is the program, NAME.out the expected stdout (exact bytes),
-and optionally NAME.in (stdin), NAME.opts (bfc options), NAME.err (a string
+and optionally NAME.in (stdin), NAME.opts (mlws-vm-bfc options), NAME.err (a string
 that stderr must contain) and NAME.exit (the expected exit code, default 0).
 
 Lox: the comments in each .lox file give the expectations, as in the test
@@ -17,6 +18,12 @@ suite of https://github.com/munificent/craftinginterpreters:
                                      a compile error (exit code 65)
 Files containing "// nontest" are skipped, and so are the paths listed in
 DIR/SKIP (one per line, relative to DIR).
+
+Lua: NAME.lua runs (from its own directory) and NAME.out is the expected
+stdout, as the reference lua 5.5 prints it (lua/tests/expect.sh makes it);
+NAME.err, if present, is the expected first line of stderr ("mlws-vm-lua:
+..." where lua says "lua: ..."), with exit status 1. NAME.in is stdin and
+NAME.args the arguments, one per line.
 
 Options: -v prints the output of failing tests, -j N runs N tests at once,
 and a FILTER argument (substring of the path) after the directories selects
@@ -71,9 +78,9 @@ def bf_test(path, tmp):
 
     masm = os.path.join(tmp, os.path.basename(stem) + ".masm")
     opts = (opt(".opts") or "").split()
-    code, _, err = run([os.path.join(ROOT, "bf", "bfc")] + opts + ["-o", masm, path])
+    code, _, err = run([os.path.join(ROOT, "bf", "mlws-vm-bfc")] + opts + ["-o", masm, path])
     if code != 0:
-        return ["bfc failed: " + err.decode(errors="replace")]
+        return ["mlws-vm-bfc failed: " + err.decode(errors="replace")]
     code, out, err = run([VM, "run", masm], opt(".in", True) or b"")
     fails = []
     want_exit = int(opt(".exit") or 0)
@@ -131,7 +138,7 @@ def lox_test(path, tmp):
         if m:
             runtime, runtime_line, want_exit = m.group(1), n, 70
 
-    code, out, err = run([os.path.join(ROOT, "lox", "lox"), path])
+    code, out, err = run([os.path.join(ROOT, "lox", "mlws-vm-lox"), path])
     out = out.decode(errors="replace").split("\n")
     err = err.decode(errors="replace").split("\n")
     if out and out[-1] == "":
@@ -181,6 +188,54 @@ def lox_test(path, tmp):
     return fails
 
 
+# ------------------------------------------------------------------------ Lua
+
+def lua_test(path, tmp):
+    stem = path[:-4]
+
+    def opt(ext):
+        p = stem + ext
+        if not os.path.exists(p):
+            return None
+        with open(p, "rb") as f:
+            return f.read()
+
+    want_out = opt(".out")
+    if want_out is None:
+        return ["no " + os.path.basename(stem) + ".out (run lua/tests/expect.sh)"]
+    want_err = opt(".err")
+    args = (opt(".args") or b"").decode().splitlines()
+    driver = os.path.join(ROOT, "lua", "mlws-vm-lua")
+    try:
+        r = subprocess.run([driver, os.path.basename(path)] + args, input=opt(".in") or b"",
+                           capture_output=True, timeout=TIMEOUT, cwd=os.path.dirname(path) or ".")
+        code, out, err = r.returncode, r.stdout, r.stderr
+    except subprocess.TimeoutExpired:
+        return ["timeout"]
+    fails = []
+    want_exit = 1 if want_err is not None else 0
+    if code != want_exit:
+        fails.append(f"exit code {code}, expected {want_exit}")
+    if out != want_out:
+        got, want = out.decode(errors="replace").split("\n"), want_out.decode(errors="replace").split("\n")
+        for i in range(max(len(got), len(want))):
+            g = got[i] if i < len(got) else "<none>"
+            w = want[i] if i < len(want) else "<none>"
+            if g != w:
+                fails.append(f"stdout line {i + 1}: got {g[:200]!r}, expected {w[:200]!r}")
+                break
+    first = err.decode(errors="replace").split("\n")[0] if err else ""
+    if first.startswith("mlws-vm-luac: "):   # a compile error
+        first = "mlws-vm-lua: " + first[len("mlws-vm-luac: "):]
+    if want_err is not None:
+        w = want_err.decode(errors="replace").split("\n")[0]
+        if first != w:
+            fails.append(f"stderr {first[:200]!r}, expected {w[:200]!r}")
+    elif err:
+        fails.append(f"unexpected stderr {first[:200]!r}")
+    return fails
+
+
 # ----------------------------------------------------------------------- main
 
 def collect(dirs, ext, filters):
@@ -217,13 +272,13 @@ def main():
         jobs = int(args[i + 1])
         del args[i:i + 2]
     args = [a for a in args if a != "-v"]
-    if not args or args[0] not in ("bf", "lox"):
+    if not args or args[0] not in ("bf", "lox", "lua"):
         print(__doc__)
         sys.exit(2)
     kind = args[0]
     dirs = [a for a in args[1:] if os.path.isdir(a)]
     filters = [a for a in args[1:] if not os.path.isdir(a)]
-    ext, fn = (".b", bf_test) if kind == "bf" else (".lox", lox_test)
+    ext, fn = {"bf": (".b", bf_test), "lox": (".lox", lox_test), "lua": (".lua", lua_test)}[kind]
     tests = collect(dirs, ext, filters)
 
     passed = failed = skipped = 0

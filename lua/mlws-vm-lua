@@ -1,0 +1,46 @@
+#!/bin/sh
+# Compile a Lua program with mlws-vm-luac and run it on MLWSVM.
+#
+#   mlws-vm-lua [options] program.lua [args...]
+#     -S           only compile: write the assembly (.masm) and do not run it
+#     -k           keep the assembly after running it
+#     -o FILE      the assembly file (default: program.masm next to the
+#                  source); with -S, '-' writes it to standard output
+#
+# The VM is found as $MLWSVM, then mlwsvm on PATH, then ../mlws-vm/mlwsvm
+# next to this repository.
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+usage() {
+    echo "usage: mlws-vm-lua [-S | -k] [-o FILE] program.lua [args...]" >&2
+    exit 64
+}
+
+compile_only= keep= out= prog=
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -S) compile_only=1; shift ;;
+        -k) keep=1; shift ;;
+        -o) [ $# -ge 2 ] || usage; out=$2; shift 2 ;;
+        -h|--help) usage ;;
+        -*) usage ;;
+        *) prog=$1; shift; break ;;
+    esac
+done
+[ -n "$prog" ] || usage
+
+if [ -n "$compile_only" ] || [ -n "$keep" ] || [ -n "$out" ]; then
+    [ -n "$out" ] || out="${prog%.*}.masm"
+    if [ "$out" = "-" ] && [ -z "$compile_only" ]; then
+        echo "mlws-vm-lua: -o - (standard output) needs -S" >&2
+        exit 64
+    fi
+else
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/lua.XXXXXX") || exit 1
+    trap 'rm -rf "$tmp"' EXIT INT TERM
+    out="$tmp/program.masm"
+fi
+"$here/mlws-vm-luac" -o "$out" "$prog" || exit $?
+[ -n "$compile_only" ] && exit 0
+
+. "$here/../tools/find-vm.sh"
+"$MLWSVM" run "$out" "$@"

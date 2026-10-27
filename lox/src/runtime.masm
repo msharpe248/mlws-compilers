@@ -1,5 +1,5 @@
 ; ---------------------------------------------------------------------------
-; The Lox runtime (lox/src/runtime.masm, compiled into loxc).
+; The Lox runtime (lox/src/runtime.masm, compiled into mlws-vm-loxc).
 ;
 ; A Lox value is an (f64, ref) pair: a null reference means a number (the
 ; f64); nil, true and false are the constant strings "\"nil", "\"true" and

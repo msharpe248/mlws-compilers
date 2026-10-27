@@ -1,0 +1,25 @@
+suspended
+start	1	2
+true	3
+suspended
+got	10
+true	20
+got2	x	y
+true	done	99
+dead	false	cannot resume dead coroutine
+1 2 3 4 
+false	coro.lua:17: boom
+dead
+false	thread	true
+true
+thread	false
+true	bottom
+true	up
+abc
+false	attempt to yield from outside a coroutine
+inner1	inner2	outer
+true	dead
+false	coro.lua:35: wrapped error
+true	in pcall
+true	false	coro.lua:36: after
+true	end

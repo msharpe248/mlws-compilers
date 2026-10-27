@@ -1,0 +1,2100 @@
+; ---------------------------------------------------------------------------
+; The Lua runtime (lua/src/runtime.masm and lib.masm, compiled into
+; mlws-vm-luac and copied into every output file).
+;
+; A Lua value is a triple (i64, f64, ref). The ref says what it is:
+;   null         an integer, in the i64
+;   4n           a float, in the f64
+;   1n, 2n, 3n   nil, false, true
+;   otherwise    a string, a table (Tab), a function (Fn) or a coroutine (Thread)
+; (BigInt constants: no Lua value is a BigInt, so they never collide.)
+;
+; A list of values (arguments, results, a table's array part) has two words
+; per value: the ref, then the i64 or (for anything but an integer) the f64.
+;
+; Lua functions are .func (i64, f64, ref) x params -> (i64 n, i64, f64, ref):
+; the number of results and the first one; results 2..n are in @rt$mv.
+; Fn.sig says how to call one: k (0..8) exact parameters; 100+k: k
+; parameters and a list of the rest; 200: one list of everything; 300+k:
+; the argument count, then k parameters.
+; ---------------------------------------------------------------------------
+
+.struct Tab
+    arr: ref            ; the array part: values 1..n
+    n: i64
+    hm: ref             ; the hash part: map key -> index of the value word in hs
+    hs: ref             ; [key ref, key word, value ref, value word] per slot
+    meta: ref           ; metatable
+    idx: ref            ; as a metatable: its __index (ref half), or null
+    nidx: ref           ; its __newindex
+    dead: i64           ; slots (after the pinned ones) whose value is nil
+    pin: i64            ; leading slots that never move (_G's global names)
+    hw: i64             ; words in hs (for the compiler's inline caches)
+    hmshared: i64       ; hm is a shape (shared, never changed), not this table's own
+    prot: i64           ; as a metatable: it has a __metatable field
+.ends
+
+.struct Fn
+    clo: ref
+    sig: i64
+    name: ref           ; built-in functions: the name for messages
+.ends
+
+.struct Box             ; a captured variable that is assigned
+    i: i64
+    f: f64
+    r: ref
+.ends
+
+.struct LuaErr          ; a Lua error: its value
+    i: i64
+    f: f64
+    r: ref
+    trace: ref
+.ends
+
+.struct Thread          ; a coroutine
+    co: ref             ; the VM coroutine (null for the main thread)
+    fn: ref
+    ei: i64             ; the error it died with, for coroutine.close
+    ef: f64
+    er: ref
+    failed: i64
+.ends
+
+        .align 8
+rt$G:       .zero 8     ; _G
+rt$Ghs:     .zero 8     ; _G's hash slots (the pinned globals)
+rt$P:       .zero 8     ; the primitives handed to the prelude
+rt$env:     .zero 8     ; the main chunk's _ENV
+rt$mv:      .zero 8     ; results after the first
+rt$chunk:   .zero 8     ; the chunk name
+rt$strmeta: .zero 8     ; the string metatable
+rt$ids:     .zero 8     ; object -> number, for tostring
+rt$nextid:  .i64 0
+rt$cur:     .zero 8     ; the running Thread
+rt$main:    .zero 8     ; the main Thread
+rt$ipairs_aux: .zero 8
+rt$next_fn: .zero 8
+rt$stdout:  .zero 8     ; io.stdout, set by the prelude
+rt$start:   .i64 0
+rt$ic:      .zero 8     ; the inline caches: a value word index per site
+rt$shapes:  .zero 8     ; shape -> (key -> the shape with that key added)
+rt$root:    .zero 8     ; the empty shape
+rt$ctors:   .zero 8     ; the shape each table constructor makes
+
+; Load the value at word i of list l into (di, df, dr); t is scratch.
+.macro LOADV l, i, t, di, df, dr
+    mov \dr, \l[\i]
+    add \t, \i, 1
+    bnz \dr, .Lf\@
+    mov \di, \l[\t]
+    jmp .Ld\@
+.Lf\@:
+    mov \df, \l[\t]
+.Ld\@:
+.endm
+
+; Store (si, sf, sr) at word i of list l.
+.macro STOREV l, i, t, si, sf, sr
+    mov \l[\i], \sr
+    add \t, \i, 1
+    bnz \sr, .Lf\@
+    mov \l[\t], \si
+    jmp .Ld\@
+.Lf\@:
+    mov \l[\t], \sf
+.Ld\@:
+.endm
+
+; Make the value at word i of list l nil.
+.macro KILLV l, i, t
+    mov.r \l[\i], 1n
+    add \t, \i, 1
+    mov.f64 \l[\t], 0.0
+.endm
+
+; Append (si, sf, sr) to list l.
+.macro PUSHV l, si, sf, sr
+    lpush \l, \sr
+    bnz \sr, .Lf\@
+    lpush \l, \si
+    jmp .Ld\@
+.Lf\@:
+    lpush \l, \sf
+.Ld\@:
+.endm
+
+; ------------------------------------------------------------------ startup
+
+.func rt$init(ref chunk)
+    mov @rt$chunk, R0
+    new R1, Tab
+    mnew R2
+    mov R1->Tab.hm, R2
+    lnew R3
+    mov R1->Tab.hs, R3
+    mov @rt$G, R1
+    mov @rt$env, R1
+    mov @rt$Ghs, R3
+    new R4, Tab
+    mov @rt$P, R4
+    lnew R5, 128
+    resize R5, 128
+    mov @rt$mv, R5
+    new R6, Tab
+    mov @rt$strmeta, R6
+    mnew R7
+    mov @rt$ids, R7
+    new R8, Thread
+    mov @rt$main, R8
+    mov @rt$cur, R8
+    ncall "time.monotonic" -> (I0)
+    mov @rt$start, I0
+    ret
+.endf
+
+
+; Shapes. Tables whose string keys were added in the same order share one
+; map from key to slot (Tab.hm with Tab.hmshared set), which is never
+; changed: adding a key moves the table to the next shape, kept in
+; @rt$shapes. A table with more than 16 slots, a key of another type, or
+; whose slots are compacted gets a map of its own.
+.func rt$init_shapes(i64 nctors)
+    mnew R0
+    mov @rt$shapes, R0
+    mnew R1
+    mov @rt$root, R1
+    lnew R2, I0
+    resize R2, I0
+    mov @rt$ctors, R2
+    ret
+.endf
+
+; The shape of m with key added at value word w.
+.func rt$shape_add(ref m, ref key, i64 w) -> ref
+    mov R3, @rt$shapes
+    mget.r R4, R3, R0, null
+    bnz R4, 1f
+    mnew R4
+    mset R3, R0, R4
+1:  mget.r R5, R4, R1, null
+    bnz R5, 9f
+    mnew R6
+    ncall "map.union" (R0, R6) -> (R5)
+    mset R5, R1, I0
+    mset R4, R1, R5
+9:  ret R5
+.endf
+
+; A table constructor of constant string keys: t gets hash slots hs and
+; the shape of the constructor at site.
+.func rt$tmpl(ref t, ref hs, i64 site)
+    mov R2, @rt$ctors
+    mov R3, R2[I0]
+    bnz R3, 5f
+    mov R3, @rt$root
+    len I1, R1
+    mov I2, 0
+1:  bge I2, I1, 4f
+    mov R4, R1[I2]
+    add I3, I2, 2
+    call rt$shape_add (R3, R4, I3) -> (R3)
+    add I2, 4
+    jmp 1b
+4:  mov R2[I0], R3
+5:  mov R0->Tab.hm, R3
+    mov R0->Tab.hmshared, 1
+    mov R0->Tab.hs, R1
+    len I1, R1
+    mov R0->Tab.hw, I1
+    mov I4, 0
+    mov I2, 2
+6:  bge I2, I1, 7f
+    mov R5, R1[I2]
+    bne.r R5, 1n, 61f
+    inc I4
+61: add I2, 4
+    jmp 6b
+7:  mov R0->Tab.dead, I4
+    ret
+.endf
+
+; Give t a map of its own instead of a shape.
+.func rt$ownmap(ref t) -> ref
+    mov R1, R0->Tab.hm
+    mov I0, R0->Tab.hmshared
+    bz I0, 1f
+    mnew R2
+    ncall "map.union" (R1, R2) -> (R1)
+    mov R0->Tab.hm, R1
+    mov R0->Tab.hmshared, 0
+1:  ret R1
+.endf
+
+; n inline caches, each empty (a word index no table has).
+.func rt$init_ic(i64 n)
+    lnew R0, I0
+    mov I1, 0
+1:  bge I1, I0, 2f
+    lpush.i64 R0, 1099511627776
+    inc I1
+    jmp 1b
+2:  mov @rt$ic, R0
+    ret
+.endf
+
+; A global name with a fixed slot in _G (in the order the compiler numbers them).
+.func rt$pin(ref name)
+    mov R1, @rt$G
+    mov R2, R1->Tab.hs
+    len I0, R2
+    add I1, I0, 2
+    lpush R2, R0
+    lpush R2, 0.0
+    lpush.r R2, 1n
+    lpush R2, 0.0
+    add I3, I0, 4
+    mov R1->Tab.hw, I3
+    mov R3, R1->Tab.hm
+    mset R3, R0, I1
+    mov I2, R1->Tab.pin
+    inc I2
+    mov R1->Tab.pin, I2
+    ret
+.endf
+
+; The library table _G[name], made if need be.
+.func rt$deflib(ref name) -> ref
+    mov R1, @rt$G
+    call rt$rawget (R1, 0, 0.0, R0) -> (I0, F0, R2)
+    isa I1, R2, Tab
+    bnz I1, 1f
+    new R2, Tab
+    call rt$rawset (R1, 0, 0.0, R0, 0, 0.0, R2)
+1:  ret R2
+.endf
+
+; tab[name] = a built-in function.
+.func rt$defn(ref tab, ref name, ref clo, i64 sig)
+    new R3, Fn
+    mov R3->Fn.clo, R2
+    mov R3->Fn.sig, I0
+    mov R3->Fn.name, R1
+    call rt$rawset (R0, 0, 0.0, R1, 0, 0.0, R3)
+    ret
+.endf
+
+.func rt$getfield(ref tab, ref name) -> (i64, f64, ref)
+    call rt$rawget (R0, 0, 0.0, R1) -> (I0, F0, R2)
+    ret I0, F0, R2
+.endf
+
+.func rt$setfield(ref tab, ref name, i64, f64, ref)
+    call rt$rawset (R0, 0, 0.0, R1, I0, F0, R2)
+    ret
+.endf
+
+.func rt$init_done
+    mov R0, @rt$G
+    call rt$setfield (R0, "_G", 0, 0.0, R0)
+    call rt$setfield (R0, "_VERSION", 0, 0.0, "Lua 5.5")
+    call rt$getfield (R0, "string") -> (I0, F0, R1)
+    mov R2, @rt$strmeta
+    call rt$rawset (R2, 0, 0.0, "__index", 0, 0.0, R1)
+    call rt$getfield (R0, "math") -> (I0, F0, R1)
+    call rt$setfield (R1, "pi", 0, 3.141592653589793, 4n)
+    call rt$setfield (R1, "huge", 0, inf, 4n)
+    call rt$setfield (R1, "maxinteger", 9223372036854775807, 0.0, null)
+    mov I1, -9223372036854775807
+    dec I1
+    call rt$setfield (R1, "mininteger", I1, 0.0, null)
+    call rt$getfield (R0, "next") -> (I0, F0, R1)
+    mov @rt$next_fn, R1
+    mov R1, @rt$P
+    call rt$getfield (R1, "ipairs_aux") -> (I0, F0, R2)
+    mov @rt$ipairs_aux, R2
+    ret
+.endf
+
+; The script's arguments: the arg table, and the main chunk's ... list.
+.func rt$script_args -> ref
+    ncall "os.args" -> (R0)
+    new R1, Tab
+    call rt$rawset (R1, 0, 0.0, null, 0, 0.0, @rt$chunk)
+    lnew R2
+    len I0, R0
+    mov I1, 0
+1:  bge I1, I0, 2f
+    mov R3, R0[I1]
+    lpush R2, R3, 0.0
+    inc I1
+    jmp 1b
+2:  call rt$copylist (R2) -> (R4)
+    call rt$setarr (R1, R4)
+    mov R5, @rt$G
+    call rt$setfield (R5, "arg", 0, 0.0, R1)
+    ret R2
+.endf
+
+.func rt$exit(i64 code)
+    ncall "os.exit" (I0)
+    ret
+.endf
+
+; An error nobody caught: report it as lua.c does, and exit with status 1.
+.func rt$uncaught(ref exc)
+    call rt$errvalue (R0) -> (I0, F0, R1)
+    typeof I1, R1
+    beq I1, 1, 2f
+    bz R1, 1f
+    beq.r R1, 4n, 1f
+    call rt$getmm (I0, F0, R1, "__tostring") -> (I2, F2, R2)
+    bne.r R2, 1n, 1f
+    call rt$typename (I0, F0, R1) -> (R3)
+    strcat R1, "(error object is a ", R3, " value)"
+    jmp 2f
+1:  call rt$tostring (I0, F0, R1) -> (R1)
+2:  sleep 1                 ; the VM flushes standard output when it idles
+    ncall "fs.stderr" -> (R4)
+    strcat R5, "mlws-vm-lua: ", R1, "\n"
+    ncall "fs.write" (R4, R5)
+    isa I3, R0, Error
+    bz I3, 3f
+    strcmp I3, R0->Error.code, "E_CALL_DEPTH"
+    bz I3, 3f
+    mov R6, R0->Error.trace     ; a fault in the runtime: where it happened
+    ncall "fs.write" (R4, R6)
+3:  ncall "os.exit" (1)
+    ret
+.endf
+
+; ------------------------------------------------------------------- errors
+
+; The value of a caught exception: a Lua error's value, or a message for a
+; fault the VM raised.
+.func rt$errvalue(ref exc) -> (i64, f64, ref)
+    isa I0, R0, LuaErr
+    bz I0, 1f
+    mov I1, R0->LuaErr.i
+    mov F1, R0->LuaErr.f
+    mov R1, R0->LuaErr.r
+    ret I1, F1, R1
+1:  isa I0, R0, Error
+    bz I0, 9f
+    mov R1, R0->Error.code
+    mov R2, R0->Error.trace
+    strcmp I0, R1, "E_CALL_DEPTH"
+    bnz I0, 2f
+    mov R3, "stack overflow"
+    jmp 5f
+2:  strcmp I0, R1, "E_QUOTA"
+    bnz I0, 3f
+    mov R3, "not enough memory"
+    jmp 5f
+3:  strcmp I0, R1, "E_CALLBACK"
+    bnz I0, 4f
+    mov R3, "attempt to yield across a C-call boundary"
+    jmp 5f
+4:  mov R4, R0->Error.message
+    strcat R3, "internal error ", R1, ": ", R4
+5:  call rt$trace_line (R2, -1) -> (I1)
+    bz I1, 6f
+    tostr R5, I1
+    strcat R3, @rt$chunk, ":", R5, ": ", R3
+6:  ret 0, 0.0, R3
+9:  ret 0, 0.0, R0
+.endf
+
+; The line of frame `level` of a backtrace (innermost is 0), counting
+; functions as Lua does: compiled Lua functions and the library's
+; functions count; the runtime's helpers and the prelude (the library
+; written in Lua) are skipped. Returns the Lua line, -1 if that frame is a
+; library function (which has no position), or 0 if there is none. The
+; frames come from the "(file.masm:LINE)" parts and the line map, which
+; gives 0 for helpers, -1 for library functions and -2 for the prelude.
+.func rt$trace_frame(ref trace, i64 level) -> i64
+    mov I1, 0               ; position in the trace
+    mov I8, 0               ; frames counted
+.try 9f
+1:  strfind I2, R0, ".masm:", I1
+    blt I2, 0, 8f
+    add I3, I2, 6
+    strfind I4, R0, ")", I3
+    blt I4, 0, 8f
+    sub I5, I4, I3
+    substr R1, R0, I3, I5
+    parse.i64 I6, R1
+    mov I1, I4
+    blt I6, 1, 1b
+    bgt I6, @rt$nlines, 1b
+    sub I6, 1
+    mul I6, 4
+    mov.i32 I7, @rt$linemap{I6}
+    beq I7, 0, 1b
+    beq I7, -2, 1b
+    beq I8, I0, 2f
+    inc I8
+    jmp 1b
+2:  ret I7
+.endtry
+8:  ret 0
+9:  catch R2
+    ret 0
+.endf
+
+; The line for an error raised at `level`, or 0. Level -1 is an error the
+; runtime raises: in the running Lua function, or for a library function
+; (whose arguments were wrong, say) in the function that called it.
+.func rt$trace_line(ref trace, i64 level) -> i64
+    bge I0, 0, 2f
+    call rt$trace_frame (R0, 0) -> (I1)
+    bne I1, -1, 3f
+    call rt$trace_frame (R0, 1) -> (I1)
+    jmp 3f
+2:  call rt$trace_frame (R0, I0) -> (I1)
+3:  bge I1, 0, 4f
+    mov I1, 0
+4:  ret I1
+.endf
+
+; The position "chunk:line: " for an error at `level` (see rt$trace_line).
+.func rt$where(i64 level) -> ref
+    mov I1, 0
+.try 1f
+    div I2, 1, I1           ; a fault, for its backtrace
+.endtry
+    ret ""
+1:  catch R0
+    mov R1, R0->Error.trace
+    call rt$trace_line (R1, I0) -> (I3)
+    bz I3, 2f
+    tostr R2, I3
+    strcat R3, @rt$chunk, ":", R2, ": "
+    ret R3
+2:  ret ""
+.endf
+
+.func rt$throw(i64, f64, ref)
+    new R1, LuaErr
+    mov R1->LuaErr.i, I0
+    mov R1->LuaErr.f, F0
+    mov R1->LuaErr.r, R0
+    throw R1
+.endf
+
+; A runtime error with the position of the running Lua function.
+.func rt$rterror(ref msg)
+    call rt$where (-1) -> (R1)
+    strcat R2, R1, R0
+    call rt$throw (0, 0.0, R2)
+    ret
+.endf
+
+; " (local 'x')" for a description, or "".
+.func rt$varinfo(ref desc) -> ref
+    bz R0, 1f
+    strcat R1, " (", R0, ")"
+    ret R1
+1:  ret ""
+.endf
+
+.func rt$typeerror(ref what, i64, f64, ref, ref desc)
+    call rt$typename (I0, F0, R1) -> (R3)
+    call rt$varinfo (R2) -> (R4)
+    strcat R5, "attempt to ", R0, " a ", R3, " value", R4
+    call rt$rterror (R5)
+    ret
+.endf
+
+.func rt$err_call(i64, f64, ref, ref desc)
+    call rt$typeerror ("call", I0, F0, R0, R1)
+    ret
+.endf
+
+.func rt$err_index(i64, f64, ref, ref desc)
+    call rt$typeerror ("index", I0, F0, R0, R1)
+    ret
+.endf
+
+; "bad argument #n to 'fname' (msg)"
+.func rt$argerror(i64 n, ref fname, ref msg)
+    tostr R2, I0
+    strcat R3, "bad argument #", R2, " to '", R0, "' (", R1, ")"
+    call rt$rterror (R3)
+    ret
+.endf
+
+; "bad argument #n to 'fname' (T expected, got U)"
+.func rt$argtype(i64 n, ref fname, ref expected, i64, f64, ref)
+    call rt$typename (I1, F0, R2) -> (R3)
+    strcat R4, R1, " expected, got ", R3
+    call rt$argerror (I0, R0, R4)
+    ret
+.endf
+
+; ----------------------------------------------------------------- types
+
+.func rt$typename(i64, f64, ref) -> ref
+    bz R0, 1f
+    beq.r R0, 4n, 1f
+    beq.r R0, 1n, 2f
+    beq.r R0, 2n, 3f
+    beq.r R0, 3n, 3f
+    typeof I1, R0
+    beq I1, 1, 4f
+    isa I1, R0, Tab
+    bnz I1, 5f
+    isa I1, R0, Fn
+    bnz I1, 6f
+    isa I1, R0, Thread
+    bnz I1, 7f
+    ret "userdata"
+1:  ret "number"
+2:  ret "nil"
+3:  ret "boolean"
+4:  ret "string"
+5:  ret "table"
+6:  ret "function"
+7:  ret "thread"
+.endf
+
+.func rt$truthy(ref) -> i64
+    beq.r R0, 1n, 1f
+    beq.r R0, 2n, 1f
+    ret 1
+1:  ret 0
+.endf
+
+; f to an integer, if it has an exact integer value: (ok, i).
+.func rt$flt2int(f64) -> (i64, i64)
+    floor F1, F0
+    bne.f64 F1, F0, 1f
+    bge.f64 F0, 9223372036854775808.0, 1f
+    blt.f64 F0, -9223372036854775808.0, 1f
+    cvt.i64.f64 I0, F0
+    ret 1, I0
+1:  ret 0, 0
+.endf
+
+; A value as a number (strings are converted): (ok, value).
+.func rt$tonum(i64, f64, ref) -> (i64, i64, f64, ref)
+    bz R0, 1f
+    beq.r R0, 4n, 1f
+    typeof I1, R0
+    bne I1, 1, 9f
+    call rt$str2num (R0) -> (I1, I0, F0, R0)
+    ret I1, I0, F0, R0
+1:  ret 1, I0, F0, R0
+9:  ret 0, 0, 0.0, 1n
+.endf
+
+; A value as an integer, for bitwise operations: (ok, i). ok is 0 for a
+; float without an exact integer value.
+.func rt$toint_bit(i64, f64, ref) -> (i64, i64)
+    bz R0, 1f
+    call rt$flt2int (F0) -> (I1, I0)
+    ret I1, I0
+1:  ret 1, I0
+.endf
+
+.func rt$isspace(i64 c) -> i64
+    beq I0, 32, 1f
+    blt I0, 9, 2f
+    bgt I0, 13, 2f
+1:  ret 1
+2:  ret 0
+.endf
+
+.func rt$hexdigit(i64 c) -> i64
+    blt I0, '0', 9f
+    ble I0, '9', 1f
+    or I0, 32
+    blt I0, 'a', 9f
+    bgt I0, 'f', 9f
+    sub I0, 'a' - 10
+    ret I0
+1:  sub I0, '0'
+    ret I0
+9:  ret -1
+.endf
+
+; Convert a string to a number as Lua does: (ok, value).
+.func rt$str2num(ref s) -> (i64, i64, f64, ref)
+    len I0, R0              ; end
+    mov I1, 0               ; position
+1:  bge I1, I0, 99f         ; leading spaces
+    mov I2, R0[I1]
+    call rt$isspace (I2) -> (I3)
+    bz I3, 2f
+    inc I1
+    jmp 1b
+2:  sub I4, I0, 1           ; trailing spaces
+    mov I2, R0[I4]
+    call rt$isspace (I2) -> (I3)
+    bz I3, 3f
+    mov I0, I4
+    jmp 2b
+3:  mov I5, 0               ; negative?
+    mov I2, R0[I1]
+    bne I2, '-', 4f
+    mov I5, 1
+    inc I1
+    jmp 5f
+4:  bne I2, '+', 5f
+    inc I1
+5:  bge I1, I0, 99f
+    ; hexadecimal?
+    add I6, I1, 1
+    bge I6, I0, 20f
+    mov I2, R0[I1]
+    bne I2, '0', 20f
+    mov I2, R0[I6]
+    or I2, 32
+    bne I2, 'x', 20f
+    add I1, 2
+    ; hex: digits [. digits] [p [+-] digits]
+    mov I7, 0               ; integer value (wraps)
+    mov F0, 0.0             ; float value
+    mov I8, 0               ; digits seen
+    mov I9, 0               ; exponent adjustment
+    mov I10, 0              ; a float?
+6:  bge I1, I0, 12f
+    mov I2, R0[I1]
+    bne I2, '.', 7f
+    bnz I10, 99f
+    mov I10, 1
+    inc I1
+    jmp 6b
+7:  call rt$hexdigit (I2) -> (I3)
+    blt I3, 0, 10f
+    mul I7, 16
+    add I7, I3
+    mul F0, 16.0
+    cvt.f64.i64 F1, I3
+    add F0, F1
+    bz I10, 8f
+    sub I9, 4
+8:  inc I8
+    inc I1
+    jmp 6b
+10: bz I8, 99f
+    or I2, 32
+    bne I2, 'p', 99f
+    mov I10, 1
+    inc I1
+    mov I11, 0              ; exponent sign
+    bge I1, I0, 99f
+    mov I2, R0[I1]
+    bne I2, '-', 11f
+    mov I11, 1
+    inc I1
+    jmp 111f
+11: bne I2, '+', 111f
+    inc I1
+111: mov I12, 0             ; exponent
+    mov I13, 0              ; digits
+112: bge I1, I0, 113f
+    mov I2, R0[I1]
+    blt I2, '0', 99f
+    bgt I2, '9', 99f
+    mul I12, 10
+    add I12, I2
+    sub I12, '0'
+    min I12, 100000
+    inc I13
+    inc I1
+    jmp 112b
+113: bz I13, 99f
+    bz I11, 114f
+    neg I12
+114: add I9, I12
+12: bz I8, 99f
+    bnz I10, 13f
+    bz I5, 121f
+    neg I7
+121: ret 1, I7, 0.0, null
+13: cvt.f64.i64 F2, I9
+    ncall "math.pow" (2.0, F2) -> (F3)
+    mul F0, F3
+    bz I5, 131f
+    neg F0
+131: ret 1, 0, F0, 4n
+    ; decimal: digits [. digits] [e [+-] digits]
+20: mov I7, 0               ; value
+    mov I8, 0               ; digits
+    mov I14, 0              ; overflow
+    mov I15, I1             ; start of the number
+21: bge I1, I0, 30f
+    mov I2, R0[I1]
+    blt I2, '0', 22f
+    bgt I2, '9', 22f
+    sub I3, I2, '0'
+    ; overflow check: value > (maxint - d) / 10
+    mov I16, 9223372036854775807
+    sub I16, I3
+    div I16, 10
+    ble I7, I16, 211f
+    mov I14, 1
+211: mul I7, 10
+    add I7, I3
+    inc I8
+    inc I1
+    jmp 21b
+22: ; a float: validate, then parse.f64
+    mov I10, 0              ; fraction digits
+    bne I2, '.', 24f
+    inc I1
+23: bge I1, I0, 27f
+    mov I2, R0[I1]
+    blt I2, '0', 24f
+    bgt I2, '9', 24f
+    inc I10
+    inc I1
+    jmp 23b
+24: add I3, I8, I10
+    bz I3, 99f
+    bge I1, I0, 27f
+    mov I2, R0[I1]
+    or I2, 32
+    bne I2, 'e', 99f
+    inc I1
+    bge I1, I0, 99f
+    mov I2, R0[I1]
+    beq I2, '+', 25f
+    bne I2, '-', 251f
+25: inc I1
+251: mov I13, 0
+26: bge I1, I0, 261f
+    mov I2, R0[I1]
+    blt I2, '0', 99f
+    bgt I2, '9', 99f
+    inc I13
+    inc I1
+    jmp 26b
+261: bz I13, 99f
+27: add I3, I8, I10
+    bz I3, 99f
+    sub I4, I0, I15
+    substr R1, R0, I15, I4
+.try 98f
+    parse.f64 F0, R1
+.endtry
+    bz I5, 271f
+    neg F0
+271: ret 1, 0, F0, 4n
+30: bz I8, 99f
+    bnz I14, 27b            ; too large for an integer: a float
+    bz I5, 31f
+    neg I7
+31: ret 1, I7, 0.0, null
+98: catch R2
+99: ret 0, 0, 0.0, 1n
+.endf
+
+; ---------------------------------------------------------------- strings
+
+; The text of a float, as Lua 5.5 prints it: %.15g, or %.17g if that does
+; not read back the same, with ".0" if it looks like an integer.
+.func rt$fmtflt(f64) -> ref
+    bne.f64 F0, F0, 7f
+    beq.f64 F0, inf, 8f
+    beq.f64 F0, -inf, 9f
+    lnew R1
+    lpush R1, F0
+    ncall "text.format" ("{:.15g}", R1) -> (R0)
+    parse.f64 F1, R0
+    beq.f64 F1, F0, 1f
+    ncall "text.format" ("{:.17g}", R1) -> (R0)
+1:  len I0, R0
+    mov I1, 0
+2:  bge I1, I0, 3f
+    mov I2, R0[I1]
+    beq I2, '.', 4f
+    beq I2, 'e', 4f
+    beq I2, 'n', 4f
+    beq I2, 'i', 4f
+    inc I1
+    jmp 2b
+3:  strcat R0, R0, ".0"
+4:  ret R0
+7:  ret "nan"
+8:  ret "inf"
+9:  ret "-inf"
+.endf
+
+; A number or string as a string (for concatenation), or null.
+.func rt$tostr_num(i64, f64, ref) -> ref
+    bnz R0, 1f
+    tostr R1, I0
+    ret R1
+1:  bne.r R0, 4n, 2f
+    call rt$fmtflt (F0) -> (R1)
+    ret R1
+2:  typeof I1, R0
+    bne I1, 1, 3f
+    ret R0
+3:  ret null
+.endf
+
+; A unique number for an object, for its tostring.
+.func rt$objid(ref) -> ref
+    mov R1, @rt$ids
+    mget I0, R1, R0, -1
+    bge I0, 0, 1f
+    mov I0, @rt$nextid
+    inc I0
+    mov @rt$nextid, I0
+    mset R1, R0, I0
+1:  mul I0, 48
+    add I0, 0x55a4c0d2e000
+    lnew R2
+    lpush R2, I0
+    ncall "text.format" ("0x{:x}", R2) -> (R3)
+    ret R3
+.endf
+
+; tostring(v)
+.func rt$tostring(i64, f64, ref) -> ref
+    bnz R0, 1f
+    tostr R1, I0
+    ret R1
+1:  beq.r R0, 4n, 2f
+    beq.r R0, 1n, 3f
+    beq.r R0, 2n, 4f
+    beq.r R0, 3n, 5f
+    typeof I1, R0
+    bne I1, 1, 6f
+    ret R0
+2:  call rt$fmtflt (F0) -> (R1)
+    ret R1
+3:  ret "nil"
+4:  ret "false"
+5:  ret "true"
+6:  isa I1, R0, Tab
+    bz I1, 8f
+    mov R2, R0->Tab.meta
+    bz R2, 8f
+    call rt$rawget (R2, 0, 0.0, "__tostring") -> (I3, F3, R3)
+    beq.r R3, 1n, 7f
+    call rt$call1 (null, I3, F3, R3, I0, F0, R0) -> (I4, I5, F5, R5)
+    typeof I1, R5
+    beq I1, 1, 61f
+    bz R5, 62f
+    beq.r R5, 4n, 62f
+    call rt$rterror ("'__tostring' must return a string")
+61: ret R5
+62: call rt$tostring (I5, F5, R5) -> (R5)
+    ret R5
+7:  call rt$rawget (R2, 0, 0.0, "__name") -> (I3, F3, R3)
+    typeof I1, R3
+    bne I1, 1, 8f
+    call rt$objid (R0) -> (R4)
+    strcat R5, R3, ": ", R4
+    ret R5
+8:  call rt$typename (I0, F0, R0) -> (R3)
+    call rt$objid (R0) -> (R4)
+    strcat R5, R3, ": ", R4
+    ret R5
+.endf
+
+; ----------------------------------------------------------------- tables
+
+.func rt$newtab -> ref
+    new R0, Tab
+    ret R0
+.endf
+
+; The value word of key k in the hash part, or -1. The key is normalised:
+; ref null is an integer key, 4n a float key with no integer value.
+.func rt$hfind(ref t, i64 ki, f64 kf, ref kr) -> i64
+    mov R2, R0->Tab.hm
+    bz R2, 9f
+    bnz R1, 1f
+    mget I1, R2, I0, -1
+    ret I1
+1:  bne.r R1, 4n, 2f
+    mget I1, R2, F0, -1
+    ret I1
+2:  mget I1, R2, R1, -1
+    ret I1
+9:  ret -1
+.endf
+
+.func rt$rawget(ref t, i64 ki, f64 kf, ref kr) -> (i64, f64, ref)
+    bnz R1, 5f
+1:  sub I1, I0, 1
+    blt I1, 0, 3f
+    mov I2, R0->Tab.n
+    bge I1, I2, 3f
+    mov R2, R0->Tab.arr
+    add I1, I1
+    LOADV R2, I1, I3, I4, F1, R3
+    ret I4, F1, R3
+3:  call rt$hfind (R0, I0, F0, R1) -> (I1)
+    blt I1, 0, 9f
+4:  mov R2, R0->Tab.hs
+    LOADV R2, I1, I3, I4, F1, R3
+    ret I4, F1, R3
+5:  bne.r R1, 4n, 7f
+    floor F2, F0
+    bne.f64 F2, F0, 6f
+    bge.f64 F0, 9223372036854775808.0, 6f
+    blt.f64 F0, -9223372036854775808.0, 6f
+    cvt.i64.f64 I0, F0
+    mov.r R1, null
+    jmp 1b
+6:  bne.f64 F0, F0, 9f
+7:  beq.r R1, 1n, 9f
+    call rt$hfind (R0, I0, F0, R1) -> (I1)
+    blt I1, 0, 9f
+    jmp 4b
+9:  ret 0, 0.0, 1n
+.endf
+
+.func rt$rawset(ref t, i64 ki, f64 kf, ref kr, i64 vi, f64 vf, ref vr)
+    bnz R1, 50f
+10: sub I2, I0, 1
+    blt I2, 0, 60f
+    mov I3, R0->Tab.n
+    bge I2, I3, 20f
+    mov R3, R0->Tab.arr
+    add I2, I2
+    STOREV R3, I2, I4, I1, F1, R2
+    beq.r R2, 1n, 15f
+    ret
+15: add I4, I2, 2           ; nil in the last element: drop trailing nils
+    len I5, R3
+    bne I4, I5, 16f
+    call rt$trimarr (R0)
+16: ret
+20: bne I2, I3, 60f
+    beq.r R2, 1n, 60f
+    call rt$append (R0, I1, F1, R2)
+    ret
+50: bne.r R1, 4n, 55f
+    floor F2, F0
+    bne.f64 F2, F0, 52f
+    bge.f64 F0, 9223372036854775808.0, 52f
+    blt.f64 F0, -9223372036854775808.0, 52f
+    cvt.i64.f64 I0, F0
+    mov.r R1, null
+    jmp 10b
+52: bne.f64 F0, F0, 58f
+    jmp 60f
+55: beq.r R1, 1n, 57f
+60: call rt$hset (R0, I0, F0, R1, I1, F1, R2)
+    ret
+57: call rt$rterror ("table index is nil")
+    ret
+58: call rt$rterror ("table index is NaN")
+    ret
+.endf
+
+; Drop the nils at the end of the array part.
+.func rt$trimarr(ref t)
+    mov I0, R0->Tab.n
+    mov R1, R0->Tab.arr
+1:  bz I0, 2f
+    sub I1, I0, 1
+    add I1, I1
+    mov R2, R1[I1]
+    bne.r R2, 1n, 2f
+    dec I0
+    jmp 1b
+2:  mov R0->Tab.n, I0
+    add I1, I0, I0
+    resize R1, I1
+    ret
+.endf
+
+; t[n+1] = v (v not nil), then move n+2, ... from the hash part.
+.func rt$append(ref t, i64, f64, ref)
+    mov R2, R0->Tab.arr
+    bnz R2, 1f
+    lnew R2, 8
+    mov R0->Tab.arr, R2
+1:  PUSHV R2, I0, F0, R1
+    mov I1, R0->Tab.n
+    inc I1
+    mov R0->Tab.n, I1
+    mov R3, R0->Tab.hm
+    bz R3, 9f
+2:  add I2, I1, 1
+    mget I3, R3, I2, -1
+    blt I3, 0, 9f
+    mov R4, R0->Tab.hs
+    LOADV R4, I3, I4, I5, F5, R5
+    beq.r R5, 1n, 9f
+    PUSHV R2, I5, F5, R5
+    KILLV R4, I3, I7
+    mov I1, I2
+    mov R0->Tab.n, I1
+    mov I6, R0->Tab.dead
+    inc I6
+    mov R0->Tab.dead, I6
+    jmp 2b
+9:  ret
+.endf
+
+; Set a key of the hash part (normalised as for rt$hfind).
+.func rt$hset(ref t, i64 ki, f64 kf, ref kr, i64 vi, f64 vf, ref vr)
+    mov R3, R0->Tab.hm
+    bnz R3, 1f
+    beq.r R2, 1n, 99f
+    mov R3, @rt$root
+    mov R0->Tab.hm, R3
+    mov R0->Tab.hmshared, 1
+    lnew R4
+    mov R0->Tab.hs, R4
+1:  bnz R1, 2f
+    mget I2, R3, I0, -1
+    jmp 4f
+2:  bne.r R1, 4n, 3f
+    mget I2, R3, F0, -1
+    jmp 4f
+3:  mget I2, R3, R1, -1
+4:  mov R4, R0->Tab.hs
+    blt I2, 0, 20f
+    mov R5, R4[I2]
+    STOREV R4, I2, I3, I1, F1, R2
+    sub I3, I2, 2
+    shr I3, 2
+    mov I4, R0->Tab.pin
+    blt I3, I4, 10f
+    beq.r R5, 1n, 6f
+    bne.r R2, 1n, 10f
+    mov I5, R0->Tab.dead
+    inc I5
+    mov R0->Tab.dead, I5
+    jmp 10f
+6:  beq.r R2, 1n, 10f
+    mov I5, R0->Tab.dead
+    dec I5
+    mov R0->Tab.dead, I5
+10: typeof I5, R1
+    bne I5, 1, 99f
+    len I5, R1
+    blt I5, 7, 99f
+    mov I5, R1[0]
+    bne I5, '_', 99f
+    mov I5, R1[1]
+    bne I5, '_', 99f
+    call rt$mmcache (R0, R1, R2)
+99: ret
+20: beq.r R2, 1n, 99b
+    mov I5, R0->Tab.dead
+    blt I5, 8, 21f
+    len I6, R4
+    shr I6, 2
+    shl I7, I5, 1
+    blt I7, I6, 21f
+    call rt$compact (R0)
+    mov R3, R0->Tab.hm
+21: len I2, R4
+    add I3, I2, 2
+    lpush R4, R1
+    bnz R1, 22f
+    lpush R4, I0
+    jmp 24f
+22: bne.r R1, 4n, 23f
+    lpush R4, F0
+    jmp 24f
+23: lpush R4, 0.0
+24: PUSHV R4, I1, F1, R2
+    add I4, I2, 4
+    mov R0->Tab.hw, I4
+    mov I6, R0->Tab.hmshared
+    bz I6, 27f
+    typeof I7, R1
+    bne I7, 1, 28f
+    bge I2, 64, 28f
+    call rt$shape_add (R3, R1, I3) -> (R3)
+    mov R0->Tab.hm, R3
+    jmp 10b
+28: call rt$ownmap (R0) -> (R3)
+27: bnz R1, 25f
+    mset R3, I0, I3
+    jmp 10b
+25: bne.r R1, 4n, 26f
+    mset R3, F0, I3
+    jmp 10b
+26: mset R3, R1, I3
+    jmp 10b
+.endf
+
+; Keep a table's __index and __newindex where indexing finds them fast.
+.func rt$mmcache(ref t, ref key, ref vr)
+    beq.r R2, 1n, 1f
+    jmp 2f
+1:  mov.r R2, null
+2:  strcmp I0, R1, "__index"
+    bnz I0, 3f
+    mov R0->Tab.idx, R2
+    ret
+3:  strcmp I0, R1, "__newindex"
+    bnz I0, 4f
+    mov R0->Tab.nidx, R2
+    ret
+4:  strcmp I0, R1, "__metatable"
+    bnz I0, 5f
+    mov I1, 0
+    bz R2, 41f
+    mov I1, 1
+41: mov R0->Tab.prot, I1
+5:  ret
+.endf
+
+; Remove the hash slots whose value is nil (keeping the pinned ones).
+.func rt$compact(ref t)
+    mov R1, R0->Tab.hs
+    call rt$ownmap (R0) -> (R2)
+    len I0, R1
+    shr I0, 2               ; slots
+    mov I1, R0->Tab.pin     ; read slot
+    mov I2, I1              ; write slot
+1:  bge I1, I0, 9f
+    shl I3, I1, 2           ; word of the read slot's key
+    add I4, I3, 2
+    mov R3, R1[I4]
+    add I5, I3, 1
+    mov R4, R1[I3]          ; key ref
+    bne.r R3, 1n, 4f
+    ; dead: forget its key
+    bnz R4, 2f
+    mov I6, R1[I5]
+    mdel R2, I6
+    jmp 8f
+2:  bne.r R4, 4n, 3f
+    mov F6, R1[I5]
+    mdel R2, F6
+    jmp 8f
+3:  mdel R2, R4
+    jmp 8f
+4:  beq I1, I2, 7f
+    ; move the slot down
+    shl I6, I2, 2
+    mov R1[I6], R4
+    add I7, I6, 1
+    bnz R4, 41f
+    mov I8, R1[I5]
+    mov R1[I7], I8
+    jmp 43f
+41: bne.r R4, 4n, 42f
+    mov F8, R1[I5]
+    mov R1[I7], F8
+    jmp 43f
+42: mov.f64 R1[I7], 0.0
+43: add I7, I6, 2
+    mov R1[I7], R3
+    add I8, I3, 3
+    add I9, I6, 3
+    bnz R3, 44f
+    mov I10, R1[I8]
+    mov R1[I9], I10
+    jmp 45f
+44: mov F10, R1[I8]
+    mov R1[I9], F10
+45: add I7, I6, 2           ; the key's new value word
+    bnz R4, 46f
+    mov I8, R1[I5]
+    mset R2, I8, I7
+    jmp 7f
+46: bne.r R4, 4n, 47f
+    mov F8, R1[I5]
+    mset R2, F8, I7
+    jmp 7f
+47: mset R2, R4, I7
+7:  inc I2
+8:  inc I1
+    jmp 1b
+9:  shl I3, I2, 2
+    resize R1, I3
+    mov R0->Tab.hw, I3
+    mov R0->Tab.dead, 0
+    ret
+.endf
+
+; A table constructor's positional values: the array part becomes list.
+.func rt$setarr(ref t, ref list)
+    mov R0->Tab.arr, R1
+    len I0, R1
+    shr I0, 1
+    mov R0->Tab.n, I0
+    mov R2, R0->Tab.hm
+    bz R2, 5f
+    ; keys 1..n set before by [k] = v fields: the positional ones win
+    mov I1, 1
+1:  bgt I1, I0, 5f
+    mget I2, R2, I1, -1
+    blt I2, 0, 2f
+    mov R3, R0->Tab.hs
+    KILLV R3, I2, I4
+    mov I3, R0->Tab.dead
+    inc I3
+    mov R0->Tab.dead, I3
+2:  inc I1
+    jmp 1b
+5:  len I3, R1
+    bz I3, 6f
+    sub I3, 2
+    mov R4, R1[I3]
+    bne.r R4, 1n, 6f
+    call rt$trimarr (R0)
+6:  mov R2, R0->Tab.hm
+    bz R2, 9f
+    ; and n+1, ... move from the hash part
+    mov I0, R0->Tab.n
+    add I1, I0, 1
+    mget I2, R2, I1, -1
+    blt I2, 0, 9f
+    mov R3, R0->Tab.hs
+    LOADV R3, I2, I4, I5, F5, R5
+    beq.r R5, 1n, 9f
+    KILLV R3, I2, I6
+    mov I3, R0->Tab.dead
+    inc I3
+    mov R0->Tab.dead, I3
+    call rt$append (R0, I5, F5, R5)
+9:  ret
+.endf
+
+; next(t, k): the key after k and its value (nil at the end).
+.func rt$next(ref t, i64 ki, f64 kf, ref kr) -> (i64, f64, ref, i64, f64, ref)
+    mov I1, 0               ; array position to start at
+    beq.r R1, 1n, 10f
+    bnz R1, 5f
+1:  sub I2, I0, 1           ; an integer key in the array part?
+    blt I2, 0, 6f
+    mov I3, R0->Tab.n
+    bge I2, I3, 6f
+    add I1, I2, 1
+    jmp 10f
+5:  bne.r R1, 4n, 6f
+    call rt$flt2int (F0) -> (I4, I5)
+    bz I4, 6f
+    mov I0, I5
+    mov.r R1, null
+    jmp 1b
+6:  ; in the hash part
+    call rt$hfind (R0, I0, F0, R1) -> (I6)
+    blt I6, 0, 90f
+    sub I6, 2
+    shr I6, 2
+    inc I6
+    jmp 20f
+10: ; the array part, from position I1
+    mov I3, R0->Tab.n
+    mov R2, R0->Tab.arr
+11: bge I1, I3, 19f
+    add I4, I1, I1
+    LOADV R2, I4, I5, I7, F7, R7
+    beq.r R7, 1n, 12f
+    add I8, I1, 1
+    ret I8, 0.0, null, I7, F7, R7
+12: inc I1
+    jmp 11b
+19: mov I6, 0
+20: ; the hash part, from slot I6
+    mov R3, R0->Tab.hs
+    bz R3, 29f
+    len I3, R3
+    shr I3, 2
+21: bge I6, I3, 29f
+    shl I4, I6, 2
+    add I5, I4, 2
+    LOADV R3, I5, I7, I8, F8, R8
+    beq.r R8, 1n, 22f
+    LOADV R3, I4, I7, I9, F9, R9
+    ret I9, F9, R9, I8, F8, R8
+22: inc I6
+    jmp 21b
+29: ret 0, 0.0, 1n, 0, 0.0, 1n
+90: call rt$rterror ("invalid key to 'next'")
+    ret 0, 0.0, 1n, 0, 0.0, 1n
+.endf
+
+; for k, v in pairs(t) (next, without looking keys up): the entry at or
+; after position pos (array slots are 0.., hash slots 2^40 + j), and the
+; position after it; k is nil at the end.
+.func rt$nextpos(ref t, i64 pos) -> (i64, i64, f64, ref, i64, f64, ref)
+    mov I1, 1099511627776
+    bge I0, I1, 20f
+    mov I2, R0->Tab.n
+    mov R1, R0->Tab.arr
+1:  bge I0, I2, 19f
+    add I3, I0, I0
+    LOADV R1, I3, I4, I5, F5, R5
+    inc I0
+    beq.r R5, 1n, 1b
+    ret I0, I0, 0.0, null, I5, F5, R5
+19: mov I0, I1
+20: sub I6, I0, I1
+    mov R2, R0->Tab.hs
+    bz R2, 29f
+    mov I7, R0->Tab.hw
+21: shl I8, I6, 2
+    bge I8, I7, 29f
+    add I9, I8, 2
+    LOADV R2, I9, I4, I5, F5, R5
+    inc I6
+    beq.r R5, 1n, 21b
+    LOADV R2, I8, I4, I10, F10, R10
+    add I0, I6, I1
+    ret I0, I10, F10, R10, I5, F5, R5
+29: ret I0, 0, 0.0, 1n, 0, 0.0, 1n
+.endf
+
+; t[k] with metamethods.
+.func rt$index(i64, f64, ref, i64, f64, ref, ref desc) -> (i64, f64, ref)
+    mov I9, 0
+1:  isa I2, R0, Tab
+    bz I2, 20f
+    call rt$rawget (R0, I1, F1, R1) -> (I3, F3, R3)
+    bne.r R3, 1n, 10f
+    mov R4, R0->Tab.meta
+    bz R4, 10f
+    mov R5, R4->Tab.idx
+    bz R5, 10f
+2:  isa I2, R5, Fn
+    bnz I2, 30f
+    mov R0, R5
+    mov I0, 0
+    mov.r R2, null
+    inc I9
+    blt I9, 2000, 1b
+    call rt$rterror ("'__index' chain too long; possible loop")
+10: ret I3, F3, R3
+20: typeof I2, R0
+    bne I2, 1, 25f
+    mov R4, @rt$strmeta
+    mov R5, R4->Tab.idx
+    bnz R5, 2b
+25: call rt$err_index (I0, F0, R0, R2)
+    ret 0, 0.0, 1n
+30: call rt$call2 (null, 0, 0.0, R5, I0, F0, R0, I1, F1, R1) -> (I6, I3, F3, R3)
+    ret I3, F3, R3
+.endf
+
+; t[k] = v with metamethods.
+.func rt$setindex(i64, f64, ref, i64, f64, ref, i64, f64, ref, ref desc)
+    mov I9, 0
+1:  isa I3, R0, Tab
+    bz I3, 20f
+    mov R4, R0->Tab.meta
+    bz R4, 10f
+    mov R5, R4->Tab.nidx
+    bz R5, 10f
+    call rt$rawget (R0, I1, F1, R1) -> (I4, F4, R6)
+    bne.r R6, 1n, 10f
+    isa I3, R5, Fn
+    bnz I3, 30f
+    mov R0, R5
+    mov I0, 0
+    mov.r R3, null
+    inc I9
+    blt I9, 2000, 1b
+    call rt$rterror ("'__newindex' chain too long; possible loop")
+10: call rt$rawset (R0, I1, F1, R1, I2, F2, R2)
+    ret
+20: call rt$err_index (I0, F0, R0, R3)
+    ret
+30: call rt$call3 (null, 0, 0.0, R5, I0, F0, R0, I1, F1, R1, I2, F2, R2) -> (I6, I7, F7, R7)
+    ret
+.endf
+
+; A global read whose pinned slot is nil: _G's __index, if any.
+.func rt$gget(ref name) -> (i64, f64, ref)
+    mov R1, @rt$G
+    mov R2, R1->Tab.meta
+    bz R2, 9f
+    call rt$index (0, 0.0, R1, 0, 0.0, R0, null) -> (I0, F0, R3)
+    ret I0, F0, R3
+9:  ret 0, 0.0, 1n
+.endf
+
+; A global write when _G has a metatable.
+.func rt$gset(ref name, i64, f64, ref)
+    mov R2, @rt$G
+    call rt$setindex (0, 0.0, R2, 0, 0.0, R0, I0, F0, R1, null)
+    ret
+.endf
+
+; global x = ...: x must not be defined.
+.func rt$gcheck(ref, ref name)
+    beq.r R0, 1n, 1f
+    strcat R2, "global '", R1, "' already defined"
+    call rt$rterror (R2)
+1:  ret
+.endf
+
+; obj:name — the method, looked up as obj.name.
+.func rt$method(i64, f64, ref, ref name) -> (i64, f64, ref)
+    isa I1, R0, Tab
+    bz I1, 5f
+    mov R2, R0->Tab.hm
+    bz R2, 3f
+    mget I2, R2, R1, -1
+    blt I2, 0, 3f
+    mov R3, R0->Tab.hs
+    LOADV R3, I2, I3, I4, F4, R4
+    bne.r R4, 1n, 9f
+3:  mov R5, R0->Tab.meta
+    bz R5, 6f
+    mov R6, R5->Tab.idx
+    isa I1, R6, Tab
+    bz I1, 6f
+    mov R7, R6->Tab.hm          ; the class's own method
+    bz R7, 4f
+    mget I2, R7, R1, -1
+    blt I2, 0, 4f
+    mov R8, R6->Tab.hs
+    LOADV R8, I2, I3, I4, F4, R4
+    bne.r R4, 1n, 9f
+4:  call rt$index (0, 0.0, R6, 0, 0.0, R1, null) -> (I4, F4, R4)
+    ret I4, F4, R4
+5:  typeof I1, R0
+    bne I1, 1, 6f
+    mov R5, @rt$strmeta
+    mov R6, R5->Tab.idx
+    isa I1, R6, Tab
+    bz I1, 6f
+    call rt$rawget (R6, 0, 0.0, R1) -> (I4, F4, R4)
+    bne.r R4, 1n, 9f
+6:  call rt$index (I0, F0, R0, 0, 0.0, R1, null) -> (I4, F4, R4)
+9:  ret I4, F4, R4
+.endf
+
+; A metamethod of v (tables and strings have metatables), or nil.
+.func rt$getmm(i64, f64, ref, ref name) -> (i64, f64, ref)
+    isa I1, R0, Tab
+    bz I1, 2f
+    mov R2, R0->Tab.meta
+    bz R2, 9f
+    jmp 5f
+2:  typeof I1, R0
+    bne I1, 1, 9f
+    mov R2, @rt$strmeta
+5:  call rt$rawget (R2, 0, 0.0, R1) -> (I2, F2, R3)
+    ret I2, F2, R3
+9:  ret 0, 0.0, 1n
+.endf
+
+; #v
+.func rt$len(i64, f64, ref, ref desc) -> (i64, f64, ref)
+    typeof I1, R0
+    bne I1, 1, 1f
+    len I2, R0
+    ret I2, 0.0, null
+1:  call rt$getmm (I0, F0, R0, "__len") -> (I3, F3, R3)
+    beq.r R3, 1n, 2f
+    call rt$call1 (null, I3, F3, R3, I0, F0, R0) -> (I4, I5, F5, R5)
+    ret I5, F5, R5
+2:  isa I1, R0, Tab
+    bz I1, 9f
+    mov I2, R0->Tab.n
+    ret I2, 0.0, null
+9:  call rt$typeerror ("get length of", I0, F0, R0, R1)
+    ret 0, 0.0, 1n
+.endf
+
+; -------------------------------------------------------------- arithmetic
+
+.func rt$fmod(f64 a, f64 b) -> f64
+    rem F2, F0, F1
+    bgt.f64 F2, 0.0, 1f
+    bge.f64 F2, 0.0, 9f
+    beq.f64 F1, F2, 9f
+    bgt.f64 F1, 0.0, 2f
+    jmp 9f
+1:  bge.f64 F1, 0.0, 9f
+2:  add F2, F1
+9:  ret F2
+.endf
+
+; x << n (right: x >> n), as Lua defines them.
+.func rt$shl(i64 x, i64 n, i64 right) -> i64
+    bz I2, 1f
+    mov I3, -9223372036854775807
+    dec I3
+    beq I1, I3, 8f
+    neg I1
+1:  ble I1, -64, 8f
+    bge I1, 64, 8f
+    blt I1, 0, 2f
+    shl I0, I0, I1
+    ret I0
+2:  neg I1
+    shr I0, I0, I1
+    ret I0
+8:  ret 0
+.endf
+
+.func rt$mmname(i64 op) -> ref
+    jtab I0, 1f, 2f, 3f, 4f, 5f, 6f, 7f, 8f, 9f, 10f, 11f, 12f, 13f, 14f
+    ret "__add"
+1:  ret "__add"
+2:  ret "__sub"
+3:  ret "__mul"
+4:  ret "__div"
+5:  ret "__mod"
+6:  ret "__pow"
+7:  ret "__idiv"
+8:  ret "__band"
+9:  ret "__bor"
+10: ret "__bxor"
+11: ret "__shl"
+12: ret "__shr"
+13: ret "__unm"
+14: ret "__bnot"
+.endf
+
+; a op b for anything: numbers, strings that convert, metamethods.
+; op: 0 add, 1 sub, 2 mul, 3 div, 4 mod, 5 pow, 6 idiv, 7 band, 8 bor,
+; 9 bxor, 10 shl, 11 shr, 12 unm, 13 bnot.
+.func rt$arith(i64 op, i64, f64, ref, i64, f64, ref, ref da, ref db) -> (i64, f64, ref)
+    call rt$tonum (I1, F0, R0) -> (I3, I4, F2, R4)
+    bz I3, 80f
+    call rt$tonum (I2, F1, R1) -> (I5, I6, F3, R5)
+    bz I5, 80f
+    bge I0, 7, 40f
+    beq I0, 12, 30f
+    beq I0, 3, 20f
+    beq I0, 5, 20f
+    bnz R4, 20f
+    bnz R5, 20f
+    jtab I0, 11f, 12f, 13f, 20f, 14f, 20f, 15f
+11: add I7, I4, I6
+    ret I7, 0.0, null
+12: sub I7, I4, I6
+    ret I7, 0.0, null
+13: mul I7, I4, I6
+    ret I7, 0.0, null
+14: bz I6, 85f
+    rem I7, I4, I6
+    bz I7, 141f
+    xor I8, I7, I6
+    bge I8, 0, 141f
+    add I7, I6
+141: ret I7, 0.0, null
+15: bz I6, 86f
+    div I7, I4, I6
+    rem I8, I4, I6
+    bz I8, 151f
+    xor I8, I4, I6
+    bge I8, 0, 151f
+    dec I7
+151: ret I7, 0.0, null
+20: bnz R4, 21f
+    cvt.f64.i64 F2, I4
+21: bnz R5, 22f
+    cvt.f64.i64 F3, I6
+22: jtab I0, 23f, 24f, 25f, 26f, 27f, 28f, 29f
+23: add F4, F2, F3
+    ret 0, F4, 4n
+24: sub F4, F2, F3
+    ret 0, F4, 4n
+25: mul F4, F2, F3
+    ret 0, F4, 4n
+26: div F4, F2, F3
+    ret 0, F4, 4n
+27: call rt$fmod (F2, F3) -> (F4)
+    ret 0, F4, 4n
+28: ncall "math.pow" (F2, F3) -> (F4)
+    ret 0, F4, 4n
+29: div F4, F2, F3
+    floor F4, F4
+    ret 0, F4, 4n
+30: bnz R4, 31f
+    neg I7, I4
+    ret I7, 0.0, null
+31: neg F4, F2
+    ret 0, F4, 4n
+40: call rt$toint_bit (I4, F2, R4) -> (I3, I7)
+    bz I3, 87f
+    call rt$toint_bit (I6, F3, R5) -> (I3, I8)
+    bz I3, 87f
+    sub I9, I0, 7
+    jtab I9, 41f, 42f, 43f, 44f, 45f, 87f, 46f
+41: and I7, I8
+    ret I7, 0.0, null
+42: or I7, I8
+    ret I7, 0.0, null
+43: xor I7, I8
+    ret I7, 0.0, null
+44: call rt$shl (I7, I8, 0) -> (I7)
+    ret I7, 0.0, null
+45: call rt$shl (I7, I8, 1) -> (I7)
+    ret I7, 0.0, null
+46: xor I7, -1
+    ret I7, 0.0, null
+80: call rt$mmname (I0) -> (R13)
+    call rt$getmm (I1, F0, R0, R13) -> (I10, F10, R10)
+    bne.r R10, 1n, 81f
+    call rt$getmm (I2, F1, R1, R13) -> (I10, F10, R10)
+    beq.r R10, 1n, 88f
+81: call rt$call2 (null, I10, F10, R10, I1, F0, R0, I2, F1, R1) -> (I11, I12, F12, R12)
+    ret I12, F12, R12
+85: call rt$rterror ("attempt to perform 'n%0'")
+86: call rt$rterror ("attempt to divide by zero")
+87: call rt$rterror ("number has no integer representation")
+88: ; a string that does not convert: the string library's message
+    beq I0, 12, 881f
+    bge I0, 7, 880f
+881: typeof I15, R0
+    beq I15, 1, 882f
+    typeof I15, R1
+    bne I15, 1, 880f
+882: call rt$mmname (I0) -> (R13)
+    len I15, R13
+    sub I15, 2
+    substr R13, R13, 2, I15
+    call rt$typename (I1, F0, R0) -> (R14)
+    call rt$typename (I2, F1, R1) -> (R15)
+    strcat R12, "attempt to ", R13, " a '", R14, "' with a '", R15, "'"
+    call rt$rterror (R12)
+880: ; blame the first operand that is not a number
+    bz I3, 89f
+    mov I1, I2
+    mov F0, F1
+    mov R0, R1
+    mov R2, R3
+89: mov R14, "perform arithmetic on"
+    blt I0, 7, 891f
+    beq I0, 12, 891f
+    mov R14, "perform bitwise operation on"
+891: call rt$typeerror (R14, I1, F0, R0, R2)
+    ret 0, 0.0, 1n
+.endf
+
+; -------------------------------------------------------------- comparison
+
+; a == b
+.func rt$eq(i64, f64, ref, i64, f64, ref) -> i64
+    beq.r R0, R1, 10f
+    bnz R0, 2f
+    bne.r R1, 4n, 90f
+    call rt$flt2int (F1) -> (I2, I3)
+    bz I2, 90f
+    beq I0, I3, 91f
+    ret 0
+2:  bnz R1, 3f
+    bne.r R0, 4n, 90f
+    call rt$flt2int (F0) -> (I2, I3)
+    bz I2, 90f
+    beq I1, I3, 91f
+    ret 0
+3:  typeof I2, R0
+    typeof I3, R1
+    bne I2, I3, 90f
+    bne I2, 1, 4f
+    strcmp I4, R0, R1
+    bz I4, 91f
+    ret 0
+4:  isa I4, R0, Tab
+    bz I4, 90f
+    isa I4, R1, Tab
+    bz I4, 90f
+    call rt$getmm (I0, F0, R0, "__eq") -> (I5, F5, R5)
+    bne.r R5, 1n, 5f
+    call rt$getmm (I1, F1, R1, "__eq") -> (I5, F5, R5)
+    beq.r R5, 1n, 90f
+5:  call rt$call2 (null, I5, F5, R5, I0, F0, R0, I1, F1, R1) -> (I6, I7, F7, R7)
+    call rt$truthy (R7) -> (I8)
+    ret I8
+10: bnz R0, 11f
+    beq I0, I1, 91f
+    ret 0
+11: bne.r R0, 4n, 91f
+    beq.f64 F0, F1, 91f
+90: ret 0
+91: ret 1
+.endf
+
+; a < b for an integer and a float, exactly.
+.func rt$lt_if(i64 i, f64 f) -> i64
+    bne.f64 F0, F0, 8f
+    bge.f64 F0, 9223372036854775808.0, 9f
+    ble.f64 F0, -9223372036854775808.0, 8f
+    ceil F1, F0
+    cvt.i64.f64 I1, F1
+    blt I0, I1, 9f
+8:  ret 0
+9:  ret 1
+.endf
+
+.func rt$le_if(i64 i, f64 f) -> i64
+    bne.f64 F0, F0, 8f
+    bge.f64 F0, 9223372036854775808.0, 9f
+    blt.f64 F0, -9223372036854775808.0, 8f
+    floor F1, F0
+    cvt.i64.f64 I1, F1
+    ble I0, I1, 9f
+8:  ret 0
+9:  ret 1
+.endf
+
+.func rt$lt_fi(f64 f, i64 i) -> i64
+    bne.f64 F0, F0, 8f
+    bge.f64 F0, 9223372036854775808.0, 8f
+    blt.f64 F0, -9223372036854775808.0, 9f
+    floor F1, F0
+    cvt.i64.f64 I1, F1
+    blt I1, I0, 9f
+8:  ret 0
+9:  ret 1
+.endf
+
+.func rt$le_fi(f64 f, i64 i) -> i64
+    bne.f64 F0, F0, 8f
+    bge.f64 F0, 9223372036854775808.0, 8f
+    ble.f64 F0, -9223372036854775808.0, 9f
+    ceil F1, F0
+    cvt.i64.f64 I1, F1
+    ble I1, I0, 9f
+8:  ret 0
+9:  ret 1
+.endf
+
+; a < b (le: a <= b)
+.func rt$cmp(i64 le, i64, f64, ref, i64, f64, ref) -> i64
+    bnz R0, 3f
+    bnz R1, 2f
+    bnz I0, 1f
+    slt I3, I1, I2
+    ret I3
+1:  sle I3, I1, I2
+    ret I3
+2:  bne.r R1, 4n, 50f
+    bnz I0, 21f
+    call rt$lt_if (I1, F1) -> (I3)
+    ret I3
+21: call rt$le_if (I1, F1) -> (I3)
+    ret I3
+3:  bne.r R0, 4n, 10f
+    bnz R1, 4f
+    bnz I0, 31f
+    call rt$lt_fi (F0, I2) -> (I3)
+    ret I3
+31: call rt$le_fi (F0, I2) -> (I3)
+    ret I3
+4:  bne.r R1, 4n, 50f
+    bnz I0, 41f
+    slt.f64 I3, F0, F1
+    ret I3
+41: sle.f64 I3, F0, F1
+    ret I3
+10: typeof I3, R0
+    bne I3, 1, 50f
+    typeof I3, R1
+    bne I3, 1, 50f
+    strcmp I4, R0, R1
+    bnz I0, 11f
+    slt I3, I4, 0
+    ret I3
+11: sle I3, I4, 0
+    ret I3
+50: mov R5, "__lt"
+    bz I0, 51f
+    mov R5, "__le"
+51: call rt$getmm (I1, F0, R0, R5) -> (I6, F6, R6)
+    bne.r R6, 1n, 52f
+    call rt$getmm (I2, F1, R1, R5) -> (I6, F6, R6)
+    beq.r R6, 1n, 60f
+52: call rt$call2 (null, I6, F6, R6, I1, F0, R0, I2, F1, R1) -> (I7, I8, F8, R8)
+    call rt$truthy (R8) -> (I9)
+    ret I9
+60: call rt$typename (I1, F0, R0) -> (R10)
+    call rt$typename (I2, F1, R1) -> (R11)
+    strcmp I9, R10, R11
+    bnz I9, 61f
+    strcat R12, "attempt to compare two ", R10, " values"
+    jmp 62f
+61: strcat R12, "attempt to compare ", R10, " with ", R11
+62: call rt$rterror (R12)
+    ret 0
+.endf
+
+.func rt$lt(i64, f64, ref, i64, f64, ref) -> i64
+    call rt$cmp (0, I0, F0, R0, I1, F1, R1) -> (I2)
+    ret I2
+.endf
+
+.func rt$le(i64, f64, ref, i64, f64, ref) -> i64
+    call rt$cmp (1, I0, F0, R0, I1, F1, R1) -> (I2)
+    ret I2
+.endf
+
+; a .. b
+.func rt$concat(i64, f64, ref, i64, f64, ref, ref da, ref db) -> (i64, f64, ref)
+    call rt$tostr_num (I0, F0, R0) -> (R4)
+    bz R4, 5f
+    call rt$tostr_num (I1, F1, R1) -> (R5)
+    bz R5, 5f
+    strcat R6, R4, R5
+    ret 0, 0.0, R6
+5:  call rt$getmm (I0, F0, R0, "__concat") -> (I6, F6, R6)
+    bne.r R6, 1n, 6f
+    call rt$getmm (I1, F1, R1, "__concat") -> (I6, F6, R6)
+    beq.r R6, 1n, 7f
+6:  call rt$call2 (null, I6, F6, R6, I0, F0, R0, I1, F1, R1) -> (I7, I8, F8, R8)
+    ret I8, F8, R8
+7:  bz R4, 8f
+    mov I0, I1
+    mov F0, F1
+    mov R0, R1
+    mov R2, R3
+8:  call rt$typeerror ("concatenate", I0, F0, R0, R2)
+    ret 0, 0.0, 1n
+.endf
+
+; --------------------------------------------------------------- lists
+
+.func rt$listget(ref list, i64 j) -> (i64, f64, ref)
+    add I1, I0, I0
+    add I2, I1, 1
+    len I3, R0
+    bge I2, I3, 9f
+    LOADV R0, I1, I4, I5, F5, R5
+    ret I5, F5, R5
+9:  ret 0, 0.0, 1n
+.endf
+
+.func rt$copylist(ref) -> ref
+    len I0, R0
+    lnew R1, I0
+    call rt$appendlist (R1, R0)
+    ret R1
+.endf
+
+; The values of list from value index j on.
+.func rt$sublist(ref list, i64 j) -> ref
+    lnew R1
+    add I1, I0, I0
+    len I2, R0
+1:  bge I1, I2, 9f
+    LOADV R0, I1, I3, I4, F4, R4
+    PUSHV R1, I4, F4, R4
+    add I1, 2
+    jmp 1b
+9:  ret R1
+.endf
+
+.func rt$appendlist(ref dst, ref src)
+    len I0, R1
+    mov I1, 0
+1:  bge I1, I0, 9f
+    LOADV R1, I1, I2, I3, F3, R3
+    PUSHV R0, I3, F3, R3
+    add I1, 2
+    jmp 1b
+9:  ret
+.endf
+
+; Append n results: the first, and the rest from @rt$mv.
+.func rt$appendmv(ref list, i64 n, i64, f64, ref)
+    blt I0, 1, 9f
+    PUSHV R0, I1, F0, R1
+    mov R2, @rt$mv
+    sub I2, I0, 1
+    add I2, I2
+    mov I3, 0
+1:  bge I3, I2, 9f
+    LOADV R2, I3, I4, I5, F5, R5
+    PUSHV R0, I5, F5, R5
+    add I3, 2
+    jmp 1b
+9:  ret
+.endf
+
+; Result j (2 or more) of a call that returned n.
+.func rt$mvget(i64 n, i64 j) -> (i64, f64, ref)
+    bgt I1, I0, 9f
+    sub I2, I1, 2
+    add I2, I2
+    mov R0, @rt$mv
+    LOADV R0, I2, I3, I4, F4, R4
+    ret I4, F4, R4
+9:  ret 0, 0.0, 1n
+.endf
+
+.func rt$mvreserve(i64 words) -> ref
+    mov R0, @rt$mv
+    len I1, R0
+    bge I1, I0, 1f
+    resize R0, I0
+1:  ret R0
+.endf
+
+; Return the values of a list.
+.func rt$retlist(ref list) -> (i64, i64, f64, ref)
+    len I0, R0
+    shr I0, 1
+    bz I0, 9f
+    mov I1, 0
+    LOADV R0, I1, I2, I3, F3, R3
+    sub I4, I0, 1
+    add I4, I4
+    call rt$mvreserve (I4) -> (R1)
+    mov I5, 0
+    mov I6, 2
+1:  bge I5, I4, 2f
+    LOADV R0, I6, I7, I8, F8, R8
+    STOREV R1, I5, I7, I8, F8, R8
+    add I5, 2
+    add I6, 2
+    jmp 1b
+2:  ret I0, I3, F3, R3
+9:  ret 0, 0, 0.0, 1n
+.endf
+
+; The results of a call as a list (n and the first one given).
+.func rt$collect(i64 n, i64, f64, ref) -> ref
+    lnew R1
+    call rt$appendmv (R1, I0, I1, F0, R0)
+    ret R1
+.endf
+
+; A named vararg table: {...} with n.
+.func rt$vatable(ref list) -> ref
+    new R1, Tab
+    len I0, R0
+    shr I0, 1
+    call rt$copylist (R0) -> (R2)
+    call rt$setarr (R1, R2)
+    call rt$rawset (R1, 0, 0.0, "n", I0, 0.0, null)
+    ret R1
+.endf
+
+; ------------------------------------------------------------- for loops
+
+.func rt$forzero
+    call rt$rterror ("'for' step is zero")
+    ret
+.endf
+
+.func rt$forerr(ref what, i64, f64, ref)
+    call rt$typename (I0, F0, R1) -> (R2)
+    strcat R3, "bad 'for' ", R0, " (number expected, got ", R2, ")"
+    call rt$rterror (R3)
+    ret
+.endf
+
+; An integer loop: (runs?, the limit as an integer, the iteration count).
+.func rt$forprepi(i64 init, i64 step, i64, f64, ref) -> (i64, i64, i64)
+    bnz I1, 1f
+    call rt$forzero
+1:  bnz R0, 2f
+    mov I3, I2
+    jmp 5f
+2:  beq.r R0, 4n, 3f
+    typeof I4, R0
+    bne I4, 1, 29f
+    call rt$str2num (R0) -> (I4, I2, F0, R1)
+    bz I4, 29f
+    mov R0, R1
+    bz R0, 1b
+3:  bne.f64 F0, F0, 9f
+    blt I1, 0, 4f
+    floor F1, F0
+    bge.f64 F1, 9223372036854775808.0, 31f
+    blt.f64 F1, -9223372036854775808.0, 9f
+    cvt.i64.f64 I3, F1
+    jmp 5f
+31: mov I3, 9223372036854775807
+    jmp 5f
+4:  ceil F1, F0
+    blt.f64 F1, -9223372036854775808.0, 41f
+    bge.f64 F1, 9223372036854775808.0, 9f
+    cvt.i64.f64 I3, F1
+    jmp 5f
+41: mov I3, -9223372036854775807
+    dec I3
+5:  blt I1, 0, 6f
+    bgt I0, I3, 9f
+    sub I4, I3, I0
+    div.u64 I4, I4, I1
+    ret 1, I3, I4
+6:  blt I0, I3, 9f
+    sub I4, I0, I3
+    add I5, I1, 1
+    neg I5
+    add I5, 1
+    div.u64 I4, I4, I5
+    ret 1, I3, I4
+9:  ret 0, 0, 0
+29: call rt$forerr ("limit", I2, F0, R0)
+    ret 0, 0, 0
+.endf
+
+; A loop whose values are only known at run time: an integer loop (the
+; limit slot holds the iteration count) or a float loop.
+.func rt$forprep(i64, f64, ref, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref, i64, f64, ref, i64, f64, ref)
+    bnz R0, 5f
+    bnz R2, 5f
+    call rt$forprepi (I0, I2, I1, F1, R1) -> (I3, I4, I5)
+    ret I3, I0, 0.0, null, I5, 0.0, null, I2, 0.0, null
+5:  ; floats
+    call rt$fornum ("initial value", I0, F0, R0) -> (F0)
+    call rt$fornum ("limit", I1, F1, R1) -> (F1)
+    call rt$fornum ("step", I2, F2, R2) -> (F2)
+    bne.f64 F2, 0.0, 6f
+    call rt$forzero
+6:  blt.f64 F2, 0.0, 7f
+    sle.f64 I3, F0, F1
+    jmp 8f
+7:  sge.f64 I3, F0, F1
+8:  ret I3, 0, F0, 4n, 0, F1, 4n, 0, F2, 4n
+.endf
+
+.func rt$fornum(ref what, i64, f64, ref) -> f64
+3:  bnz R1, 1f
+    cvt.f64.i64 F0, I0
+    ret F0
+1:  beq.r R1, 4n, 2f
+    typeof I1, R1
+    bne I1, 1, 9f
+    call rt$str2num (R1) -> (I1, I0, F0, R1)
+    bz I1, 9f
+    jmp 3b
+2:  ret F0
+9:  call rt$forerr (R0, I0, F0, R1)
+    ret 0.0
+.endf
+
+; The next iteration of a run-time loop: (continue?, the value, the count).
+.func rt$forloop(i64, f64, ref, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref, i64)
+    bnz R0, 5f
+    bz I1, 9f
+    dec I1
+    add I0, I2
+    ret 1, I0, 0.0, null, I1
+5:  add F0, F2
+    blt.f64 F2, 0.0, 6f
+    ble.f64 F0, F1, 7f
+    jmp 9f
+6:  bge.f64 F0, F1, 7f
+9:  ret 0, I0, F0, R0, I1
+7:  ret 1, 0, F0, 4n, 0
+.endf
+
+; ------------------------------------------------------ to-be-closed values
+
+.func rt$checkclose(i64, f64, ref, ref name)
+    beq.r R0, 1n, 9f
+    beq.r R0, 2n, 9f
+    call rt$getmm (I0, F0, R0, "__close") -> (I1, F1, R2)
+    bne.r R2, 1n, 9f
+    strcat R3, "variable '", R1, "' got a non-closable value"
+    call rt$rterror (R3)
+9:  ret
+.endf
+
+.func rt$close(i64, f64, ref, i64, f64, ref)
+    beq.r R0, 1n, 9f
+    beq.r R0, 2n, 9f
+    call rt$getmm (I0, F0, R0, "__close") -> (I2, F2, R2)
+    beq.r R2, 1n, 9f
+    call rt$call2 (null, I2, F2, R2, I0, F0, R0, I1, F1, R1) -> (I3, I4, F4, R4)
+9:  ret
+.endf

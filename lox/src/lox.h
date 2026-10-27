@@ -1,4 +1,4 @@
-/* loxc: a compiler from Lox (https://craftinginterpreters.com) to MLWSVM assembly. */
+/* mlws-vm-loxc: a compiler from Lox (https://craftinginterpreters.com) to MLWSVM assembly. */
 #ifndef LOX_H
 #define LOX_H
 

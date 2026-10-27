@@ -1,0 +1,42 @@
+false	msg
+false	msg
+2	table
+2
+false	errors.lua:5: lvl1
+false	errors.lua:7: lvl2
+false	errors.lua:8: attempt to index a nil value (local 't')
+false	errors.lua:9: attempt to index a nil value (global 'undefined_global')
+false	errors.lua:10: attempt to add a 'string' with a 'number'
+false	errors.lua:11: attempt to perform arithmetic on a table value
+false	errors.lua:12: attempt to compare number with string
+false	errors.lua:13: attempt to compare two table values
+false	errors.lua:14: attempt to get length of a number value
+false	errors.lua:15: attempt to index a nil value (field 'y')
+false	errors.lua:16: attempt to call a nil value (global 'undefinedfn')
+false	errors.lua:17: attempt to call a nil value (field 'method')
+false	errors.lua:18: attempt to divide by zero
+false	errors.lua:19: attempt to perform 'n%0'
+false	errors.lua:20: number has no integer representation
+false	errors.lua:21: attempt to concatenate a table value
+false	errors.lua:22: in index
+false	handled: errors.lua:23: E
+false	errors.lua:24: bad argument #1 to 'rep' (string expected, got table)
+false	errors.lua:25: bad argument #2 to 'sub' (number expected, got table)
+false	wrong number of arguments to 'insert'
+false	bad argument #1 to 'setmetatable' (table expected, got number)
+false	errors.lua:28: 'for' step is zero
+false	errors.lua:29: bad 'for' limit (number expected, got string)
+false	errors.lua:30: variable 'a' got a non-closable value
+false	errors.lua:31: bad argument #1 to 'floor' (number expected, got string)
+false	errors.lua:32: assertion failed!
+false	errors.lua:33: custom message
+true	ok
+false	errors.lua:35: stack overflow
+false	<no error object>
+false	invalid key to 'next'
+false	errors.lua:39: attempt to concatenate a nil value
+false	errors.lua:40: table index is nil
+false	errors.lua:41: table index is NaN
+nil	false	bad argument #1 to 'tostring' (value expected)
+custom
+false	E!

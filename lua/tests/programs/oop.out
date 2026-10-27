@@ -1,0 +1,6 @@
+ann: 120	+50 -30
+sam: 1025.0	1025.0	true
+false	insufficient funds
+oop.lua:23: insufficient funds
+3	2	1
+{1, 2, 3, 4}	{2, 3}	true	false	true	true

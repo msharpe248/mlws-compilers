@@ -1,8 +1,10 @@
-/* loxc: compile a Lox program to MLWSVM assembly.
+/* mlws-vm-loxc: compile a Lox program to MLWSVM assembly.
  *
- *   loxc [-o out.masm] program.lox
+ *   mlws-vm-loxc [-o FILE] program.lox     (FILE '-' is standard output)
  *
- * Compile errors are reported in jlox's format and exit with status 65. */
+ * The output is one self-contained MLWSVM assembly file, which `mlwsvm run`
+ * runs and `mlwsvm asm` turns into a binary module. Compile errors are
+ * reported in jlox's format and exit with status 65. */
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,7 +32,7 @@ void error_line(int line, const char *msg) {
 void *xmalloc(size_t n) {
     void *p = malloc(n ? n : 1);
     if (!p) {
-        fprintf(stderr, "loxc: out of memory\n");
+        fprintf(stderr, "mlws-vm-loxc: out of memory\n");
         exit(70);
     }
     return p;
@@ -39,7 +41,7 @@ void *xmalloc(size_t n) {
 void *xrealloc(void *p, size_t n) {
     p = realloc(p, n ? n : 1);
     if (!p) {
-        fprintf(stderr, "loxc: out of memory\n");
+        fprintf(stderr, "mlws-vm-loxc: out of memory\n");
         exit(70);
     }
     return p;
@@ -67,7 +69,7 @@ Global *global_get(Globals *g, const char *name, int len) {
 static char *read_file(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) {
-        fprintf(stderr, "loxc: cannot open %s: %s\n", path, strerror(errno));
+        fprintf(stderr, "mlws-vm-loxc: cannot open %s: %s\n", path, strerror(errno));
         exit(66);
     }
     size_t cap = 65536, len = 0, r;
@@ -82,7 +84,9 @@ static char *read_file(const char *path) {
 }
 
 static void usage(void) {
-    fprintf(stderr, "usage: loxc [-o out.masm] program.lox\n");
+    fprintf(stderr,
+        "usage: mlws-vm-loxc [-o FILE] program.lox\n"
+        "  -o FILE        write the assembly to FILE (default: program.masm; '-' for stdout)\n");
     exit(64);
 }
 
@@ -116,12 +120,12 @@ int main(int argc, char **argv) {
     }
     FILE *out = strcmp(output, "-") == 0 ? stdout : fopen(output, "w");
     if (!out) {
-        fprintf(stderr, "loxc: cannot write %s: %s\n", output, strerror(errno));
+        fprintf(stderr, "mlws-vm-loxc: cannot write %s: %s\n", output, strerror(errno));
         return 73;
     }
     generate(script, &globals, lox_runtime, out);
     if (out != stdout && fclose(out) != 0) {
-        fprintf(stderr, "loxc: cannot write %s\n", output);
+        fprintf(stderr, "mlws-vm-loxc: cannot write %s\n", output);
         return 74;
     }
     return 0;

@@ -1,0 +1,20 @@
+local s = "Hello, World"
+print(#s, s:upper(), s:lower(), s:sub(1, 5), s:sub(-5), s:sub(3, -3), s:rep(2, "|"))
+print(s:byte(1), s:byte(-1), s:byte(1, 3), string.char(72, 105))
+print(s:find("World"), s:find("o", 6), s:find("xyz"), s:find("l+"), s:match("(%a+), (%a+)"))
+print(("x"):rep(0), ("ab"):reverse(), ("%d"):format(5), tostring(12) .. "!")
+for w in ("one two  three"):gmatch("%a+") do io.write(w, ".") end print()
+print(("hello world"):gsub("o", "0"), ("hello"):gsub("l", {l = "L"}), ("abc"):gsub("%w", function(c) return c:upper() .. c end))
+print(("key=val; k2=v2"):match("(%w+)=(%w+)"), string.format("%q", 'a "quoted"\n\0x'))
+print(("  trim  "):match("^%s*(.-)%s*$") .. "|", ("2024-01-15"):match("(%d+)-(%d+)-(%d+)"))
+print(string.format("[%10.3f] [%-10d] [%+d] [%05d] [%o] [%X] [%e] [%c]", 1/3, 7, 3, -42, 8, 3054, 123.456, 65))
+print(tostring(nil), tostring(false), tonumber("  12  "), tonumber("0x1F"), tonumber("1e2"), tonumber("z", 36), tonumber("abc"), tonumber("10", 2))
+print(("abc"):find("b", 1, true), ("a.b"):find(".", 1, true), ("a+b"):gsub("%+", "-"))
+print(#"\u{48}\65\x42\z
+       end", "a\tb", "\"", '\'', [[long
+string]], [==[with ]] inside]==])
+local t = {} for i = 1, 5 do t[#t + 1] = i * i end print(table.concat(t, ", "))
+print(("%s=%s"):format("k", 1.5), ("x"):len(), ("%5.1s|"):format("abc"))
+print(string.format("%g %g %g %g", 0.1, 100000, 1e6, 1e-5), string.format("%.3g|%10.4e", 2/3, 12345.6789))
+print(("CamelCaseString"):gsub("(%u)", " %1"), ("hello"):find("l"), ("f(a(b)c)d"):match("%b()"))
+print(("THE (quick) fox"):find("%((%a+)%)"), ("hello world from lua"):gsub("(%w+) (%w+)", "%2 %1"))

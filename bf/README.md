@@ -1,21 +1,36 @@
-# bfc: brainfuck for MLWSVM
+# brainfuck for MLWSVM: mlws-vm-bf
 
 ```sh
 make
-./bf tests/hello.b                      # compile and run
-./bfc -o hello.masm tests/hello.b       # just compile
-mlwsvm run hello.masm
+./mlws-vm-bf tests/hello.b        # compile and run
+./mlws-vm-bf -S tests/hello.b     # export the assembly: tests/hello.masm
+mlwsvm run tests/hello.masm       # which runs on its own
 ```
 
+`mlws-vm-bf` compiles a program and runs it:
+
 ```
-bfc [options] program.b
+mlws-vm-bf [options] program.b [args...]
+  -S             only compile: write the assembly and do not run it
+  -k             keep the assembly after running the program
+  -o FILE        the assembly file (default: program.masm next to the source);
+                 with -S, '-' writes it to standard output
+  --tape N, --eof MODE, -O0   as for mlws-vm-bfc
+```
+
+`mlws-vm-bfc` is the compiler itself; it only compiles:
+
+```
+mlws-vm-bfc [options] program.b
   -o FILE        write the assembly to FILE (default: program.masm; '-' for stdout)
   --tape N       number of tape cells (default 30000)
   --eof MODE     what ',' does at end of input: unchanged (default), zero, minus1
   -O0            disable optimisations
 ```
 
-`bf` accepts the same options before the program name.
+The assembly is one self-contained file (no imports), so it can also be
+assembled to a binary module (`mlwsvm asm hello.masm -o hello.mlwso`), or
+run under `mlwsvm debug`, `--profile` or `--trace`.
 
 ## Semantics
 
@@ -56,6 +71,8 @@ arithmetic.
 
 `make test` compiles and runs each `tests/NAME.b`, comparing its output with
 `NAME.out` (with optional `NAME.in`, `NAME.opts`, `NAME.err` and `NAME.exit`;
-see `tools/run-tests.py`). The optimiser was also checked against a
+see `tools/run-tests.py`), and `tools/test-drivers.sh` checks the driver's
+`-S`, `-o` and `-k` options and that the exported assembly runs and
+assembles. The optimiser was also checked against a
 reference interpreter on about 900 random programs built from the idioms
 above.

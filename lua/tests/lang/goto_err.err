@@ -1,0 +1,1 @@
+mlws-vm-lua: goto_err.lua:5: <goto skip> at line 2 jumps into the scope of 'a'

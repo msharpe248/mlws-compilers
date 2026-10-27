@@ -1,0 +1,14 @@
+(4, 6)	true	true	true	true	false	2	2	(1, 2)|(3, 4)	(-1, -2)	5
+cat makes a sound	rex barks	x
+foo!	bar!
+42	2
+red	nil
+false	meta.lua:28: read-only table
+true	X
+locked	false	cannot change a protected metatable
+add	add	mul	div	mod	idiv	pow	band	shl	bnot
+MyType: ADDR
+42	3.0
+yes
+y,x
+pairs	1	one

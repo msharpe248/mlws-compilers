@@ -1,0 +1,12 @@
+[line one] [line two] [42 3.5] 
+line one	line two
+	42	3.5	
+
+25		nil
+nil	no/such/file.txt: No such file or directory	2
+true	nil	file	closed file	nil
+written 1 2.0
+stdout write
+first line	123	 rest	last
+more
+

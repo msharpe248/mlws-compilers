@@ -1,0 +1,1 @@
+mlws-vm-lua: for_ro.lua:1: attempt to assign to const variable 'i'
