@@ -120,6 +120,7 @@ typedef struct {
     bool env_fast;      /* free names use the pinned slots of _G */
     bool used_call[MAXARGS + 2];
     int nic;            /* inline cache sites */
+    int nmc;            /* method cache sites */
     int nctor;          /* table constructors that use a shape */
 } Gen;
 
@@ -922,38 +923,50 @@ static void write_global(FS *fs, Expr *e, Val v) {
 
 /* Find constant string key k in the hash part of the table in slot ts:
    leave its hash slots in R31 and the index of its value word in I31, or
-   branch to miss_label if it is not there. Each site has an inline cache
-   (in the list @rt$ic) of the word it found last time: tables built the
-   same way keep a key in the same slot, so this usually avoids the map
-   lookup. The cached slot is used only if it holds this very key. */
-static void ic_lookup(FS *fs, int ts, Str k, int notfound) {
+   branch to notfound if it is not there. The table is in register t
+   (not R29..R31). Each site has an inline cache of
+   the shape it saw last time and the word it found the key at (globals
+   ic$<site>s and ic$<site>w): a table of that shape has the key there, so
+   a hit costs one compare. Tables with a map of their own (more than 16
+   slots, as a library's) miss, and then use the cached word if it holds
+   this very key, before looking the key up. */
+static void ic_lookup(FS *fs, const char *t, Str k, int notfound) {
     int site = G.nic++;
-    int miss = new_label(fs), load = new_label(fs);
+    int miss = new_label(fs), load = new_label(fs), look = new_label(fs), own = new_label(fs),
+        set = new_label(fs);
     char *ks = masm_string(k);
-    emit(fs, "    mov R31, %s->Tab.hs", RB(fs, ts, "R28"));
-    emit(fs, "    mov R30, @rt$ic");
-    emit(fs, "    mov I30, %d", site);
-    emit(fs, "    mov I29, R30[I30]");
-    emit(fs, "    mov I28, %s->Tab.hw", RB(fs, ts, "R28"));
-    branch(fs, miss, "bge I29, I28");
-    emit(fs, "    sub I28, I29, 2");
-    emit(fs, "    mov R29, R31[I28]");
-    branch(fs, miss, "bne.r R29, %s", ks);
-    emit(fs, "    mov I31, I29");
+    emit(fs, "    mov R31, %s->Tab.hm", t);
+    branch(fs, miss, "bne.r R31, @ic$%ds", site);
+    emit(fs, "    mov R31, %s->Tab.hs", t);
+    emit(fs, "    mov I31, @ic$%dw", site);
     emit(fs, ".L%d:", load);
-    Buf *cur = fs->cur;
-    fs->cur = &fs->cold;
+    cold_begin(fs);
     emit(fs, ".L%d:", miss);
-    emit(fs, "    mov R31, %s->Tab.hm", RB(fs, ts, "R28"));
+    emit(fs, "    mov I29, @ic$%dw", site);
+    emit(fs, "    mov I28, %s->Tab.hw", t);
+    emit(fs, "    bge I29, I28, .L%d", look);
+    emit(fs, "    mov R30, %s->Tab.hs", t);
+    emit(fs, "    sub I28, I29, 2");
+    emit(fs, "    mov R29, R30[I28]");
+    emit(fs, "    bne.r R29, %s, .L%d", ks, look);
+    emit(fs, "    mov I31, I29");
+    emit(fs, "    mov R31, R30");
+    emit(fs, "    jmp .L%d", load);
+    emit(fs, ".L%d:", look);
     emit(fs, "    bz R31, .L%d", notfound);
     emit(fs, "    mget I31, R31, %s, -1", ks);
     emit(fs, "    blt I31, 0, .L%d", notfound);
-    emit(fs, "    mov R30, @rt$ic");
-    emit(fs, "    mov I30, %d", site);
-    emit(fs, "    mov R30[I30], I31");
-    emit(fs, "    mov R31, %s->Tab.hs", RB(fs, ts, "R28"));
+    emit(fs, "    mov @ic$%dw, I31", site);
+    emit(fs, "    mov I30, %s->Tab.hmshared", t);
+    emit(fs, "    bz I30, .L%d", own);
+    emit(fs, "    mov.r @ic$%ds, R31", site);
+    emit(fs, "    jmp .L%d", set);
+    emit(fs, ".L%d:", own);
+    emit(fs, "    mov.r @ic$%ds, " NIL, site);
+    emit(fs, ".L%d:", set);
+    emit(fs, "    mov R31, %s->Tab.hs", t);
     emit(fs, "    jmp .L%d", load);
-    fs->cur = cur;
+    cold_end(fs);
     record(fs, notfound);
     free(ks);
 }
@@ -983,13 +996,12 @@ static Val gen_index_val(FS *fs, Val t, Val k, int dst, const char *desc) {
                 emit(fs, "    mov I31, %lld", (long long)(k.i - 1));
             else
                 emit(fs, "    sub I31, %s, 1", VI(&k));
-            if (k.k != V_INT)
-                branch(fs, slow, "blt I31, 0");
-            branch(fs, slow, "bge I31, I30");
+            /* 0 <= k - 1 < n, as one unsigned compare */
+            branch(fs, slow, "bge.u64 I31, I30");
             emit(fs, "    add I31, I31");
             emit(fs, "    mov R31, %s->Tab.arr", RB(fs, ts, "R28"));
         } else {
-            ic_lookup(fs, ts, k.s, slow);
+            ic_lookup(fs, RB(fs, ts, "R28"), k.s, slow);
         }
         emit(fs, "    mov %s, R31[I31]", SR(d));
         emit(fs, "    inc I31");
@@ -1037,13 +1049,12 @@ static void gen_setindex(FS *fs, Val t, Val k, Val v, const char *desc) {
                 emit(fs, "    mov I31, %lld", (long long)(k.i - 1));
             else
                 emit(fs, "    sub I31, %s, 1", VI(&k));
-            if (k.k != V_INT)
-                branch(fs, slow, "blt I31, 0");
-            branch(fs, slow, "bge I31, I30");
+            /* 0 <= k - 1 < n, as one unsigned compare */
+            branch(fs, slow, "bge.u64 I31, I30");
             emit(fs, "    add I31, I31");
             emit(fs, "    mov R31, %s->Tab.arr", RB(fs, ts, "R28"));
         } else {
-            ic_lookup(fs, ts, k.s, slow);
+            ic_lookup(fs, RB(fs, ts, "R28"), k.s, slow);
         }
         /* only an existing non-nil value is overwritten inline */
         emit(fs, "    mov R30, R31[I31]");
@@ -1345,6 +1356,16 @@ static Val gen_arith(FS *fs, int op, Val a, Val b, int dst, const char *da, cons
     cold_begin(fs);
     place(fs, slow);
     if (!is_bitwise(op)) {
+        if (!fpref && ta == TY_ANY && tb == TY_ANY) {
+            /* two floats, first: the common case that is not two integers */
+            int mixed = new_label(fs);
+            branch(fs, mixed, "bne.r %s, " FLT, VR(&a));
+            branch(fs, mixed, "bne.r %s, " FLT, VR(&b));
+            flt_op(fs, op, d, VF(&a), VF(&b));
+            ty_set(fs, d, TY_ANY);
+            jump(fs, cont);
+            place(fs, mixed);
+        }
         /* both numbers: as floats */
         const char *xs[2] = {"F30", "F29"};
         Val *vs[2] = {&a, &b};
@@ -1824,6 +1845,50 @@ static Func *known_func(FS *fs, Expr *callee) {
     return NULL;
 }
 
+/* obj:name, the method, from the object in slot ss into slot d. Each site
+   caches a shape that lacks name (global mc$<site>; a table with no hash
+   part has none): for an object of that shape, the method is looked up in
+   its metatable's __index table, with an inline cache, if that is a table.
+   Anything else calls rt$methodc, which also says what to cache. */
+static void gen_method(FS *fs, int ss, Str name, const char *desc, int d) {
+    int site = G.nmc++;
+    int slow = new_label(fs), cont = new_label(fs), fl = new_label(fs), got = new_label(fs);
+    ty_set(fs, d, TY_ANY);
+    if (ty_get(fs, ss) != TY_TAB) {
+        emit(fs, "    isa I31, %s, Tab", SR(ss));
+        branch(fs, slow, "bz I31");
+    }
+    emit(fs, "    mov R31, %s->Tab.hm", RB(fs, ss, "R28"));
+    branch(fs, slow, "bne.r R31, @mc$%d", site);
+    emit(fs, "    mov R31, %s->Tab.meta", RB(fs, ss, "R28"));
+    branch(fs, slow, "bz R31");
+    emit(fs, "    mov R28, R31->Tab.idx");
+    emit(fs, "    isa I31, R28, Tab");
+    branch(fs, slow, "bz I31");
+    ic_lookup(fs, "R28", name, slow);
+    emit(fs, "    mov %s, R31[I31]", SR(d));
+    emit(fs, "    inc I31");
+    emit(fs, "    bnz %s, .L%d", SR(d), fl);
+    emit(fs, "    mov %s, R31[I31]", SI(d));
+    emit(fs, "    jmp .L%d", got);
+    emit(fs, ".L%d:", fl);
+    emit(fs, "    mov %s, R31[I31]", SF(d));
+    branch(fs, slow, "beq.r %s, " NIL, SR(d));
+    emit(fs, ".L%d:", got);
+    cold_begin(fs);
+    place(fs, slow);
+    char *nm = masm_string(name);
+    emit(fs, "    call rt$methodc (%s, %s, %s, %s, %s) -> (%s, %s, %s, R31)", SI(ss), SF(ss), SR(ss), nm,
+         desc, SI(d), SF(d), SR(d));
+    free(nm);
+    emit(fs, "    mov.r @mc$%d, R31", site);
+    ty_set(fs, d, TY_ANY);
+    jump(fs, cont);
+    cold_end(fs);
+    place(fs, cont);
+    ty_set(fs, d, TY_ANY);
+}
+
 /* A call. The results go to slot d: the first value, with the count in
    I31 and the rest in @rt$mv. With tail, a tail call is made instead. */
 static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
@@ -1841,11 +1906,9 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
         int ss = in_slot(fs, self);
         self = vslot(ss);
         fslot = alloc_slot(fs);
-        char *nm = masm_string(e->s);
-        emit(fs, "    call rt$method (%s, %s, %s, %s) -> (%s, %s, %s)", SI(ss), SF(ss), SR(ss), nm,
-             SI(fslot), SF(fslot), SR(fslot));
-        free(nm);
-        ty_set(fs, fslot, TY_ANY);
+        char *odesc = describe(fs, e->a);
+        gen_method(fs, ss, e->s, odesc, fslot);
+        free(odesc);
         fval = vslot(fslot);
         char buf[300];
         snprintf(buf, sizeof buf, "method '%.*s'", e->s.len > 200 ? 200 : e->s.len, e->s.s);
@@ -1870,7 +1933,13 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
         vec_push(args, e->args[i]);
     int n = args.n;
     bool multi = n && args.v[n - 1] && is_multi(args.v[n - 1]);
-    if (multi || n > MAXARGS) {
+    /* f(a, g()): if g returns one value, as it usually does, f is called
+       as with a fixed number of arguments, else with a list */
+    bool one = multi && n <= MAXARGS && args.v[n - 1]->k != X_VARARG;
+    bool tail0 = tail;
+    if (one)
+        tail = false;
+    if ((multi || n > MAXARGS) && !one) {
         int l = alloc_slot(fs);
         emit(fs, "    lnew %s, %d", SR(l), 2 * n + 4);
         ty_set(fs, l, TY_TAB);
@@ -1906,8 +1975,16 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
         return;
     }
     Val *vals = xmalloc((size_t)(n + 1) * sizeof *vals);
-    for (int i = 0; i < n; i++)
+    for (int i = 0; i < n - one; i++)
         vals[i] = args.v[i] ? gen(fs, args.v[i], -1) : self;
+    int many = -1, last = -1;
+    if (one) {
+        last = alloc_slot(fs);
+        gen_multi_call(fs, args.v[n - 1], last);
+        vals[n - 1] = vslot(last);
+        many = new_label(fs);
+        branch(fs, many, "bne I31, 1");
+    }
     bool any_spilled = false;
     for (int i = 0; i < n; i++)
         if (spilled(&vals[i]))
@@ -1995,6 +2072,32 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
     if (tail)
         fs->dead = true;
     ty_set(fs, d, TY_ANY);
+    if (one) {
+        int done = new_label(fs);
+        cold_begin(fs);
+        place(fs, many);
+        int l = alloc_slot(fs);
+        emit(fs, "    lnew %s, %d", SR(l), 2 * n + 4);
+        ty_set(fs, l, TY_TAB);
+        for (int i = 0; i < n - 1; i++)
+            push_val(fs, SR(l), &vals[i]);
+        emit(fs, "    call rt$appendmv (%s, I31, %s, %s, %s)", SR(l), SI(last), SF(last), SR(last));
+        if (fslot < 0) {
+            fslot = alloc_slot(fs);
+            fval = read_var(fs, e->a->var, fslot);
+            fslot = in_slot(fs, fval);
+        }
+        emit(fs, "    call rt$apply (%s, %s, %s, %s, %s) -> (I31, %s, %s, %s)", SI(fslot), SF(fslot),
+             SR(fslot), SR(l), desc, SI(d), SF(d), SR(d));
+        jump(fs, done);
+        cold_end(fs);
+        place(fs, done);
+        ty_set(fs, d, TY_ANY);
+        if (tail0) {
+            emit(fs, "    ret I31, %s, %s, %s", SI(d), SF(d), SR(d));
+            fs->dead = true;
+        }
+    }
     free(ops.s);
     free(vals);
     free(desc);
@@ -2027,15 +2130,22 @@ static bool shaped_ctor(Expr *e) {
 
 static Val gen_table(FS *fs, Expr *e, int dst) {
     int d = dst >= 0 && is_temp(fs, dst) ? dst : alloc_slot(fs);
-    emit(fs, "    call rt$newtab -> (%s)", SR(d));
+    emit(fs, "    new %s, Tab", SR(d));
     ty_set(fs, d, TY_TAB);
     if (shaped_ctor(e)) {
         int l = alloc_slot(fs);
         emit(fs, "    lnew %s, %d", SR(l), 4 * e->nfields);
         ty_set(fs, l, TY_TAB);
+        /* which values may be nil: the table counts them (Tab.dead) */
+        int ndead = 0;
+        bool *maybe = xmalloc((size_t)e->nfields * sizeof *maybe);
         for (int i = 0; i < e->nfields; i++) {
             int mark = fs->nslots;
             Val v = gen(fs, e->fields[i].val, -1);
+            Ty vt = vty(fs, &v);
+            maybe[i] = vt == TY_ANY;
+            if (vt == TY_NIL)
+                ndead++;
             char *ks = masm_string(e->fields[i].key->s);
             const char *lr = l < NREG ? SR(l) : "R29";
             if (l >= NREG)
@@ -2046,7 +2156,41 @@ static Val gen_table(FS *fs, Expr *e, int dst) {
             push_val(fs, SR(l), &v);
             fs->nslots = mark;
         }
-        emit(fs, "    call rt$tmpl (%s, %s, %d)", SR(d), SR(l), G.nctor++);
+        /* the constructor's shape (global ct$<site>), made the first time
+           by rt$tmpl */
+        int site = G.nctor++, slow = new_label(fs), done = new_label(fs);
+        emit(fs, "    mov R31, @ct$%d", site);
+        branch(fs, slow, "bz R31");
+        const char *t = RB(fs, d, "R28");
+        emit(fs, "    mov %s->Tab.hm, R31", t);
+        emit(fs, "    mov.i64 %s->Tab.hmshared, 1", t);
+        emit(fs, "    mov %s->Tab.hs, %s", t, SR(l));
+        emit(fs, "    mov.i64 %s->Tab.hw, %d", t, 4 * e->nfields);
+        bool anymaybe = false;
+        for (int i = 0; i < e->nfields; i++)
+            anymaybe |= maybe[i];
+        if (ndead || anymaybe) {
+            emit(fs, "    mov I31, %d", ndead);
+            const char *lr = RB(fs, l, "R29");
+            for (int i = 0; i < e->nfields; i++) {
+                if (!maybe[i])
+                    continue;
+                int skip = new_label(fs);
+                emit(fs, "    mov R30, %s[%d]", lr, 4 * i + 2);
+                emit(fs, "    bne.r R30, " NIL ", .L%d", skip);
+                emit(fs, "    inc I31");
+                emit(fs, ".L%d:", skip);
+            }
+            emit(fs, "    mov %s->Tab.dead, I31", t);
+        }
+        free(maybe);
+        cold_begin(fs);
+        place(fs, slow);
+        emit(fs, "    call rt$tmpl (%s, %s, %d) -> (R31)", SR(d), SR(l), site);
+        emit(fs, "    mov.r @ct$%d, R31", site);
+        jump(fs, done);
+        cold_end(fs);
+        place(fs, done);
         ty_set(fs, d, TY_TAB);
         return vslot(d);
     }
@@ -3664,9 +3808,17 @@ void generate(GenInput *in, FILE *f) {
     out(f, &nlines, (void *)&map, 0, "    ret");
     out(f, &nlines, (void *)&map, 0, ".endf");
     out(f, &nlines, (void *)&map, 0, "%s", "");
+    /* the inline caches, each empty: a shape no table has (nil), and a word
+       index past any table's slots */
+    out(f, &nlines, (void *)&map, 0, ".func rt$init_ic");
+    for (int i = 0; i < G.nic; i++)
+        out(f, &nlines, (void *)&map, 0, "    mov.r @ic$%ds, " NIL, i);
+    out(f, &nlines, (void *)&map, 0, "    ret");
+    out(f, &nlines, (void *)&map, 0, ".endf");
+    out(f, &nlines, (void *)&map, 0, "%s", "");
     out(f, &nlines, (void *)&map, 0, ".func main -> i64");
     out(f, &nlines, (void *)&map, 0, "    call rt$init (%s)", chunk);
-    out(f, &nlines, (void *)&map, 0, "    call rt$init_ic (%d)", G.nic);
+    out(f, &nlines, (void *)&map, 0, "    call rt$init_ic");
     out(f, &nlines, (void *)&map, 0, "    call rt$init_shapes (%d)", G.nctor);
     out(f, &nlines, (void *)&map, 0, "    call rt$init_globals");
     out(f, &nlines, (void *)&map, 0, "    call rt$init_lib");
@@ -3693,6 +3845,15 @@ void generate(GenInput *in, FILE *f) {
         out(f, &nlines, (void *)&map, G.out.v[i].line, "%s", G.out.v[i].text);
     for (int i = 0; i < G.data.n; i++)
         out(f, &nlines, (void *)&map, 0, "%s", G.data.v[i].text);
+    out(f, &nlines, (void *)&map, 0, "        .align 8");
+    for (int i = 0; i < G.nic; i++) {
+        out(f, &nlines, (void *)&map, 0, "ic$%ds: .zero 8", i);
+        out(f, &nlines, (void *)&map, 0, "ic$%dw: .i64 1099511627776", i);
+    }
+    for (int i = 0; i < G.nmc; i++)
+        out(f, &nlines, (void *)&map, 0, "mc$%d: .zero 8", i);
+    for (int i = 0; i < G.nctor; i++)
+        out(f, &nlines, (void *)&map, 0, "ct$%d: .zero 8", i);
     /* the line map: Lua lines of the lines above */
     int n = map.n;
     fprintf(f, "\n        .align 8\nrt$nlines: .i64 %d\nrt$linemap:\n", n);

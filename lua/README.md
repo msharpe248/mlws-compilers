@@ -151,15 +151,18 @@ A table has an array part (values `1..n` in a list) and a hash part (a list
 of slots and a map from each key to its slot). Tables whose string keys
 were added in the same order share their key map (a **shape**), which is
 never changed: adding a key moves the table to the next shape. Each
-`t.name` in the program has an **inline cache** of the slot where it found
-`name` last time, used if the slot holds that very key, so objects of one
-"class" are read without a hash lookup. Table constructors with constant
-keys build the slots directly in their shape. Integer keys in the array
+`t.name` in the program has an **inline cache** of the shape it saw last
+time and where `name` is in it, so objects of one "class" are read with
+one compare and no hash lookup; for a table with a map of its own (more
+than 16 keys, as a library's), the cache is used if the slot it names
+holds that very key. Table constructors with constant keys build the
+slots directly in their shape, set up inline. Integer keys in the array
 part are read and written inline.
 
 Each table that is used as a metatable caches its `__index` and
-`__newindex`, so `obj:method()` with methods in a class table costs one
-lookup in the object and one in the class.
+`__newindex`. Each `obj:method()` caches a shape that does not have the
+method, and for an object of that shape reads the method from the
+metatable's `__index` table through an inline cache, with no runtime call.
 
 ### Optimisations
 
@@ -169,9 +172,12 @@ lookup in the object and one in the class.
   facts at their entry, and regenerated with weaker ones if the loop body
   changes them, so a counter or accumulator stays an integer.
 * **Arithmetic** has an inline path for integers, or for floats when an
-  operand is known to be one, and in out-of-line code a path that converts
-  mixed integer and float operands; only strings and metamethods call the
+  operand is known to be one, and in out-of-line code a path for two
+  floats, then one that converts mixed integer and float operands; only
+  strings and metamethods call the
   runtime. Constant expressions are folded.
+* **Calls** whose last argument is a call (`f(a, g())`) are made directly
+  when `g` returns one value; any other count builds a list of arguments.
 * **Generic `for`** over `pairs` and `ipairs` is recognised at run time:
   `pairs` walks the table by position and `ipairs` reads the array part
   inline, instead of calling `next` or the iterator.
@@ -198,24 +204,24 @@ the way Lua does.
 ## Performance
 
 `make bench` (`bench/run.sh`), on the machine this was developed on (an
-Apple M5 Pro, MLWSVM M28), in seconds, with Lua 5.5.1 for comparison:
+Apple M5 Pro, MLWSVM M29), in seconds, with Lua 5.5.1 for comparison:
 
 | Benchmark | mlws-vm-lua | lua 5.5 |
 |---|---|---|
-| fib (32) | 0.16 | 0.05 |
+| fib (32) | 0.15 | 0.05 |
 | loop | 0.24 | 0.21 |
-| methods (2M method calls and objects) | 1.83 | 0.34 |
-| strings (format, gmatch, gsub) | 0.47 | 0.13 |
-| iterate (pairs, ipairs) | 0.14 | 0.05 |
-| binarytrees (15) | 0.99 | 0.38 |
-| nbody (500,000) | 2.72 | 0.38 |
-| spectralnorm (500) | 0.76 | 0.18 |
-| fannkuch (10) | 2.91 | 0.79 |
+| methods (2M method calls and objects) | 0.90 | 0.34 |
+| strings (format, gmatch, gsub) | 0.41 | 0.13 |
+| iterate (pairs, ipairs) | 0.13 | 0.05 |
+| binarytrees (15) | 0.82 | 0.37 |
+| nbody (500,000) | 1.74 | 0.41 |
+| spectralnorm (500) | 0.47 | 0.17 |
+| fannkuch (10) | 2.82 | 0.78 |
 
 The profiles (`mlwsvm run --profile`) show almost every instruction on the
 VM's fast paths; what remains is instruction count, mostly type checks on
 values whose type is not known statically (anything read from a table or
-passed as an argument), hash lookups and allocation.
+passed as an argument), bounds checks on array accesses and allocation.
 
 ## Tests
 

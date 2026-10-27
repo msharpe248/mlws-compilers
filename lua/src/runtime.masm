@@ -79,7 +79,6 @@ rt$next_fn: .zero 8
 rt$stdout:  .zero 8     ; io.stdout, set by the prelude
 rt$fmtslow: .zero 8     ; the prelude's string.format, for what B$str_format leaves
 rt$start:   .i64 0
-rt$ic:      .zero 8     ; the inline caches: a value word index per site
 rt$shapes:  .zero 8     ; shape -> (key -> the shape with that key added)
 rt$root:    .zero 8     ; the empty shape
 rt$ctors:   .zero 8     ; the shape each table constructor makes
@@ -188,8 +187,9 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 .endf
 
 ; A table constructor of constant string keys: t gets hash slots hs and
-; the shape of the constructor at site.
-.func rt$tmpl(ref t, ref hs, i64 site)
+; the shape of the constructor at site, which it returns (for the site to
+; keep).
+.func rt$tmpl(ref t, ref hs, i64 site) -> ref
     mov R2, @rt$ctors
     mov R3, R2[I0]
     bnz R3, 5f
@@ -217,7 +217,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 61: add I2, 4
     jmp 6b
 7:  mov R0->Tab.dead, I4
-    ret
+    ret R3
 .endf
 
 ; Give t a map of its own instead of a shape.
@@ -230,18 +230,6 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     mov R0->Tab.hm, R1
     mov R0->Tab.hmshared, 0
 1:  ret R1
-.endf
-
-; n inline caches, each empty (a word index no table has).
-.func rt$init_ic(i64 n)
-    lnew R0, I0
-    mov I1, 0
-1:  bge I1, I0, 2f
-    lpush.i64 R0, 1099511627776
-    inc I1
-    jmp 1b
-2:  mov @rt$ic, R0
-    ret
 .endf
 
 ; A global name with a fixed slot in _G (in the order the compiler numbers them).
@@ -899,11 +887,6 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 
 ; ----------------------------------------------------------------- tables
 
-.func rt$newtab -> ref
-    new R0, Tab
-    ret R0
-.endf
-
 ; The value word of key k in the hash part, or -1. The key is normalised:
 ; ref null is an integer key, 4n a float key with no integer value.
 .func rt$hfind(ref t, i64 ki, f64 kf, ref kr) -> i64
@@ -1423,8 +1406,9 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 1:  ret
 .endf
 
-; obj:name — the method, looked up as obj.name.
-.func rt$method(i64, f64, ref, ref name) -> (i64, f64, ref)
+; obj:name — the method, looked up as obj.name (desc: obj, for messages).
+.func rt$method(i64, f64, ref, ref name, ref desc) -> (i64, f64, ref)
+    mov R9, R2
     isa I1, R0, Tab
     bz I1, 5f
     mov R2, R0->Tab.hm
@@ -1456,8 +1440,27 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     bz I1, 6f
     call rt$rawget (R6, 0, 0.0, R1) -> (I4, F4, R4)
     bne.r R4, 1n, 9f
-6:  call rt$index (I0, F0, R0, 0, 0.0, R1, null) -> (I4, F4, R4)
+6:  call rt$index (I0, F0, R0, 0, 0.0, R1, R9) -> (I4, F4, R4)
 9:  ret I4, F4, R4
+.endf
+
+; obj:name for a call site's cache: the method, and the shape for the site
+; to cache if obj is a table whose shape lacks name (null for no hash part),
+; else nil.
+.func rt$methodc(i64, f64, ref, ref name, ref desc) -> (i64, f64, ref, ref)
+    mov R8, R2
+    mov.r R9, 1n
+    isa I1, R0, Tab
+    bz I1, 1f
+    mov R2, R0->Tab.hm
+    bz R2, 2f
+    mov I1, R0->Tab.hmshared
+    bz I1, 1f
+    mget I2, R2, R1, -1
+    bge I2, 0, 1f
+2:  mov R9, R2
+1:  call rt$method (I0, F0, R0, R1, R8) -> (I4, F4, R4)
+    ret I4, F4, R4, R9
 .endf
 
 ; A metamethod of v (tables and strings have metatables), or nil.

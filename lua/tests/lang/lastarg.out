@@ -1,0 +1,32 @@
+0	1	2	nilnilnilnil	xnilnilnil	nil	9	nil
+
+p
+1	2	3	1nilnilnil	x1nilnil	1	9	1
+1
+p	1
+2	3	4	12nilnil	x12nil	1	9	1
+1	2
+p	1	2
+3	4	5	anilcnil	xanilc	a	9	a
+a	nil	c
+p	a	nil	c
+2	3	4	nilnilnilnil	xnilnilnil	nil	9	nil
+nil	nil
+p	nil	nil
+1	3	0	8
+3	6
+q1nilnil	r	1
+12nilnil
+2	5	ab
+2	c
+1 2
+false	lastarg.lua:35: attempt to call a number value (local 'f')
+false	lastarg.lua:36: attempt to call a nil value (field 'nope')
+false	lastarg.lua:37: attempt to call a nil value (method 'missing')
+22	18
+121
+in
+got	a1nilnil
+in
+got	3
+

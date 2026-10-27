@@ -1,0 +1,28 @@
+1	1 3 4 nil nil nil inherited fn x big
+2	1 3 4 nil nil nil inherited fn x big
+3	1 3 4 nil nil nil inherited fn x big
+1
+nil
+9
+9
+10
+A A A C A	A A A C A
+A C A C A
+own C A C A
+A C A C A
+A2 C A2 C A2
+A2 C B C A2
+A2 C A2 C A2
+elsewhere C A2 C elsewhere
+fn name C A2 C fn name
+A2 C A2 C A2
+A2 A2 A2 A2 A2 A2 A2 A2 A2 A2 A2 A2 A2 A2 A2 A2 A2 A2 A2 A2 
+ABC	xxx
+false	caches.lua:5: attempt to index a number value (local 'o')
+false	caches.lua:5: attempt to call a nil value (method 'name')
+false	caches.lua:5: attempt to call a nil value (method 'name')
+p=1,q=2,r=3	q=5,r=3,s=4	nil	5	4
+q=2,r=3	q=5,r=3,s=4	nil	5	4
+r=3	q=5,r=3,s=4	nil	5	4
+p=false,r=3	q=5,r=3,s=4	nil	5	4
+4	53	2	7
