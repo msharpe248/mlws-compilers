@@ -116,12 +116,11 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 
 ; Append (si, sf, sr) to list l.
 .macro PUSHV l, si, sf, sr
-    lpush \l, \sr
     bnz \sr, .Lf\@
-    lpush \l, \si
+    lpush \l, \sr, \si
     jmp .Ld\@
 .Lf\@:
-    lpush \l, \sf
+    lpush \l, \sr, \sf
 .Ld\@:
 .endm
 
@@ -1092,14 +1091,10 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     mov R3, R0->Tab.hm
 21: len I2, R4
     add I3, I2, 2
-    lpush R4, R1
     bnz R1, 22f
-    lpush R4, I0
+    lpush R4, R1, I0
     jmp 24f
-22: bne.r R1, 4n, 23f
-    lpush R4, F0
-    jmp 24f
-23: lpush R4, 0.0
+22: lpush R4, R1, F0        ; (any f64 for a key that is not a float)
 24: PUSHV R4, I1, F1, R2
     add I4, I2, 4
     mov R0->Tab.hw, I4

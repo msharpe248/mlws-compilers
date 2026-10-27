@@ -47,6 +47,28 @@
     ret 0
 .endf
 
+        .align 8
+pm$tables:  .zero 8     ; a list of 128 tables: for class letter cl, 256 flags
+
+; The table of class %cl: a list of 256 integers, 1 for the characters in it.
+.func pm$table(i64 cl) -> ref
+    mov R0, @pm$tables
+    bnz R0, 1f
+    lnew R0, 128
+    resize R0, 128
+    mov @pm$tables, R0
+1:  mov R1, R0[I0]
+    bnz R1, 9f
+    lnew R1, 256
+    mov I1, 0
+2:  call pm$class (I1, I0) -> (I2)
+    lpush R1, I2
+    inc I1
+    blt I1, 256, 2b
+    mov R0[I0], R1
+9:  ret R1
+.endf
+
 ; Does character c belong to class %cl?
 .func pm$class(i64 c, i64 cl) -> i64
     or I2, I1, 32
@@ -179,20 +201,53 @@
     bne I5, '%', 2f
     add I6, I1, 1
     mov I6, R2[I6]
-    call pm$class (I4, I6) -> (I7)
+    bge I6, 128, 4f
+    call pm$table (I6) -> (R3)
+    mov I7, R3[I4]
     ret I7
+4:  bne I6, I4, 8f
+    ret 1
 2:  bne I5, '[', 3f
     sub I6, I2, 1
     call pm$bracket (R0, I4, I1, I6) -> (I7)
     ret I7
-3:  seq I7, I5, I4
-    ret I7
+3:  bne I5, I4, 8f
 7:  ret 1
 8:  ret 0
 .endf
 
 .func pm$max_expand(ref ms, i64 s, i64 p, i64 ep) -> i64
     mov I3, 0
+    mov R1, R0->MState.src
+    mov I7, R0->MState.slen
+    mov R2, R0->MState.pat
+    mov I8, R2[I1]
+    ; how many characters match the item: tight loops for '.', a
+    ; character and a %class
+    bne I8, '.', 11f
+    sub I3, I7, I0
+    max I3, 0
+    jmp 2f
+11: beq I8, '[', 1f
+    add I4, I0, I3
+    bne I8, '%', 13f
+    add I9, I1, 1
+    mov I9, R2[I9]
+    bge I9, 128, 1f
+    call pm$table (I9) -> (R3)
+12: bge I4, I7, 14f
+    mov I5, R1[I4]
+    mov I6, R3[I5]
+    bz I6, 14f
+    inc I4
+    jmp 12b
+13: bge I4, I7, 14f
+    mov I5, R1[I4]
+    bne I5, I8, 14f
+    inc I4
+    jmp 13b
+14: sub I3, I4, I0
+    jmp 2f
 1:  add I4, I0, I3
     call pm$single (R0, I4, I1, I2) -> (I5)
     bz I5, 2f
@@ -456,11 +511,44 @@
     sub I10, I3, 1          ; p
     sub I11, I6, 1          ; last (0-based), -2 if nil
     beq.r R6, 1n, 1f
-    jmp 2f
+    jmp 10f
 1:  mov I11, -2
-2:  mov R7->MState.level, 0
-    mov R7->MState.depth, 200
-    call pm$do (R7, I9, I10) -> (I12)
+10: ; when scanning, a first item that must match once filters positions
+    ; without running the whole matcher (I18: its end, or -1 for none)
+    mov I18, -1
+    beq.r R5, 1n, 2f
+    beq.r R5, 2n, 2f
+    bge I10, I8, 2f
+    mov I19, R1[I10]
+    beq I19, '(', 2f
+    beq I19, ')', 2f
+    beq I19, '^', 2f
+    bne I19, '$', 11f
+    add I20, I10, 1
+    beq I20, I8, 2f
+11: bne I19, '%', 12f
+    add I20, I10, 1
+    bge I20, I8, 2f
+    mov I21, R1[I20]
+    beq I21, 'b', 2f
+    beq I21, 'f', 2f
+    blt I21, '0', 12f
+    ble I21, '9', 2f
+12: call pm$class_end (R7, I10) -> (I20)
+    bge I20, I8, 13f
+    mov I21, R1[I20]
+    beq I21, '*', 2f
+    beq I21, '?', 2f
+    beq I21, '-', 2f
+13: mov I18, I20
+2:  mov I22, 0
+    mov R7->MState.level, I22
+    mov I22, 200
+    mov R7->MState.depth, I22
+    blt I18, 0, 21f
+    call pm$single (R7, I9, I10, I18) -> (I23)
+    bz I23, 3f
+21: call pm$do (R7, I9, I10) -> (I12)
     blt I12, 0, 3f
     bne I12, I11, 5f
 3:  beq.r R5, 1n, 9f

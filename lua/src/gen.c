@@ -527,42 +527,61 @@ static void set_tag(FS *fs, int d, Ty t) {
 }
 
 /* Push a value onto the list in R register / operand `list`. */
+/* Push a value onto the list in R register / operand `list`, as two words.
+   lpush of registers is the VM's fast form (constants and memory operands
+   go through scratch registers first). */
 static void push_val(FS *fs, const char *list, Val *v) {
     Ty t = vty(fs, v);
     char lst[96];
     snprintf(lst, sizeof lst, "%s", list);
+    if (strncmp(lst, "LOC", 3) == 0) {
+        emit(fs, "    mov R29, %s", lst);
+        snprintf(lst, sizeof lst, "R29");
+    }
     switch (v->k) {
     case V_INT:
-        emit(fs, "    lpush.r %s, null", lst);
-        emit(fs, "    lpush %s, %lld", lst, (long long)v->i);
+        emit(fs, "    mov I30, %lld", (long long)v->i);
+        emit(fs, "    mov.r R30, null");
+        emit(fs, "    lpush %s, R30, I30", lst);
         return;
     case V_FLT:
-        emit(fs, "    lpush.r %s, " FLT, lst);
-        emit(fs, "    lpush %s, %s", lst, VF(v));
+        emit(fs, "    mov F30, %s", VF(v));
+        emit(fs, "    mov.r R30, " FLT);
+        emit(fs, "    lpush %s, R30, F30", lst);
         return;
     case V_SLOT:
         break;
     default:
-        emit(fs, "    lpush.r %s, %s", lst, VR(v));
-        emit(fs, "    lpush %s, 0.0", lst);
+        emit(fs, "    mov.r R30, %s", VR(v));
+        emit(fs, "    lpush %s, R30, F30", lst);
         return;
     }
     int s = v->slot;
+    const char *ri = SI(s), *rf = SF(s), *rr = SR(s);
+    if (s >= NREG) {
+        emit(fs, "    mov R30, %s", rr);
+        rr = "R30";
+        if (t == TY_INT || t == TY_ANY) {
+            emit(fs, "    mov I30, %s", ri);
+            ri = "I30";
+        }
+        if (t != TY_INT) {
+            emit(fs, "    mov F30, %s", rf);
+            rf = "F30";
+        }
+    }
     if (t == TY_INT) {
-        emit(fs, "    lpush.r %s, null", lst);
-        emit(fs, "    lpush %s, %s", lst, SI(s));
+        emit(fs, "    lpush %s, %s, %s", lst, rr, ri);
     } else if (t == TY_ANY) {
         int l1 = new_label(fs), l2 = new_label(fs);
-        emit(fs, "    lpush %s, %s", lst, SR(s));
-        emit(fs, "    bnz %s, .L%d", SR(s), l1);
-        emit(fs, "    lpush %s, %s", lst, SI(s));
+        emit(fs, "    bnz %s, .L%d", rr, l1);
+        emit(fs, "    lpush %s, %s, %s", lst, rr, ri);
         emit(fs, "    jmp .L%d", l2);
         emit(fs, ".L%d:", l1);
-        emit(fs, "    lpush %s, %s", lst, SF(s));
+        emit(fs, "    lpush %s, %s, %s", lst, rr, rf);
         emit(fs, ".L%d:", l2);
     } else {
-        emit(fs, "    lpush %s, %s", lst, SR(s));
-        emit(fs, "    lpush %s, %s", lst, SF(s));
+        emit(fs, "    lpush %s, %s, %s", lst, rr, rf);
     }
 }
 
@@ -1994,8 +2013,11 @@ static Val gen_table(FS *fs, Expr *e, int dst) {
             int mark = fs->nslots;
             Val v = gen(fs, e->fields[i].val, -1);
             char *ks = masm_string(e->fields[i].key->s);
-            emit(fs, "    lpush.r %s, %s", SR(l), ks);
-            emit(fs, "    lpush %s, 0.0", SR(l));
+            const char *lr = l < NREG ? SR(l) : "R29";
+            if (l >= NREG)
+                emit(fs, "    mov R29, %s", SR(l));
+            emit(fs, "    mov.r R30, %s", ks);
+            emit(fs, "    lpush %s, R30, F30", lr);
             free(ks);
             push_val(fs, SR(l), &v);
             fs->nslots = mark;
