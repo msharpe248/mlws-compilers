@@ -56,6 +56,10 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   say) entered its body knowing nothing about any variable.
 * Errors name `t[i]` as `field '?'` and `t[1]` as `field 'integer index'`,
   as Lua does.
+* Uses MLWSVM M32's element offsets (`R[I+1]`) for the number half of a
+  value in a list, and `bnisa` for "is it a table / function" checks; the
+  output needs MLWSVM M32 (methods: 0.78s to 0.74s; nbody: 1.18s to
+  1.12s).
 * Fixed: unary minus on a string that converts to a number (`-"10"`)
   raised "number has no integer representation".
 * Fixed: errors from a method call on a value that cannot be indexed name

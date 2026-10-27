@@ -31,7 +31,8 @@ mlws-vm-luac [-o FILE] [-n NAME] program.lua
 ```
 
 The assembly is one self-contained file: the program, the runtime and the
-library, with no imports. It can be assembled to a binary module
+library, with no imports. It uses instructions from MLWSVM M32 (element
+offsets, `bisa`/`bnisa`), so it needs that VM or a later one. It can be assembled to a binary module
 (`mlwsvm asm program.masm -o program.mlwso`), or run under `mlwsvm debug`,
 `--profile` or `--trace`; each function is named `L<n>$name` after the Lua
 function it came from.
@@ -230,19 +231,19 @@ the way Lua does.
 ## Performance
 
 `make bench` (`bench/run.sh`), on the machine this was developed on (an
-Apple M5 Pro, MLWSVM M31), in seconds, with Lua 5.5.1 for comparison:
+Apple M5 Pro, MLWSVM M32), in seconds, with Lua 5.5.1 for comparison:
 
 | Benchmark | mlws-vm-lua | lua 5.5 |
 |---|---|---|
 | fib (32) | 0.13 | 0.05 |
 | loop | 0.22 | 0.21 |
-| methods (2M method calls and objects) | 0.78 | 0.34 |
-| strings (format, gmatch, gsub) | 0.39 | 0.13 |
+| methods (2M method calls and objects) | 0.74 | 0.34 |
+| strings (format, gmatch, gsub) | 0.40 | 0.13 |
 | iterate (pairs, ipairs) | 0.12 | 0.05 |
-| binarytrees (15) | 0.64 | 0.37 |
-| nbody (500,000) | 1.18 | 0.41 |
-| spectralnorm (500) | 0.32 | 0.18 |
-| fannkuch (10) | 2.06 | 0.80 |
+| binarytrees (15) | 0.63 | 0.37 |
+| nbody (500,000) | 1.12 | 0.41 |
+| spectralnorm (500) | 0.33 | 0.18 |
+| fannkuch (10) | 1.98 | 0.80 |
 
 The profiles (`mlwsvm run --profile`) show almost every instruction on the
 VM's fast paths; what remains is instruction count, mostly type checks on

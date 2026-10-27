@@ -901,25 +901,24 @@ static void write_global(FS *fs, Expr *e, Val v) {
     emit(fs, "    mov R31, R31->Tab.meta");
     branch(fs, slow, "bnz R31");
     emit(fs, "    mov R31, @rt$Ghs");
-    emit(fs, "    mov I31, %d", w);
     Ty t = vty(fs, &v);
     if (v.k == V_SLOT) {
-        emit(fs, "    mov R31[I31], %s", SR(v.slot));
-        emit(fs, "    inc I31");
+        emit(fs, "    mov R31[%d], %s", w, SR(v.slot));
         if (t == TY_INT) {
-            emit(fs, "    mov R31[I31], %s", SI(v.slot));
+            emit(fs, "    mov R31[%d], %s", w + 1, SI(v.slot));
         } else if (t == TY_ANY) {
             int l1 = new_label(fs), l2 = new_label(fs);
             emit(fs, "    bnz %s, .L%d", SR(v.slot), l1);
-            emit(fs, "    mov R31[I31], %s", SI(v.slot));
+            emit(fs, "    mov R31[%d], %s", w + 1, SI(v.slot));
             emit(fs, "    jmp .L%d", l2);
             emit(fs, ".L%d:", l1);
-            emit(fs, "    mov R31[I31], %s", SF(v.slot));
+            emit(fs, "    mov R31[%d], %s", w + 1, SF(v.slot));
             emit(fs, ".L%d:", l2);
         } else {
-            emit(fs, "    mov R31[I31], %s", SF(v.slot));
+            emit(fs, "    mov R31[%d], %s", w + 1, SF(v.slot));
         }
     } else {
+        emit(fs, "    mov I31, %d", w);
         const char *r = VR(&v);
         emit(fs, "    mov.r R31[I31], %s", r);
         emit(fs, "    inc I31");
@@ -1012,8 +1011,7 @@ static Val gen_index_val(FS *fs, Val t, Val k, int dst, const char *desc) {
         inl = true;
         
         if (tt != TY_TAB) {
-            emit(fs, "    isa I31, %s, Tab", SR(ts));
-            branch(fs, slow, "bz I31");
+            branch(fs, slow, "bnisa %s, Tab", SR(ts));
         }
         if (kt == TY_INT || kt == TY_ANY) {
             if (kt == TY_ANY)
@@ -1035,8 +1033,7 @@ static Val gen_index_val(FS *fs, Val t, Val k, int dst, const char *desc) {
             ic_lookup(fs, RB(fs, ts, "R28"), k.s, slow);
         }
         emit(fs, "    mov %s, %s[I31]", SR(d), arr);
-        emit(fs, "    inc I31");
-        emit(fs, "    ldv %s, %s, %s[I31]", SI(d), SF(d), arr);
+        emit(fs, "    ldv %s, %s, %s[I31+1]", SI(d), SF(d), arr);
         ty_set(fs, d, TY_ANY);
         branch(fs, slow, "beq.r %s, " NIL, SR(d));
         cold_begin(fs);
@@ -1065,8 +1062,7 @@ static void gen_setindex(FS *fs, Val t, Val k, Val v, const char *desc) {
     if (!knil && (((kt == TY_INT || (kt == TY_ANY && k.k == V_SLOT)) && (k.k != V_INT || (k.i >= 1 && k.i < (1ll << 40)))) || (k.k == V_STR && !(k.s.len >= 2 && k.s.s[0] == '_' && k.s.s[1] == '_')))) {
         inl = true;
         if (tt != TY_TAB) {
-            emit(fs, "    isa I31, %s, Tab", SR(ts));
-            branch(fs, slow, "bz I31");
+            branch(fs, slow, "bnisa %s, Tab", SR(ts));
         }
         if (kt == TY_INT || kt == TY_ANY) {
             if (kt == TY_ANY)
@@ -1095,19 +1091,18 @@ static void gen_setindex(FS *fs, Val t, Val k, Val v, const char *desc) {
             branch(fs, slow, "beq.r %s, " NIL, SR(v.slot));
         if (v.k == V_SLOT) {
             emit(fs, "    mov %s[I31], %s", arr, SR(v.slot));
-            emit(fs, "    inc I31");
             if (vt == TY_INT) {
-                emit(fs, "    mov %s[I31], %s", arr, SI(v.slot));
+                emit(fs, "    mov %s[I31+1], %s", arr, SI(v.slot));
             } else if (vt == TY_ANY) {
                 int l1 = new_label(fs), l2 = new_label(fs);
                 emit(fs, "    bnz %s, .L%d", SR(v.slot), l1);
-                emit(fs, "    mov %s[I31], %s", arr, SI(v.slot));
+                emit(fs, "    mov %s[I31+1], %s", arr, SI(v.slot));
                 emit(fs, "    jmp .L%d", l2);
                 emit(fs, ".L%d:", l1);
-                emit(fs, "    mov %s[I31], %s", arr, SF(v.slot));
+                emit(fs, "    mov %s[I31+1], %s", arr, SF(v.slot));
                 emit(fs, ".L%d:", l2);
             } else {
-                emit(fs, "    mov %s[I31], %s", arr, SF(v.slot));
+                emit(fs, "    mov %s[I31+1], %s", arr, SF(v.slot));
             }
         } else {
             emit(fs, "    mov.r %s[I31], %s", arr, VR(&v));
@@ -1903,20 +1898,17 @@ static void gen_method(FS *fs, int ss, Str name, const char *desc, int d) {
     int slow = new_label(fs), cont = new_label(fs);
     ty_set(fs, d, TY_ANY);
     if (ty_get(fs, ss) != TY_TAB) {
-        emit(fs, "    isa I31, %s, Tab", SR(ss));
-        branch(fs, slow, "bz I31");
+        branch(fs, slow, "bnisa %s, Tab", SR(ss));
     }
     emit(fs, "    mov R31, %s->Tab.hm", RB(fs, ss, "R28"));
     branch(fs, slow, "bne.r R31, @mc$%d", site);
     emit(fs, "    mov R31, %s->Tab.meta", RB(fs, ss, "R28"));
     branch(fs, slow, "bz R31");
     emit(fs, "    mov R28, R31->Tab.idx");
-    emit(fs, "    isa I31, R28, Tab");
-    branch(fs, slow, "bz I31");
+    branch(fs, slow, "bnisa R28, Tab");
     ic_lookup(fs, "R28", name, slow);
     emit(fs, "    mov %s, R31[I31]", SR(d));
-    emit(fs, "    inc I31");
-    emit(fs, "    ldv %s, %s, R31[I31]", SI(d), SF(d));
+    emit(fs, "    ldv %s, %s, R31[I31+1]", SI(d), SF(d));
     branch(fs, slow, "beq.r %s, " NIL, SR(d));
     cold_begin(fs);
     place(fs, slow);
@@ -2059,8 +2051,7 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
     } else {
         int slow = new_label(fs), cont = new_label(fs);
         if (ty_get(fs, fslot) != TY_FN) {
-            emit(fs, "    isa I30, %s, Fn", SR(fslot));
-            branch(fs, slow, "bz I30");
+            branch(fs, slow, "bnisa %s, Fn", SR(fslot));
         }
         emit(fs, "    mov I30, %s->Fn.sig", RB(fs, fslot, "R28"));
         int counted = new_label(fs);
@@ -2440,8 +2431,7 @@ static Val gen_len(FS *fs, Val a, int dst, const char *desc) {
     int slow = new_label(fs), cont = new_label(fs);
     if (t == TY_ANY || t == TY_TAB) {
         if (t != TY_TAB) {
-            emit(fs, "    isa I31, %s, Tab", SR(as));
-            branch(fs, slow, "bz I31");
+            branch(fs, slow, "bnisa %s, Tab", SR(as));
         }
         emit(fs, "    mov R31, %s->Tab.meta", RB(fs, as, "R28"));
         branch(fs, slow, "bnz R31");
@@ -3075,8 +3065,7 @@ static bool version_tail(FS *fs, Block *b, int i) {
         return false;
     int generic = new_label(fs);
     for (int j = 0; j < n; j++) {
-        emit(fs, "    isa I31, %s, Tab", SR(tabs[j]->slot));
-        branch(fs, generic, "bz I31");
+        branch(fs, generic, "bnisa %s, Tab", SR(tabs[j]->slot));
         ty_set(fs, tabs[j]->slot, TY_TAB);
     }
     Scope sc = scope_open(fs);
@@ -3156,8 +3145,7 @@ static bool version_entry(FS *fs, Func *f) {
     for (int i = 0; i < f->np; i++) {
         int k = f->params[i]->slot;
         if (want[i] == TY_TAB) {
-            emit(fs, "    isa I31, %s, Tab", SR(k));
-            branch(fs, generic, "bz I31");
+            branch(fs, generic, "bnisa %s, Tab", SR(k));
         } else if (want[i] == TY_INT) {
             branch(fs, generic, "bnz %s", SR(k));
         } else if (want[i] == TY_FLT) {
@@ -3580,8 +3568,7 @@ static void genfor_body(FS *fs, void *c, int head) {
     /* pairs: iterate by position, without calling next */
     branch(fs, notnext, "bne.r %s, @rt$next_fn", SR(x->f));
     if (ty_get(fs, x->st) != TY_TAB) {
-        emit(fs, "    isa I30, %s, Tab", SR(x->st));
-        branch(fs, generic, "bz I30");
+        branch(fs, generic, "bnisa %s, Tab", SR(x->st));
     }
     emit(fs, "    call rt$nextpos (%s, %s) -> (%s, %s, %s, %s, %s, %s, %s)", SR(x->st), SI(x->pos), SI(x->pos),
          SI(k), SF(k), SR(k), v >= 0 ? SI(v) : "I30", v >= 0 ? SF(v) : "F30", v >= 0 ? SR(v) : "R30");
@@ -3597,8 +3584,7 @@ static void genfor_body(FS *fs, void *c, int head) {
     if (v >= 0) {
         branch(fs, generic, "bne.r %s, @rt$ipairs_aux", SR(x->f));
         if (ty_get(fs, x->st) != TY_TAB) {
-            emit(fs, "    isa I30, %s, Tab", SR(x->st));
-            branch(fs, generic, "bz I30");
+            branch(fs, generic, "bnisa %s, Tab", SR(x->st));
         }
         branch(fs, generic, "bnz %s", SR(x->ctl));
         emit(fs, "    mov R31, %s", SR(x->st));
@@ -3609,8 +3595,7 @@ static void genfor_body(FS *fs, void *c, int head) {
         emit(fs, "    add I31, %s, %s", SI(x->ctl), SI(x->ctl));
         emit(fs, "    mov R30, R31->Tab.arr");
         emit(fs, "    mov %s, R30[I31]", SR(v));
-        emit(fs, "    inc I31");
-        emit(fs, "    ldv %s, %s, R30[I31]", SI(v), SF(v));
+        emit(fs, "    ldv %s, %s, R30[I31+1]", SI(v), SF(v));
         ty_set(fs, v, TY_ANY);
         emit(fs, "    add %s, %s, 1", SI(k), SI(x->ctl));
         emit(fs, "    mov.r %s, null", SR(k));
@@ -3793,8 +3778,7 @@ static void emit_call(FS *fs, int fslot, Val *vals, int n, int d, const char *de
     snprintf(res, sizeof res, "(I31, %s, %s, %s)", SI(d), SF(d), SR(d));
     G.used_call[n] = true;
     int slow = new_label(fs), cont = new_label(fs);
-    emit(fs, "    isa I30, %s, Fn", SR(fslot));
-    branch(fs, slow, "bz I30");
+    branch(fs, slow, "bnisa %s, Fn", SR(fslot));
     emit(fs, "    mov I30, %s->Fn.sig", RB(fs, fslot, "R28"));
     branch(fs, slow, "bne I30, %d", n);
     emit(fs, "    mov R30, %s->Fn.clo", RB(fs, fslot, "R28"));
