@@ -48,6 +48,10 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   checked once and the rest of the block has a generic copy. The facts
   then hold through the whole body, where a check's slow path would
   otherwise erase them (fannkuch: 2.72s to 2.36s; nbody: 1.31s to 1.19s).
+* A loop that indexes a table in a local twice or more keeps the table's
+  array length and list in registers, loaded on entry and after each call
+  (only calls change them), unless that would push the loop's variables
+  out of registers (fannkuch: 2.36s to 2.06s).
 * A `for` loop whose limit was already known to be an integer (a constant,
   say) entered its body knowing nothing about any variable.
 * Errors name `t[i]` as `field '?'` and `t[1]` as `field 'integer index'`,

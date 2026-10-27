@@ -112,6 +112,9 @@ typedef struct FS {
     int nsaved;
     int notags;         /* set_tag records the type and leaves the R half stale */
     int noversion;      /* in a generic copy: no further versions */
+    struct { int t, c; } ac[8];  /* array caches: table slot t's n and arr in slot c's I and R */
+    int nac;
+    int ac_added;       /* caches the last loop set up */
 } FS;
 
 typedef struct {
@@ -149,6 +152,23 @@ static void emit(FS *fs, const char *fmt, ...) {
         return;
     }
     buf_add(fs->cur, line_of(fs), buf);
+    /* a call can change any table's array part: reload the cached ones */
+    if (fs->nac && (strncmp(buf, "    call ", 9) == 0 || strncmp(buf, "    calli ", 10) == 0))
+        for (int i = 0; i < fs->nac; i++) {
+            char r[128];
+            snprintf(r, sizeof r, "    mov I%d, R%d->Tab.n", fs->ac[i].c, fs->ac[i].t);
+            buf_add(fs->cur, line_of(fs), r);
+            snprintf(r, sizeof r, "    mov R%d, R%d->Tab.arr", fs->ac[i].c, fs->ac[i].t);
+            buf_add(fs->cur, line_of(fs), r);
+        }
+}
+
+/* The slot caching table slot t's array part, or -1. */
+static int acache(FS *fs, int t) {
+    for (int i = 0; i < fs->nac; i++)
+        if (fs->ac[i].t == t)
+            return fs->ac[i].c;
+    return -1;
 }
 
 /* A dynamically built string. */
@@ -987,6 +1007,7 @@ static Val gen_index_val(FS *fs, Val t, Val k, int dst, const char *desc) {
         d = alloc_slot(fs);
     int slow = new_label(fs), cont = new_label(fs);
     bool inl = false;
+    char arr[16] = "R31";
     if (((kt == TY_INT || (kt == TY_ANY && k.k == V_SLOT)) && (k.k != V_INT || (k.i >= 1 && k.i < (1ll << 40)))) || (k.k == V_STR && !(k.s.len >= 2 && k.s.s[0] == '_' && k.s.s[1] == '_'))) {
         inl = true;
         
@@ -997,21 +1018,25 @@ static Val gen_index_val(FS *fs, Val t, Val k, int dst, const char *desc) {
         if (kt == TY_INT || kt == TY_ANY) {
             if (kt == TY_ANY)
                 branch(fs, slow, "bnz %s", SR(k.slot));
-            emit(fs, "    mov I30, %s->Tab.n", RB(fs, ts, "R28"));
+            int c = acache(fs, ts);
+            if (c < 0)
+                emit(fs, "    mov I30, %s->Tab.n", RB(fs, ts, "R28"));
             if (k.k == V_INT)
                 emit(fs, "    mov I31, %lld", (long long)(k.i - 1));
             else
                 emit(fs, "    sub I31, %s, 1", VI(&k));
             /* 0 <= k - 1 < n, as one unsigned compare */
-            branch(fs, slow, "bge.u64 I31, I30");
+            branch(fs, slow, "bge.u64 I31, %s", c < 0 ? "I30" : SI(c));
             emit(fs, "    add I31, I31");
-            emit(fs, "    mov R31, %s->Tab.arr", RB(fs, ts, "R28"));
+            snprintf(arr, sizeof arr, "%s", c < 0 ? "R31" : SR(c));
+            if (c < 0)
+                emit(fs, "    mov R31, %s->Tab.arr", RB(fs, ts, "R28"));
         } else {
             ic_lookup(fs, RB(fs, ts, "R28"), k.s, slow);
         }
-        emit(fs, "    mov %s, R31[I31]", SR(d));
+        emit(fs, "    mov %s, %s[I31]", SR(d), arr);
         emit(fs, "    inc I31");
-        emit(fs, "    ldv %s, %s, R31[I31]", SI(d), SF(d));
+        emit(fs, "    ldv %s, %s, %s[I31]", SI(d), SF(d), arr);
         ty_set(fs, d, TY_ANY);
         branch(fs, slow, "beq.r %s, " NIL, SR(d));
         cold_begin(fs);
@@ -1036,6 +1061,7 @@ static void gen_setindex(FS *fs, Val t, Val k, Val v, const char *desc) {
     int slow = new_label(fs), cont = new_label(fs);
     bool inl = false;
     bool knil = vt == TY_NIL;
+    char arr[16] = "R31";
     if (!knil && (((kt == TY_INT || (kt == TY_ANY && k.k == V_SLOT)) && (k.k != V_INT || (k.i >= 1 && k.i < (1ll << 40)))) || (k.k == V_STR && !(k.s.len >= 2 && k.s.s[0] == '_' && k.s.s[1] == '_')))) {
         inl = true;
         if (tt != TY_TAB) {
@@ -1045,47 +1071,51 @@ static void gen_setindex(FS *fs, Val t, Val k, Val v, const char *desc) {
         if (kt == TY_INT || kt == TY_ANY) {
             if (kt == TY_ANY)
                 branch(fs, slow, "bnz %s", SR(k.slot));
-            emit(fs, "    mov I30, %s->Tab.n", RB(fs, ts, "R28"));
+            int c = acache(fs, ts);
+            if (c < 0)
+                emit(fs, "    mov I30, %s->Tab.n", RB(fs, ts, "R28"));
             if (k.k == V_INT)
                 emit(fs, "    mov I31, %lld", (long long)(k.i - 1));
             else
                 emit(fs, "    sub I31, %s, 1", VI(&k));
             /* 0 <= k - 1 < n, as one unsigned compare */
-            branch(fs, slow, "bge.u64 I31, I30");
+            branch(fs, slow, "bge.u64 I31, %s", c < 0 ? "I30" : SI(c));
             emit(fs, "    add I31, I31");
-            emit(fs, "    mov R31, %s->Tab.arr", RB(fs, ts, "R28"));
+            snprintf(arr, sizeof arr, "%s", c < 0 ? "R31" : SR(c));
+            if (c < 0)
+                emit(fs, "    mov R31, %s->Tab.arr", RB(fs, ts, "R28"));
         } else {
             ic_lookup(fs, RB(fs, ts, "R28"), k.s, slow);
         }
         /* only an existing non-nil value is overwritten inline */
-        emit(fs, "    mov R30, R31[I31]");
+        emit(fs, "    mov R30, %s[I31]", arr);
         branch(fs, slow, "beq.r R30, " NIL);
         if (v.k == V_SLOT && vt != TY_INT && vt != TY_FLT && vt != TY_STR && vt != TY_TAB &&
             vt != TY_FN)
             branch(fs, slow, "beq.r %s, " NIL, SR(v.slot));
         if (v.k == V_SLOT) {
-            emit(fs, "    mov R31[I31], %s", SR(v.slot));
+            emit(fs, "    mov %s[I31], %s", arr, SR(v.slot));
             emit(fs, "    inc I31");
             if (vt == TY_INT) {
-                emit(fs, "    mov R31[I31], %s", SI(v.slot));
+                emit(fs, "    mov %s[I31], %s", arr, SI(v.slot));
             } else if (vt == TY_ANY) {
                 int l1 = new_label(fs), l2 = new_label(fs);
                 emit(fs, "    bnz %s, .L%d", SR(v.slot), l1);
-                emit(fs, "    mov R31[I31], %s", SI(v.slot));
+                emit(fs, "    mov %s[I31], %s", arr, SI(v.slot));
                 emit(fs, "    jmp .L%d", l2);
                 emit(fs, ".L%d:", l1);
-                emit(fs, "    mov R31[I31], %s", SF(v.slot));
+                emit(fs, "    mov %s[I31], %s", arr, SF(v.slot));
                 emit(fs, ".L%d:", l2);
             } else {
-                emit(fs, "    mov R31[I31], %s", SF(v.slot));
+                emit(fs, "    mov %s[I31], %s", arr, SF(v.slot));
             }
         } else {
-            emit(fs, "    mov.r R31[I31], %s", VR(&v));
+            emit(fs, "    mov.r %s[I31], %s", arr, VR(&v));
             emit(fs, "    inc I31");
             if (v.k == V_INT)
-                emit(fs, "    mov.i64 R31[I31], %s", VI(&v));
+                emit(fs, "    mov.i64 %s[I31], %s", arr, VI(&v));
             else
-                emit(fs, "    mov.f64 R31[I31], %s", VF(&v));
+                emit(fs, "    mov.f64 %s[I31], %s", arr, VF(&v));
         }
         cold_begin(fs);
         place(fs, slow);
@@ -2757,7 +2787,124 @@ typedef void (*LoopBody)(FS *fs, void *ctx, int head);
 /* Generate a loop with speculated facts at its head: start from the facts
    on entry, and if the back edges do not keep them, weaken them and
    generate the loop again. */
-static void speculate(FS *fs, LoopBody body, void *ctx) {
+/* Tables a loop indexes with integer-like keys, by local variable. */
+typedef struct {
+    Var *v[16];
+    int n[16], nv;
+    Var *decl[64];      /* declared inside the loop */
+    int nd;
+} ArrUses;
+
+static void arr_uses_expr(Expr *e, ArrUses *u);
+static void arr_uses_block(Block *b, ArrUses *u);
+
+static void arr_uses_exprs(Expr **v, int n, ArrUses *u) {
+    for (int i = 0; i < n; i++)
+        arr_uses_expr(v[i], u);
+}
+
+static void arr_uses_expr(Expr *e, ArrUses *u) {
+    if (!e || e->k == X_FUNC)
+        return;
+    if (e->k == X_INDEX && e->a->k == X_LOCAL && e->b->k != X_STR) {
+        int i = 0;
+        while (i < u->nv && u->v[i] != e->a->var)
+            i++;
+        if (i < 16) {
+            if (i == u->nv) {
+                u->v[u->nv] = e->a->var;
+                u->n[u->nv++] = 0;
+            }
+            u->n[i]++;
+        }
+    }
+    if (e->k == X_TABLE) {
+        for (int i = 0; i < e->nfields; i++) {
+            arr_uses_expr(e->fields[i].key, u);
+            arr_uses_expr(e->fields[i].val, u);
+        }
+        return;
+    }
+    arr_uses_expr(e->a, u);
+    arr_uses_expr(e->b, u);
+    arr_uses_exprs(e->args, e->nargs, u);
+}
+
+static void arr_uses_stmt(Stmt *s, ArrUses *u) {
+    for (int i = 0; i < s->nvars && u->nd < 64; i++)
+        u->decl[u->nd++] = s->vars[i];
+    if (s->var && u->nd < 64)
+        u->decl[u->nd++] = s->var;
+    arr_uses_exprs(s->exprs, s->nexprs, u);
+    arr_uses_exprs(s->targets, s->ntargets, u);
+    arr_uses_expr(s->cond, u);
+    arr_uses_exprs(s->conds, s->nconds, u);
+    arr_uses_expr(s->start, u);
+    arr_uses_expr(s->limit, u);
+    arr_uses_expr(s->step, u);
+    if (s->k == S_IF)
+        for (int j = 0; j <= s->nconds; j++)
+            arr_uses_block(s->blocks[j], u);
+    arr_uses_block(s->body, u);
+}
+
+static void arr_uses_block(Block *b, ArrUses *u) {
+    if (b)
+        for (int i = 0; i < b->n; i++)
+            arr_uses_stmt(b->stmts[i], u);
+}
+
+/* Array caches for a loop: each table in a local of this function, known
+   to be a table and never assigned, that the loop indexes twice or more
+   gets a slot holding its Tab.n (I) and Tab.arr (R), loaded on entry and
+   after every call (only a call changes them). */
+static int cache_arrays(FS *fs, Stmt *ls) {
+    ArrUses u = {0};
+    arr_uses_stmt(ls, &u);
+    int added = 0;
+    for (int i = 0; i < u.nv && fs->nac < 8; i++) {
+        Var *v = u.v[i];
+        bool inner = false;
+        for (int j = 0; j < u.nd; j++)
+            inner |= u.decl[j] == v;
+        if (inner || u.n[i] < 2 || v->fn != fs->f || v->assigned || v->boxed || v->slot >= NREG ||
+            ty_get(fs, v->slot) != TY_TAB || acache(fs, v->slot) >= 0 || fs->nslots + 1 >= NREG)
+            continue;
+        int c = alloc_slot(fs);
+        fs->nlocals = fs->nslots;
+        emit(fs, "    mov I%d, R%d->Tab.n", c, v->slot);
+        emit(fs, "    mov R%d, R%d->Tab.arr", c, v->slot);
+        fs->ac[fs->nac].t = v->slot;
+        fs->ac[fs->nac++].c = c;
+        added++;
+    }
+    return added;
+}
+
+static void speculate1(FS *fs, LoopBody body, void *ctx, Stmt *ls, bool cache);
+
+static void speculate(FS *fs, LoopBody body, void *ctx, Stmt *ls) {
+    /* with array caches, unless their slots make the loop spill */
+    Snap s0 = snap(fs);
+    int max0 = fs->maxslots;
+    fs->maxslots = fs->nslots;
+    int nac0 = fs->nac;
+    speculate1(fs, body, ctx, ls, true);
+    bool cached = fs->ac_added;
+    int peak = fs->maxslots;
+    fs->maxslots = max0 > peak ? max0 : peak;
+    if (cached && peak > NREG) {
+        restore(fs, s0);
+        fs->nac = nac0;
+        fs->maxslots = max0;
+        speculate1(fs, body, ctx, ls, false);
+    }
+}
+
+static void speculate1(FS *fs, LoopBody body, void *ctx, Stmt *ls, bool cache) {
+    int nslots0 = fs->nslots, nlocals0 = fs->nlocals, nac0 = fs->nac;
+    fs->ac_added = cache && !fs->dead ? cache_arrays(fs, ls) : 0;
+    int added = fs->ac_added;
     int active = fs->nslots;
     ty_ensure(fs, active + 1);
     int hn = fs->tycap;
@@ -2791,6 +2938,10 @@ static void speculate(FS *fs, LoopBody body, void *ctx) {
                 h[i] = TY_ANY;
     }
     free(h);
+    fs->nac = nac0;
+    fs->nlocals = nlocals0;
+    fs->nslots = nslots0;
+    fs->ac_added = added;
 }
 
 typedef struct {
@@ -3395,7 +3546,7 @@ static void gen_numfor(FS *fs, Stmt *s) {
         }
         fs->nlocals = fs->nslots;
         fs->nactive++;
-        speculate(fs, numfor_body, &x);
+        speculate(fs, numfor_body, &x, s);
     } else {
         emit(fs, "    call rt$forprep (%s, %s, %s, %s, %s, %s, %s, %s, %s) -> (I31, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
              SI(x.var), SF(x.var), SR(x.var), SI(x.lim), SF(x.lim), SR(x.lim), SI(x.step), SF(x.step), SR(x.step),
@@ -3406,7 +3557,7 @@ static void gen_numfor(FS *fs, Stmt *s) {
         branch(fs, x.exit, "bz I31");
         fs->nlocals = fs->nslots;
         fs->nactive++;
-        speculate(fs, numfor_generic_body, &x);
+        speculate(fs, numfor_generic_body, &x, s);
     }
     scope_close(fs, sc);
 }
@@ -3513,7 +3664,7 @@ static void gen_genfor(FS *fs, Stmt *s) {
         fs->nactive++;
     }
     fs->nlocals = fs->nslots;
-    speculate(fs, genfor_body, &x);
+    speculate(fs, genfor_body, &x, s);
     scope_close(fs, sc);
 }
 
@@ -3599,12 +3750,12 @@ static void gen_stmt(FS *fs, Stmt *s) {
     }
     case S_WHILE: {
         WhileCtx c = {s};
-        speculate(fs, while_body, &c);
+        speculate(fs, while_body, &c, s);
         break;
     }
     case S_REPEAT: {
         WhileCtx c = {s};
-        speculate(fs, repeat_body, &c);
+        speculate(fs, repeat_body, &c, s);
         break;
     }
     case S_NUMFOR: gen_numfor(fs, s); break;

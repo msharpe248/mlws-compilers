@@ -191,6 +191,12 @@ metatable's `__index` table through an inline cache, with no runtime call.
   of the block has a generic copy in cold code. A fact that holds through
   a whole body survives its joins, where one learnt from a check inside it
   would not, since the check's slow path joins it again without it.
+* **Array caches.** A loop that indexes a table held in a local (known to
+  be a table and never assigned) twice or more keeps the table's array
+  length and list in a register pair, loaded on entry and after every
+  call, since only a call can change them. If the extra registers would
+  push the loop's variables into memory, the loop is generated again
+  without them.
 * **Calls** whose last argument is a call (`f(a, g())`) are made directly
   when `g` returns one value; any other count builds a list of arguments.
   A constructor of positional values (`{a, g()}`) builds its array part
@@ -230,13 +236,13 @@ Apple M5 Pro, MLWSVM M31), in seconds, with Lua 5.5.1 for comparison:
 |---|---|---|
 | fib (32) | 0.13 | 0.05 |
 | loop | 0.22 | 0.21 |
-| methods (2M method calls and objects) | 0.79 | 0.34 |
-| strings (format, gmatch, gsub) | 0.40 | 0.13 |
+| methods (2M method calls and objects) | 0.78 | 0.34 |
+| strings (format, gmatch, gsub) | 0.39 | 0.13 |
 | iterate (pairs, ipairs) | 0.12 | 0.05 |
-| binarytrees (15) | 0.65 | 0.37 |
-| nbody (500,000) | 1.19 | 0.41 |
+| binarytrees (15) | 0.64 | 0.37 |
+| nbody (500,000) | 1.18 | 0.41 |
 | spectralnorm (500) | 0.32 | 0.18 |
-| fannkuch (10) | 2.36 | 0.80 |
+| fannkuch (10) | 2.06 | 0.80 |
 
 The profiles (`mlwsvm run --profile`) show almost every instruction on the
 VM's fast paths; what remains is instruction count, mostly type checks on
