@@ -87,12 +87,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 .macro LOADV l, i, t, di, df, dr
     mov \dr, \l[\i]
     add \t, \i, 1
-    bnz \dr, .Lf\@
-    mov \di, \l[\t]
-    jmp .Ld\@
-.Lf\@:
-    mov \df, \l[\t]
-.Ld\@:
+    ldv \di, \df, \l[\t]
 .endm
 
 ; Store (si, sf, sr) at word i of list l.

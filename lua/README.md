@@ -204,19 +204,19 @@ the way Lua does.
 ## Performance
 
 `make bench` (`bench/run.sh`), on the machine this was developed on (an
-Apple M5 Pro, MLWSVM M29), in seconds, with Lua 5.5.1 for comparison:
+Apple M5 Pro, MLWSVM M30), in seconds, with Lua 5.5.1 for comparison:
 
 | Benchmark | mlws-vm-lua | lua 5.5 |
 |---|---|---|
 | fib (32) | 0.15 | 0.05 |
 | loop | 0.24 | 0.21 |
-| methods (2M method calls and objects) | 0.90 | 0.34 |
+| methods (2M method calls and objects) | 0.89 | 0.34 |
 | strings (format, gmatch, gsub) | 0.41 | 0.13 |
-| iterate (pairs, ipairs) | 0.13 | 0.05 |
-| binarytrees (15) | 0.82 | 0.37 |
-| nbody (500,000) | 1.74 | 0.41 |
-| spectralnorm (500) | 0.47 | 0.17 |
-| fannkuch (10) | 2.82 | 0.78 |
+| iterate (pairs, ipairs) | 0.12 | 0.05 |
+| binarytrees (15) | 0.81 | 0.38 |
+| nbody (500,000) | 1.68 | 0.43 |
+| spectralnorm (500) | 0.47 | 0.18 |
+| fannkuch (10) | 2.75 | 0.76 |
 
 The profiles (`mlwsvm run --profile`) show almost every instruction on the
 VM's fast paths; what remains is instruction count, mostly type checks on

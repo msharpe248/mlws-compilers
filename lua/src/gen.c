@@ -826,19 +826,12 @@ static Val read_global(FS *fs, Expr *e, int dst) {
     }
     int j = pinned_index(e->s.s, e->s.len);
     int w = 4 * j + 2;
-    int miss = new_label(fs), fl = new_label(fs), done = new_label(fs);
+    int miss = new_label(fs);
     emit(fs, "    mov R31, @rt$Ghs");
-    emit(fs, "    mov I31, %d", w);
-    emit(fs, "    mov %s, R31[I31]", SR(d));
-    emit(fs, "    inc I31");
-    emit(fs, "    bnz %s, .L%d", SR(d), fl);
-    emit(fs, "    mov %s, R31[I31]", SI(d));
-    emit(fs, "    jmp .L%d", done);
-    emit(fs, ".L%d:", fl);
-    emit(fs, "    mov %s, R31[I31]", SF(d));
+    emit(fs, "    mov %s, R31[%d]", SR(d), w);
+    emit(fs, "    ldv %s, %s, R31[%d]", SI(d), SF(d), w + 1);
     ty_set(fs, d, TY_ANY);
     branch(fs, miss, "beq.r %s, " NIL, SR(d));
-    emit(fs, ".L%d:", done);
     int cont = new_label(fs);
     cold_begin(fs);
     place(fs, miss);
@@ -983,7 +976,7 @@ static Val gen_index_val(FS *fs, Val t, Val k, int dst, const char *desc) {
     bool inl = false;
     if (((kt == TY_INT || (kt == TY_ANY && k.k == V_SLOT)) && (k.k != V_INT || (k.i >= 1 && k.i < (1ll << 40)))) || (k.k == V_STR && !(k.s.len >= 2 && k.s.s[0] == '_' && k.s.s[1] == '_'))) {
         inl = true;
-        int fl = new_label(fs), got = new_label(fs);
+        
         if (tt != TY_TAB) {
             emit(fs, "    isa I31, %s, Tab", SR(ts));
             branch(fs, slow, "bz I31");
@@ -1005,14 +998,9 @@ static Val gen_index_val(FS *fs, Val t, Val k, int dst, const char *desc) {
         }
         emit(fs, "    mov %s, R31[I31]", SR(d));
         emit(fs, "    inc I31");
-        emit(fs, "    bnz %s, .L%d", SR(d), fl);
-        emit(fs, "    mov %s, R31[I31]", SI(d));
-        emit(fs, "    jmp .L%d", got);
-        emit(fs, ".L%d:", fl);
-        emit(fs, "    mov %s, R31[I31]", SF(d));
+        emit(fs, "    ldv %s, %s, R31[I31]", SI(d), SF(d));
         ty_set(fs, d, TY_ANY);
         branch(fs, slow, "beq.r %s, " NIL, SR(d));
-        emit(fs, ".L%d:", got);
         cold_begin(fs);
         place(fs, slow);
     }
@@ -1852,7 +1840,7 @@ static Func *known_func(FS *fs, Expr *callee) {
    Anything else calls rt$methodc, which also says what to cache. */
 static void gen_method(FS *fs, int ss, Str name, const char *desc, int d) {
     int site = G.nmc++;
-    int slow = new_label(fs), cont = new_label(fs), fl = new_label(fs), got = new_label(fs);
+    int slow = new_label(fs), cont = new_label(fs);
     ty_set(fs, d, TY_ANY);
     if (ty_get(fs, ss) != TY_TAB) {
         emit(fs, "    isa I31, %s, Tab", SR(ss));
@@ -1868,13 +1856,8 @@ static void gen_method(FS *fs, int ss, Str name, const char *desc, int d) {
     ic_lookup(fs, "R28", name, slow);
     emit(fs, "    mov %s, R31[I31]", SR(d));
     emit(fs, "    inc I31");
-    emit(fs, "    bnz %s, .L%d", SR(d), fl);
-    emit(fs, "    mov %s, R31[I31]", SI(d));
-    emit(fs, "    jmp .L%d", got);
-    emit(fs, ".L%d:", fl);
-    emit(fs, "    mov %s, R31[I31]", SF(d));
+    emit(fs, "    ldv %s, %s, R31[I31]", SI(d), SF(d));
     branch(fs, slow, "beq.r %s, " NIL, SR(d));
-    emit(fs, ".L%d:", got);
     cold_begin(fs);
     place(fs, slow);
     char *nm = masm_string(name);
@@ -3068,13 +3051,7 @@ static void genfor_body(FS *fs, void *c, int head) {
         emit(fs, "    mov R30, R31->Tab.arr");
         emit(fs, "    mov %s, R30[I31]", SR(v));
         emit(fs, "    inc I31");
-        int fl = new_label(fs), done = new_label(fs);
-        emit(fs, "    bnz %s, .L%d", SR(v), fl);
-        emit(fs, "    mov %s, R30[I31]", SI(v));
-        emit(fs, "    jmp .L%d", done);
-        emit(fs, ".L%d:", fl);
-        emit(fs, "    mov %s, R30[I31]", SF(v));
-        emit(fs, ".L%d:", done);
+        emit(fs, "    ldv %s, %s, R30[I31]", SI(v), SF(v));
         ty_set(fs, v, TY_ANY);
         emit(fs, "    add %s, %s, 1", SI(k), SI(x->ctl));
         emit(fs, "    mov.r %s, null", SR(k));
