@@ -355,8 +355,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     strcat R1, "(error object is a ", R3, " value)"
     jmp 2f
 1:  call rt$tostring (I0, F0, R1) -> (R1)
-2:  sleep 1                 ; the VM flushes standard output when it idles
-    ncall "fs.stderr" -> (R4)
+2:  ncall "fs.stderr" -> (R4)    ; (writing to it flushes standard output first)
     strcat R5, "mlws-vm-lua: ", R1, "\n"
     ncall "fs.write" (R4, R5)
     isa I3, R0, Error
@@ -1059,7 +1058,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     mov R5, R4[I2]
     STOREV R4, I2, I3, I1, F1, R2
     sub I3, I2, 2
-    shr I3, 2
+    div I3, 4
     mov I4, R0->Tab.pin
     blt I3, I4, 10f
     beq.r R5, 1n, 6f
@@ -1086,8 +1085,8 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     mov I5, R0->Tab.dead
     blt I5, 8, 21f
     len I6, R4
-    shr I6, 2
-    shl I7, I5, 1
+    div I6, 4
+    mul I7, I5, 2
     blt I7, I6, 21f
     call rt$compact (R0)
     mov R3, R0->Tab.hm
@@ -1173,7 +1172,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     jmp 8f
 4:  beq I1, I2, 7f
     ; move the slot down
-    shl I6, I2, 2
+    mul I6, I2, 4
     mov R1[I6], R4
     add I7, I6, 1
     bnz R4, 41f
@@ -1219,7 +1218,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 .func rt$setarr(ref t, ref list)
     mov R0->Tab.arr, R1
     len I0, R1
-    shr I0, 1
+    div I0, 2
     mov R0->Tab.n, I0
     mov R2, R0->Tab.hm
     bz R2, 5f
@@ -1280,7 +1279,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     call rt$hfind (R0, I0, F0, R1) -> (I6)
     blt I6, 0, 90f
     sub I6, 2
-    shr I6, 2
+    div I6, 4
     inc I6
     jmp 20f
 10: ; the array part, from position I1
@@ -1299,9 +1298,9 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     mov R3, R0->Tab.hs
     bz R3, 29f
     len I3, R3
-    shr I3, 2
+    div I3, 4
 21: bge I6, I3, 29f
-    shl I4, I6, 2
+    mul I4, I6, 4
     add I5, I4, 2
     LOADV R3, I5, I7, I8, F8, R8
     beq.r R8, 1n, 22f
@@ -1929,7 +1928,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 ; Return the values of a list.
 .func rt$retlist(ref list) -> (i64, i64, f64, ref)
     len I0, R0
-    shr I0, 1
+    div I0, 2
     bz I0, 9f
     mov I1, 0
     LOADV R0, I1, I2, I3, F3, R3
@@ -1959,7 +1958,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 .func rt$vatable(ref list) -> ref
     new R1, Tab
     len I0, R0
-    shr I0, 1
+    div I0, 2
     call rt$copylist (R0) -> (R2)
     call rt$setarr (R1, R2)
     call rt$rawset (R1, 0, 0.0, "n", I0, 0.0, null)

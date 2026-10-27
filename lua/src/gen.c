@@ -1153,8 +1153,17 @@ static bool fold(int op, Val *a, Val *b, Val *out) {
 }
 
 /* An integer operation on I operands x and y into slot d. */
+static bool is_literal(const char *op);
+
 static void int_op(FS *fs, int op, int d, const char *x, const char *y, Val *b) {
     int l;
+    /* commutative: the register operand first */
+    if ((op == A_ADD || op == A_MUL || op == A_BAND || op == A_BOR || op == A_BXOR) && is_literal(x) &&
+        !is_literal(y)) {
+        const char *t = x;
+        x = y;
+        y = t;
+    }
     switch (op) {
     case A_ADD: emit(fs, "    add %s, %s, %s", SI(d), x, y); break;
     case A_SUB: emit(fs, "    sub %s, %s, %s", SI(d), x, y); break;
@@ -1385,6 +1394,22 @@ static void branch_value(FS *fs, Val *v, int label, bool when) {
     }
 }
 
+static bool is_literal(const char *op) {
+    return isdigit((unsigned char)op[0]) || (op[0] == '-' && isdigit((unsigned char)op[1]));
+}
+
+/* An integer compare-and-branch, with the register operand first (the
+   VM's fast form): a constant on the left is moved to the right. */
+static void int_cmp(FS *fs, int label, const char *mn, const char *x, const char *y) {
+    if (is_literal(x) && !is_literal(y)) {
+        const char *m = strcmp(mn, "blt") == 0 ? "bgt" : strcmp(mn, "bgt") == 0 ? "blt" :
+                        strcmp(mn, "ble") == 0 ? "bge" : strcmp(mn, "bge") == 0 ? "ble" : mn;
+        branch(fs, label, "%s %s, %s", m, y, x);
+        return;
+    }
+    branch(fs, label, "%s %s, %s", mn, x, y);
+}
+
 static const char *int_branch(int op, bool when) {
     /* op: OP_LT, OP_LE, OP_EQ, OP_NE */
     switch (op) {
@@ -1428,7 +1453,7 @@ static void compare_branch(FS *fs, int op, Val a, Val b, int label, bool when) {
             return;
         }
         if (ta == TY_INT && tb == TY_INT) {
-            branch(fs, label, "%s %s, %s", int_branch(op, when), VI(&a), VI(&b));
+            int_cmp(fs, label, int_branch(op, when), VI(&a), VI(&b));
             return;
         }
         if (ta == TY_FLT && tb == TY_FLT) {
@@ -1466,7 +1491,7 @@ static void compare_branch(FS *fs, int op, Val a, Val b, int label, bool when) {
                 branch(fs, slow, "bnz %s", VR(&a));
             if (tb != TY_INT)
                 branch(fs, slow, "bnz %s", VR(&b));
-            branch(fs, label, "%s %s, %s", int_branch(op, when), VI(&a), VI(&b));
+            int_cmp(fs, label, int_branch(op, when), VI(&a), VI(&b));
             jump(fs, cont);
             cold_begin(fs);
             place(fs, slow);
@@ -1482,7 +1507,7 @@ static void compare_branch(FS *fs, int op, Val a, Val b, int label, bool when) {
     }
     /* order */
     if (ta == TY_INT && tb == TY_INT) {
-        branch(fs, label, "%s %s, %s", int_branch(op, when), VI(&a), VI(&b));
+        int_cmp(fs, label, int_branch(op, when), VI(&a), VI(&b));
         return;
     }
     if (ta == TY_FLT && tb == TY_FLT) {
@@ -1510,7 +1535,7 @@ static void compare_branch(FS *fs, int op, Val a, Val b, int label, bool when) {
             branch(fs, slow, "bnz %s", VR(&a));
         if (tb != TY_INT)
             branch(fs, slow, "bnz %s", VR(&b));
-        branch(fs, label, "%s %s, %s", int_branch(op, when), VI(&a), VI(&b));
+        int_cmp(fs, label, int_branch(op, when), VI(&a), VI(&b));
         jump(fs, cont);
         cold_begin(fs);
         place(fs, slow);
@@ -3449,7 +3474,7 @@ static void gen_helpers(Buf *b) {
     L("    mov I21, R0->Fn.sig");
     L("    mov R20, R0->Fn.clo");
     L("    len I23, R1");
-    L("    shr I23, 1");
+    L("    div I23, 2");
     L("    blt I21, 100, 10f");
     L("    blt I21, 200, 20f");
     L("    beq I21, 200, 30f");

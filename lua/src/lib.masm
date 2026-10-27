@@ -255,7 +255,7 @@
 
 .func B$select(i64, f64, ref, ref) -> (i64, i64, f64, ref)
     len I1, R1
-    shr I1, 1
+    div I1, 2
     typeof I2, R0
     bne I2, 1, 1f
     mov I3, R0[0]
@@ -648,7 +648,7 @@
     bufnew R1, 0
 1:  bge I1, I0, 9f
     LOADV R0, I1, I2, I3, F3, R3
-    shr I4, I1, 1
+    div I4, I1, 2
     inc I4
     call rt$checkint (I4, "char", I3, F3, R3) -> (I5)
     blt I5, 0, 8f
@@ -997,7 +997,7 @@ MATHF1 exp, ncall "math.exp" (F0) -> (F0)
     mov I3, 0
 1:  bge I3, I2, 9f
     LOADV R1, I3, I4, I5, F5, R5
-    shr I6, I3, 1
+    div I6, I3, 2
     add I6, 2
     call rt$checknum (I6, R2, I5, F5, R5) -> (I5, F5, R5)
     bz I0, 2f
@@ -1065,7 +1065,7 @@ MATHF1 exp, ncall "math.exp" (F0) -> (F0)
     mov I1, 0
 1:  bge I1, I0, 9f
     LOADV R0, I1, I2, I3, F3, R3
-    shr I4, I1, 1
+    div I4, I1, 2
     inc I4
     call rt$checkstr (I4, "write", I3, F3, R3) -> (R4)
     ncall "io.print_s" (R4)
