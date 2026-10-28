@@ -3,9 +3,20 @@
 Each compiler is versioned on its own (its `VERSION` file); a release of
 this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
-## Unreleased
+## Release 0.3.0
 
-### Lua
+bf 0.3.0, Lox 0.3.0 and Lua 0.3.0, for MLWSVM 0.3.0. Lua's assembly needs
+MLWSVM 0.3.0 or later; bf's and Lox's still run on MLWSVM 0.2.0.
+
+### bf 0.3.0
+
+* No changes; the version follows MLWSVM 0.3.0, on which it is tested.
+
+### Lox 0.3.0
+
+* No changes; the version follows MLWSVM 0.3.0, on which it is tested.
+
+### Lua 0.3.0
 
 * `string.upper` and `string.lower` change ASCII letters only, byte for
   byte, as Lua does in the C locale (`("straße"):upper()` is `"STRAßE"`),
