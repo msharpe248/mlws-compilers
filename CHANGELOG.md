@@ -3,9 +3,21 @@
 Each compiler is versioned on its own (its `VERSION` file); a release of
 this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
-## Unreleased
+## Release 0.4.1
 
-### Lua
+bf 0.4.1, Lox 0.4.1 and Lua 0.4.1, for MLWSVM 0.4.1. Lua's runtime can
+be an MLWSVM library, which needs MLWSVM 0.4.1 or later (one object per
+constant across modules); self-contained programs still run on 0.3.0.
+
+### bf 0.4.1
+
+* No changes; the version follows MLWSVM 0.4.1, on which it is tested.
+
+### Lox 0.4.1
+
+* No changes; the version follows MLWSVM 0.4.1, on which it is tested.
+
+### Lua 0.4.1
 
 * The runtime as an MLWSVM library: `make lib` builds `lua/lib/lua-VERSION.mlwsl`
   (from `mlws-vm-luac --library DIR`), and `--shared` (on `mlws-vm-luac`

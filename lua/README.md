@@ -75,7 +75,7 @@ a few milliseconds instead of about 30, and runs as fast. Its output must
 not be named `lua.masm`, which would be found instead of the library.
 The runtime tells nil, false and true apart by the identity of constants
 (`1n`, `2n`, `3n`), so the VM must make one object of each constant for
-all modules: MLWSVM after 0.4.0 (bb873ad).
+all modules: MLWSVM 0.4.1 or later, which the library requires.
 
 ## What it implements
 
