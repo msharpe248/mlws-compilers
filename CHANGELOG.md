@@ -3,6 +3,15 @@
 Each compiler is versioned on its own (its `VERSION` file); a release of
 this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
+## Unreleased
+
+### Lua
+
+* `string.upper` and `string.lower` change ASCII letters only, byte for
+  byte, as Lua does in the C locale (`("straße"):upper()` is `"STRAßE"`),
+  with MLWSVM M37's `text.ascii_upper`/`ascii_lower`; M37's `text.upper`
+  maps all of Unicode. It needs MLWSVM M37 or later.
+
 ## Release 0.2.0
 
 bf 0.2.0, Lox 0.2.0 and Lua 0.2.0, for MLWSVM 0.2.0. The assembly of all

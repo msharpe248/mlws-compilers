@@ -544,13 +544,13 @@
 
 .func B$str_upper(i64, f64, ref) -> (i64, i64, f64, ref)
     call rt$checkstr (1, "upper", I0, F0, R0) -> (R1)
-    ncall "text.upper" (R1) -> (R2)
+    ncall "text.ascii_upper" (R1) -> (R2)
     ret 1, 0, 0.0, R2
 .endf
 
 .func B$str_lower(i64, f64, ref) -> (i64, i64, f64, ref)
     call rt$checkstr (1, "lower", I0, F0, R0) -> (R1)
-    ncall "text.lower" (R1) -> (R2)
+    ncall "text.ascii_lower" (R1) -> (R2)
     ret 1, 0, 0.0, R2
 .endf
 
