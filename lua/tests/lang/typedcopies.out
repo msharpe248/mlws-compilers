@@ -1,0 +1,27 @@
+6765	6765.0	1	false	typedcopies.lua:5: attempt to compare string with number
+1000000	10.5
+true	false
+true	false
+113.5	103.5
+20	nil
+2.75	7	-0.5
+-9223372036709301616	2.25	49
+3.5	4.0	float
+3	-4	false	typedcopies.lua:41: attempt to divide by zero
+1	nil	5	1	neg
+0	1	2
+2	nil	nil
+3	2	4
+2	4
+2 3
+1	2
+6
+hi bob	hi 5
+3	table
+false	true	false
+false	typedcopies.lua:74: attempt to perform arithmetic on a nil value
+false	typedcopies.lua:79: bottom
+closed	21
+42
+5050	5.0	1	big
+12	14.0

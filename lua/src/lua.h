@@ -99,6 +99,7 @@ struct Var {
     /* code generation */
     int slot;
     bool boxed;         /* lives in a Box, shared with closures */
+    int lidx;           /* its index in its function's locals */
 };
 
 typedef enum {

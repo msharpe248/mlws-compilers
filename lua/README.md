@@ -207,6 +207,19 @@ metatable's `__index` table through an inline cache, with no runtime call.
   push variables into memory, only the hash slots are kept, or nothing.
 * **Numeric `for`** with a constant step keeps no step register, and a
   limit in an integer local that is never assigned is used where it is.
+* **Typed copies.** A local function that captures nothing gets a copy
+  for each combination of argument types its direct calls use: each
+  argument is passed in one register (an integer in I, a float in F, a
+  table or string in R). If every return of the copy gives one value of
+  one type, it returns just that, with no count and no tag (`fib(n)` is
+  `(i64) -> i64`). The return type comes from an inference over the
+  source before code generation: each local has one type for its whole
+  life, and a recursive call's result is iterated to a fixpoint. A tail
+  call stays a tail call when both sides return the same way.
+* **Dead tag writes.** A tag write (`mov.r R, null`) that is overwritten
+  or followed by a return on every path before anything reads it is
+  removed, in registers that never hold a reference (where it may be what
+  lets the collector free an object).
 * **Calls** whose last argument is a call (`f(a, g())`) are made directly
   when `g` returns one value; any other count builds a list of arguments.
   A constructor of positional values (`{a, g()}`) builds its array part

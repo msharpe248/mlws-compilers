@@ -21,6 +21,7 @@
 #include "lua.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -122,6 +123,8 @@ typedef struct FS {
     int nac;
     int ac_added;       /* caches the last loop set up */
     SCache sc[8];
+    struct Clone *clone;    /* generating a typed copy */
+    int want_count;     /* the call being generated must set I31 */
 
     int nsc;
 } FS;
@@ -1941,6 +1944,326 @@ static Func *known_func(FS *fs, Expr *callee) {
     return NULL;
 }
 
+/* ---------------------------------------------------------- typed copies */
+
+/* A copy of a direct local function for arguments of known types, each
+   passed in its own bank (an integer in I, a float in F, a table, string,
+   function, boolean or nil in R, anything else in all three), and, when
+   every return gives one value of the same known type, returning just
+   that (ret; TY_ANY: the usual count and three halves). Calls whose
+   arguments have such types call the copy. ret comes from an inference
+   over the source: each local of the function gets one type for its
+   whole life (the join of all it is given), and a recursive call's result
+   starts as "nothing yet" (TY_BOT) and is iterated to a fixpoint. */
+#define TY_BOT ((Ty)100)
+
+typedef struct Clone {
+    Func *f;
+    Ty pt[MAXARGS];
+    Ty ret;
+    int id;
+    int state;          /* CL_* */
+    int depth;          /* while inferring: its depth */
+} Clone;
+
+enum { CL_NEW, CL_INFERRING, CL_STALE, CL_DONE, CL_QUEUED };
+
+static VEC(Clone *) clones;
+static VEC(Clone *) clone_queue;
+static int clone_depth;
+
+typedef struct {
+    Func *f;
+    Ty *env;            /* by Var.lidx */
+    bool changed;
+    Ty ret;
+    int mindep;         /* the shallowest clone being inferred that this used */
+} Inf;
+
+static Inf *inf_cur;
+
+static Ty join(Ty a, Ty b) {
+    if (a == TY_BOT)
+        return b;
+    if (b == TY_BOT || a == b)
+        return a;
+    return TY_ANY;
+}
+
+static bool num_ty(Ty t) { return t == TY_INT || t == TY_FLT; }
+
+static Clone *clone_for(Func *f, const Ty *pt);
+
+static bool cloneable(Func *f) {
+    return f->direct && !f->vararg && !f->vaname && f->np <= MAXARGS && !f->children.n && !f->is_main;
+}
+
+static Ty inf_expr(Inf *in, Expr *e);
+
+static Ty inf_call(Inf *in, Expr *e) {
+    if (e->k != X_CALL || e->a->k != X_LOCAL)
+        return TY_ANY;
+    Var *v = e->a->var;
+    Func *lf = v->localfn;
+    if (!lf || v->assigned || !cloneable(lf) || lf->np != e->nargs || (e->nargs && is_multi(e->args[e->nargs - 1])))
+        return TY_ANY;
+    Ty pt[MAXARGS];
+    for (int i = 0; i < e->nargs; i++) {
+        pt[i] = inf_expr(in, e->args[i]);
+        if (pt[i] == TY_BOT)
+            return TY_BOT;
+    }
+    return clone_for(lf, pt)->ret;
+}
+
+static Ty inf_expr(Inf *in, Expr *e) {
+    Ty a, b;
+    switch (e->k) {
+    case X_NIL: return TY_NIL;
+    case X_TRUE: case X_FALSE: return TY_BOOL;
+    case X_INT: return TY_INT;
+    case X_FLT: return TY_FLT;
+    case X_STR: return TY_STR;
+    case X_FUNC: return TY_FN;
+    case X_TABLE: return TY_TAB;
+    case X_LOCAL:
+        if (e->var->fn == in->f)
+            return in->env[e->var->lidx];
+        return (Ty)e->var->sty;
+    case X_CALL: return inf_call(in, e);
+    case X_PAREN: return inf_expr(in, e->a);
+    case X_AND: case X_OR: return join(inf_expr(in, e->a), inf_expr(in, e->b));
+    case X_BIN:
+        if (e->op >= OP_EQ)
+            return TY_BOOL;
+        a = inf_expr(in, e->a);
+        b = inf_expr(in, e->b);
+        if (a == TY_BOT || b == TY_BOT)
+            return TY_BOT;
+        if (e->op == OP_CONCAT)
+            return (num_ty(a) || a == TY_STR) && (num_ty(b) || b == TY_STR) ? TY_STR : TY_ANY;
+        if (!num_ty(a) || !num_ty(b))
+            return TY_ANY;
+        if (e->op == OP_DIV || e->op == OP_POW)
+            return TY_FLT;
+        if (e->op >= OP_BAND && e->op <= OP_SHR)
+            return TY_INT;
+        return a == TY_INT && b == TY_INT ? TY_INT : TY_FLT;
+    case X_UN:
+        if (e->op == OP_NOT)
+            return TY_BOOL;
+        a = inf_expr(in, e->a);
+        if (a == TY_BOT)
+            return TY_BOT;
+        if (e->op == OP_UNM)
+            return num_ty(a) ? a : TY_ANY;
+        if (e->op == OP_BNOT)
+            return num_ty(a) ? TY_INT : TY_ANY;
+        return a == TY_STR ? TY_INT : TY_ANY;    /* # */
+    default:
+        return TY_ANY;
+    }
+}
+
+static void inf_set(Inf *in, Var *v, Ty t) {
+    if (v->fn != in->f)
+        return;
+    Ty n = join(in->env[v->lidx], t);
+    if (n != in->env[v->lidx]) {
+        in->env[v->lidx] = n;
+        in->changed = true;
+    }
+}
+
+/* Locals given exprs, as an assignment or declaration does. */
+static void inf_values(Inf *in, Var **vars, Expr **targets, int n, Expr **exprs, int ne) {
+    for (int i = 0; i < n; i++) {
+        Var *v = vars ? vars[i] : targets[i]->k == X_LOCAL ? targets[i]->var : NULL;
+        Ty t;
+        if (i < ne)
+            t = inf_expr(in, exprs[i]);
+        else
+            t = ne && is_multi(exprs[ne - 1]) ? TY_ANY : TY_NIL;
+        if (v)
+            inf_set(in, v, t);
+    }
+}
+
+static void inf_block(Inf *in, Block *b);
+
+static void inf_stmt(Inf *in, Stmt *s) {
+    switch (s->k) {
+    case S_LOCAL:
+        inf_values(in, s->vars, NULL, s->nvars, s->exprs, s->nexprs);
+        break;
+    case S_ASSIGN:
+        inf_values(in, NULL, s->targets, s->ntargets, s->exprs, s->nexprs);
+        break;
+    case S_IF:
+        for (int j = 0; j <= s->nconds; j++)
+            inf_block(in, s->blocks[j]);
+        break;
+    case S_WHILE: case S_REPEAT: case S_DO:
+        inf_block(in, s->body);
+        break;
+    case S_NUMFOR: {
+        Ty a = inf_expr(in, s->start), st = s->step ? inf_expr(in, s->step) : TY_INT;
+        Ty t = a == TY_BOT || st == TY_BOT ? TY_BOT
+               : a == TY_INT && st == TY_INT ? TY_INT
+               : num_ty(a) && num_ty(st) ? TY_FLT : TY_ANY;
+        inf_set(in, s->var, t);
+        inf_block(in, s->body);
+        break;
+    }
+    case S_GENFOR:
+        for (int j = 0; j < s->nvars; j++)
+            inf_set(in, s->vars[j], TY_ANY);
+        inf_block(in, s->body);
+        break;
+    case S_RETURN:
+        if (s->nexprs == 1 && s->exprs[0]->k != X_VARARG)
+            in->ret = join(in->ret, inf_expr(in, s->exprs[0]));
+        else
+            in->ret = TY_ANY;
+        break;
+    default:
+        break;
+    }
+}
+
+static void inf_block(Inf *in, Block *b) {
+    if (b)
+        for (int i = 0; i < b->n; i++)
+            inf_stmt(in, b->stmts[i]);
+}
+
+/* Does every path through b end in a return? */
+static bool ends(Block *b) {
+    if (!b || !b->n)
+        return false;
+    Stmt *s = b->stmts[b->n - 1];
+    if (s->k == S_RETURN)
+        return true;
+    if (s->k == S_DO)
+        return ends(s->body);
+    if (s->k == S_IF) {
+        for (int j = 0; j <= s->nconds; j++)
+            if (!ends(s->blocks[j]))
+                return false;
+        return true;
+    }
+    return false;
+}
+
+static void infer(Clone *c) {
+    Func *f = c->f;
+    for (int i = 0; i < f->locals.n; i++)
+        f->locals.v[i]->lidx = i;
+    Ty *env = xmalloc((size_t)(f->locals.n + 1) * sizeof *env);
+    Inf *outer = inf_cur;
+    c->state = CL_INFERRING;
+    c->depth = ++clone_depth;
+    c->ret = TY_BOT;
+    int mindep = INT_MAX;
+    for (int iter = 0;; iter++) {
+        Inf in = {f, env, false, TY_BOT, INT_MAX};
+        for (int i = 0; i < f->locals.n; i++)
+            env[i] = TY_BOT;
+        for (int i = 0; i < f->np; i++)
+            env[f->params[i]->lidx] = c->pt[i];
+        inf_cur = &in;
+        for (int k = 0; k < 16; k++) {
+            in.changed = false;
+            in.ret = TY_BOT;
+            inf_block(&in, f->body);
+            if (!in.changed)
+                break;
+        }
+        Ty r = in.changed || !ends(f->body) || in.ret == TY_BOT ? TY_ANY : in.ret;
+        if (in.mindep < mindep)
+            mindep = in.mindep;
+        if (r == c->ret || iter == 6) {
+            c->ret = r == c->ret ? r : TY_ANY;
+            break;
+        }
+        c->ret = r;
+    }
+    free(env);
+    inf_cur = outer;
+    clone_depth--;
+    /* a result that rests on the guess of a clone still being inferred
+       around this one is provisional */
+    if (mindep < c->depth) {
+        c->state = CL_STALE;
+        if (outer && mindep < outer->mindep)
+            outer->mindep = mindep;
+    } else {
+        c->state = CL_DONE;
+    }
+}
+
+static Clone *clone_for(Func *f, const Ty *pt) {
+    Clone *c = NULL;
+    for (int i = 0; i < clones.n && !c; i++) {
+        Clone *k = clones.v[i];
+        if (k->f == f && memcmp(k->pt, pt, (size_t)f->np * sizeof *pt) == 0)
+            c = k;
+    }
+    if (!c) {
+        c = xcalloc(1, sizeof *c);
+        c->f = f;
+        memcpy(c->pt, pt, (size_t)f->np * sizeof *pt);
+        c->id = clones.n;
+        c->state = CL_NEW;
+        vec_push(clones, c);
+    }
+    if (c->state == CL_INFERRING) {
+        if (inf_cur && c->depth < inf_cur->mindep)
+            inf_cur->mindep = c->depth;
+        return c;
+    }
+    if (c->state == CL_NEW || c->state == CL_STALE) {
+        if (cloneable(f))
+            infer(c);
+        else {
+            c->ret = TY_ANY;
+            c->state = CL_DONE;
+        }
+    }
+    return c;
+}
+
+/* The type a copy's parameter gets for an argument of type t. */
+static Ty clone_ty(Ty t) { return t == TY_BOT ? TY_ANY : t; }
+
+static bool r_only(Ty t) { return t != TY_INT && t != TY_FLT && t != TY_ANY; }
+
+/* Is the copy different from the function itself? */
+static bool clone_useful(Clone *c) {
+    if (!cloneable(c->f))
+        return false;
+    if (c->ret != TY_ANY)
+        return true;
+    for (int i = 0; i < c->f->np; i++)
+        if (c->pt[i] != TY_ANY)
+            return true;
+    return false;
+}
+
+static const char *clone_ret_sig(Ty t) {
+    return t == TY_ANY ? "(i64, i64, f64, ref)" : t == TY_INT ? "i64" : t == TY_FLT ? "f64" : "ref";
+}
+
+/* The copy's label (into buf), queued to be generated. */
+static const char *clone_label(Clone *c, char *buf, size_t n) {
+    if (c->state != CL_QUEUED) {
+        c->state = CL_QUEUED;
+        vec_push(clone_queue, c);
+    }
+    snprintf(buf, n, "L%d$%s$c%d", c->f->id, c->f->name, c->id);
+    return buf;
+}
+
 /* obj:name, the method, from the object in slot ss into slot d. Each site
    caches a shape that lacks name (global mc$<site>; a table with no hash
    part has none): for an object of that shape, the method is looked up in
@@ -1987,6 +2310,13 @@ static void gen_method(FS *fs, int ss, Str name, const char *desc, int d) {
 static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
     int line = fs->line;
     fs->line = e->line;
+    bool want_count = fs->want_count;
+    fs->want_count = 0;
+    /* a copy returning one typed value tail calls only copies like it */
+    bool typed_tail = tail && fs->clone && fs->clone->ret != TY_ANY;
+    if (typed_tail)
+        tail = false;
+    Ty cret = TY_ANY;
     int fslot;
     Val fval;
     Func *known = NULL;
@@ -2142,7 +2472,51 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
     char res[200];
     snprintf(res, sizeof res, "(I31, %s, %s, %s)", SI(d), SF(d), SR(d));
     G.used_call[n] = true;
-    if (fslot < 0) {
+    Clone *cl = NULL;
+    bool ctail = false;
+    if (fslot < 0 && !one) {
+        Ty pt[MAXARGS];
+        for (int i = 0; i < n; i++)
+            pt[i] = clone_ty(vty(fs, &vals[i]));
+        cl = clone_for(known, pt);
+        if (!clone_useful(cl))
+            cl = NULL;
+        else if (typed_tail)
+            ctail = cl->ret == fs->clone->ret;
+        else if (tail && cl->ret == TY_ANY)
+            ctail = true;
+        else if (tail)
+            cl = NULL;
+    }
+    if (cl) {
+        /* a typed copy */
+        SB a = {0};
+        for (int i = 0; i < n; i++) {
+            Ty t = cl->pt[i];
+            const char *sep = a.n ? ", " : "";
+            if (t == TY_INT)
+                sb_add(&a, "%s%s", sep, VI(&vals[i]));
+            else if (t == TY_FLT)
+                sb_add(&a, "%s%s", sep, VF(&vals[i]));
+            else if (t == TY_ANY)
+                sb_add(&a, "%s%s, %s, %s", sep, VI(&vals[i]), VF(&vals[i]), VR(&vals[i]));
+            else
+                sb_add(&a, "%s%s", sep, VR(&vals[i]));
+        }
+        char lbl[256];
+        clone_label(cl, lbl, sizeof lbl);
+        if (ctail) {
+            emit(fs, "    tcall %s (%s)", lbl, sb_str(&a));
+            fs->dead = true;
+        } else if (cl->ret == TY_ANY) {
+            emit(fs, "    call %s (%s) -> %s", lbl, sb_str(&a), res);
+        } else {
+            cret = cl->ret;
+            emit(fs, "    call %s (%s) -> (%s)", lbl, sb_str(&a),
+                 cret == TY_INT ? SI(d) : cret == TY_FLT ? SF(d) : SR(d));
+        }
+        free(a.s);
+    } else if (fslot < 0) {
         /* a local function with no captures */
         char lbl[256];
         snprintf(lbl, sizeof lbl, "L%d$%s", known->id, known->name);
@@ -2214,6 +2588,14 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
     if (tail)
         fs->dead = true;
     ty_set(fs, d, TY_ANY);
+    if (cret != TY_ANY && !fs->dead) {
+        if (cret == TY_INT || cret == TY_FLT)
+            set_tag(fs, d, cret);
+        else
+            ty_set(fs, d, cret);
+        if (want_count)
+            emit(fs, "    mov I31, 1");
+    }
     if (one) {
         int done = new_label(fs);
         cold_begin(fs);
@@ -2260,6 +2642,7 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
 
 /* A call whose results are all wanted: the first in slot d, the count in I31. */
 static int gen_multi_call(FS *fs, Expr *e, int d) {
+    fs->want_count = 1;
     gen_call_into(fs, e, d, false);
     return d;
 }
@@ -3301,6 +3684,12 @@ static void gen_stmts(FS *fs, Block *b) { gen_stmts_from(fs, b, 0); }
 /* A function's body, ending with a return. */
 static void gen_body(FS *fs, Func *f) {
     gen_stmts(fs, f->body);
+    if (!fs->dead && fs->clone && fs->clone->ret != TY_ANY) {
+        /* (every path returned: not reached) */
+        Ty rt = fs->clone->ret;
+        emit(fs, "    ret %s", rt == TY_INT ? "0" : rt == TY_FLT ? "0.0" : NIL);
+        fs->dead = true;
+    }
     if (!fs->dead) {
         fs->line = f->lastline;
         close_to(fs, 0);
@@ -3526,9 +3915,56 @@ static void gen_assign(FS *fs, Stmt *s) {
     free(kv);
 }
 
+/* Return v from a copy that returns one value of a known type. */
+static void typed_ret(FS *fs, Val v) {
+    Ty rt = fs->clone->ret, t = vty(fs, &v);
+    if (t != rt) {
+        /* the inference found the type; the code may have lost track of it */
+        if (t != TY_ANY || v.k != V_SLOT) {
+            fprintf(stderr, "mlws-vm-luac: internal error: a typed result of the wrong type\n");
+            exit(70);
+        }
+        int bad = new_label(fs);
+        const char *r = SR(v.slot);
+        switch (rt) {
+        case TY_INT: branch(fs, bad, "bnz %s", r); break;
+        case TY_FLT: branch(fs, bad, "bne.r %s, " FLT, r); break;
+        case TY_TAB: branch(fs, bad, "bnisa %s, Tab", r); break;
+        case TY_FN: branch(fs, bad, "bnisa %s, Fn", r); break;
+        case TY_NIL: branch(fs, bad, "bne.r %s, " NIL, r); break;
+        default: break;
+        }
+        int cont = new_label(fs);
+        cold_begin(fs);
+        place(fs, bad);
+        emit(fs, "    call rt$rterror (\"internal error: a typed result of the wrong type\")");
+        jump(fs, cont);
+        cold_end(fs);
+        place(fs, cont);
+    }
+    emit(fs, "    ret %s", rt == TY_INT ? VI(&v) : rt == TY_FLT ? VF(&v) : VR(&v));
+    fs->dead = true;
+}
+
 static void gen_return(FS *fs, Stmt *s) {
     int n = s->nexprs;
     bool closes = fs->closes.n > 0;
+    if (fs->clone && fs->clone->ret != TY_ANY) {
+        Expr *x = s->exprs[0];
+        Val v;
+        if (x->k == X_CALL || x->k == X_METHOD) {
+            int d = alloc_slot(fs);
+            gen_call_into(fs, x, d, !closes);
+            if (fs->dead)
+                return;
+            v = vslot(d);
+        } else {
+            v = gen(fs, x, -1);
+        }
+        close_to(fs, 0);
+        typed_ret(fs, v);
+        return;
+    }
     if (n == 0) {
         close_to(fs, 0);
         emit(fs, "    ret 0, 0, 0.0, " NIL);
@@ -4040,11 +4476,19 @@ static void sanitize(char *s) {
             *s = '_';
 }
 
+static void gen_function_as(Func *f, FS *parent, Clone *c);
+
 static void gen_function(Func *f, FS *parent) {
     if (f->generated)
         return;
     f->generated = true;
+    gen_function_as(f, parent, NULL);
+}
+
+/* A function, or its typed copy c. */
+static void gen_function_as(Func *f, FS *parent, Clone *c) {
     FS fs = {0};
+    fs.clone = c;
     fs.parent = parent;
     fs.f = f;
     fs.cur = &fs.code;
@@ -4069,6 +4513,29 @@ static void gen_function(Func *f, FS *parent) {
     for (int j = 0; j < np; j++) {
         f->params[j]->slot = j;
         declare(&fs, f->params[j], j);
+    }
+    if (c) {
+        /* each argument arrives in the next register of its banks: move
+           it to its slot (last first: none moves down), and give it its
+           tag */
+        int at[MAXARGS][3], cnt[3] = {0, 0, 0};
+        for (int j = 0; j < np; j++)
+            for (int b = 0; b < 3; b++) {
+                Ty t = c->pt[j];
+                bool uses = t == TY_ANY || (b == 0 ? t == TY_INT : b == 1 ? t == TY_FLT : r_only(t));
+                at[j][b] = uses ? cnt[b]++ : -1;
+            }
+        for (int j = np - 1; j >= 0; j--)
+            for (int b = 0; b < 3; b++)
+                if (at[j][b] >= 0 && at[j][b] != j)
+                    emit(&fs, "    mov %c%d, %c%d", "IFR"[b], j, "IFR"[b], at[j][b]);
+        for (int j = 0; j < np; j++) {
+            if (c->pt[j] == TY_INT && j < cnt[2])
+                emit(&fs, "    mov.r R%d, null", j);
+            else if (c->pt[j] == TY_FLT)
+                emit(&fs, "    mov.r R%d, " FLT, j);
+            ty_set(&fs, j, c->pt[j]);
+        }
     }
     if (f->is_main)
         fs.nactive++;   /* _ENV */
@@ -4112,9 +4579,21 @@ static void gen_function(Func *f, FS *parent) {
         gen_body(&fs, f);
     pack_scratch(&fs);
     char params[1024];
-    sig_params(f, params, sizeof params);
     char head[1200];
-    snprintf(head, sizeof head, ".func L%d$%s(%s) -> (i64, i64, f64, ref)", f->id, f->name, params);
+    if (c) {
+        SB p = {0};
+        for (int j = 0; j < np; j++) {
+            Ty t = c->pt[j];
+            sb_add(&p, "%s%s", j ? ", " : "", t == TY_INT ? "i64" : t == TY_FLT ? "f64" : t == TY_ANY ? "i64, f64, ref" : "ref");
+        }
+        char lbl[256];
+        snprintf(lbl, sizeof lbl, "L%d$%s$c%d", f->id, f->name, c->id);
+        snprintf(head, sizeof head, ".func %s(%s) -> %s", lbl, sb_str(&p), clone_ret_sig(c->ret));
+        free(p.s);
+    } else {
+        sig_params(f, params, sizeof params);
+        snprintf(head, sizeof head, ".func L%d$%s(%s) -> (i64, i64, f64, ref)", f->id, f->name, params);
+    }
     buf_add(&G.out, f->prelude ? -2 : f->line, head);
     if (fs.maxslots > NREG) {
         int words = 3 * (fs.maxslots - NREG);
@@ -4250,9 +4729,215 @@ static void peephole(Buf *b) {
     b->n = o;
 }
 
+/* Dead tag writes: a `mov.r R, constant` that every path from it
+   overwrites, or leaves the function, before reading R. The search
+   follows jumps and both ways of a branch, and gives up (keeping the
+   write) after a budget of instructions. Only registers that never hold
+   anything but constants qualify: elsewhere the write may also be what
+   drops a reference, which would otherwise keep an object alive. */
+typedef struct {
+    char **t;
+    int n;
+    int *label;         /* label number -> line, or -1 */
+    int nlabel;
+    unsigned char *seen;
+} Flow;
+
+/* How often register reg (as a whole token) appears in t. */
+static int mentions(const char *t, const char *reg) {
+    size_t n = strlen(reg);
+    int k = 0;
+    bool q = false;
+    for (const char *p = t; *p; p++) {
+        if (*p == '"' && (p == t || p[-1] != '\\'))
+            q = !q;
+        if (q || strncmp(p, reg, n) != 0)
+            continue;
+        if ((p > t && reg_char(p[-1])) || reg_char(p[n]))
+            continue;
+        k++;
+    }
+    return k;
+}
+
+static int flow_target(Flow *fl, const char *t) {
+    const char *p = strrchr(t, ' ');
+    int l;
+    if (!p || strncmp(p + 1, ".L", 2) != 0 || sscanf(p + 3, "%d", &l) != 1 || l < 0 || l >= fl->nlabel)
+        return -1;
+    return fl->label[l];
+}
+
+/* May reg be read on some path from line i? */
+static bool flow_reads(Flow *fl, int i, const char *reg, int *budget) {
+    for (; i < fl->n; i++) {
+        const char *t = fl->t[i];
+        if (!t)
+            continue;
+        if (--*budget < 0)
+            return true;
+        if (t[0] == '.' && t[1] == 'L')
+            continue;
+        if (strncmp(t, "    ", 4) != 0)
+            return true;
+        const char *m = t + 4;
+        size_t ml = strcspn(m, " ");
+        int k = mentions(t, reg);
+        if (k) {
+            if (k > 1)
+                return true;
+            const char *arrow = strstr(t, "->");
+            bool callish = (strncmp(m, "call ", 5) == 0 || strncmp(m, "calli ", 6) == 0 || strncmp(m, "closure ", 8) == 0);
+            if (callish && arrow && mentions(arrow, reg) == 1)
+                return false;
+            bool writer = strncmp(m, "mov", 3) == 0 || strncmp(m, "new ", 4) == 0 || strncmp(m, "lnew ", 5) == 0 ||
+                          strncmp(m, "mnew ", 5) == 0 || strncmp(m, "tostr ", 6) == 0 || strncmp(m, "strcat ", 7) == 0 ||
+                          strncmp(m, "substr ", 7) == 0;
+            if (!writer || callish)
+                return true;
+            const char *op = m + ml + 1;
+            size_t ol = strcspn(op, ",");
+            return !(ol == strlen(reg) && strncmp(op, reg, ol) == 0);
+        }
+        if ((ml == 3 && strncmp(m, "ret", 3) == 0) || strncmp(m, "ret ", 4) == 0 || strncmp(m, "tcall", 5) == 0 ||
+            strncmp(m, "halt", 4) == 0)
+            return false;
+        if (strncmp(m, "jmp ", 4) == 0) {
+            int j = flow_target(fl, t);
+            if (j < 0)
+                return true;
+            if (fl->seen[j])
+                return false;
+            fl->seen[j] = 1;
+            i = j;
+            continue;
+        }
+        if (m[0] == 'b') {
+            int j = flow_target(fl, t);
+            if (j < 0)
+                return true;
+            if (!fl->seen[j]) {
+                fl->seen[j] = 1;
+                if (flow_reads(fl, j, reg, budget))
+                    return true;
+            }
+        }
+    }
+    return false;
+}
+
+/* Does line t write register reg with something other than a constant? */
+static bool writes_ref(const char *t, const char *reg) {
+    if (strncmp(t, "    ", 4) != 0 || !mentions(t, reg))
+        return false;
+    const char *m = t + 4;
+    const char *arrow = strstr(t, "->");
+    if (arrow && mentions(arrow, reg) && (strncmp(m, "call", 4) == 0 || strncmp(m, "closure ", 8) == 0 ||
+                                          strncmp(m, "co", 2) == 0 || strncmp(m, "ncall", 5) == 0))
+        return true;
+    if (m[0] == 'b' || strncmp(m, "lpush ", 6) == 0 || strncmp(m, "lins ", 5) == 0 || strncmp(m, "ldel ", 5) == 0 ||
+        strncmp(m, "mset ", 5) == 0 || strncmp(m, "mdel ", 5) == 0 || strncmp(m, "ret", 3) == 0 ||
+        strncmp(m, "tcall", 5) == 0)
+        return false;
+    const char *op = m + strcspn(m, " ") + 1;
+    size_t ol = strcspn(op, ",");
+    if (!(ol == strlen(reg) && strncmp(op, reg, ol) == 0))
+        return false;
+    if (strncmp(m, "mov.r ", 6) == 0) {
+        const char *src = op + ol + 2;
+        return src[0] == '@' || ((src[0] == 'R' || src[0] == 'I' || src[0] == 'F' || src[0] == 'P') &&
+                                 isdigit((unsigned char)src[1])) || strncmp(src, "LOC", 3) == 0 ||
+               strncmp(src, "UP", 2) == 0;
+    }
+    return true;
+}
+
+static void dead_tags(FS *fs) {
+    Flow fl = {0};
+    fl.n = fs->code.n + fs->cold.n;
+    fl.t = xmalloc((size_t)(fl.n + 1) * sizeof *fl.t);
+    for (int i = 0; i < fl.n; i++) {
+        char *t = i < fs->code.n ? fs->code.v[i].text : fs->cold.v[i - fs->code.n].text;
+        if (strstr(t, ".try") || strstr(t, "catch")) {
+            free(fl.t);
+            return;
+        }
+        fl.t[i] = t;
+    }
+    fl.nlabel = fs->labels;
+    fl.label = xmalloc((size_t)(fl.nlabel + 1) * sizeof *fl.label);
+    for (int i = 0; i < fl.nlabel; i++)
+        fl.label[i] = -1;
+    for (int i = 0; i < fl.n; i++) {
+        int l;
+        if (fl.t[i][0] == '.' && sscanf(fl.t[i], ".L%d:", &l) == 1 && l >= 0 && l < fl.nlabel)
+            fl.label[l] = i;
+    }
+    fl.seen = xmalloc((size_t)fl.n + 1);
+    bool *dead = xcalloc((size_t)fl.n + 1, sizeof *dead);
+    /* registers that only ever hold constants (and are no parameter's) */
+    bool consts[32];
+    int nrpar = 0;
+    if (fs->clone) {
+        for (int j = 0; j < fs->f->np; j++)
+            nrpar += !(fs->clone->pt[j] == TY_INT || fs->clone->pt[j] == TY_FLT);
+    } else {
+        nrpar = fs->f->np > MAXARGS ? 1 : fs->f->np + (fs->f->vararg ? 1 : 0);
+        if (fs->f->is_main && nrpar < 1)
+            nrpar = 1;   /* main(ref) */
+    }
+    for (int r = 0; r < 32; r++) {
+        char reg[8];
+        snprintf(reg, sizeof reg, "R%d", r);
+        consts[r] = r >= nrpar;
+        for (int i = 0; i < fl.n && consts[r]; i++)
+            if (writes_ref(fl.t[i], reg))
+                consts[r] = false;
+    }
+    for (int i = 0; i < fl.n; i++) {
+        const char *t = fl.t[i];
+        char reg[16];
+        int r;
+        if (strncmp(t, "    mov.r R", 11) != 0 || sscanf(t + 11, "%d", &r) != 1 || r < 0 || r >= 32 || !consts[r])
+            continue;
+        const char *src = strchr(t, ',');
+        if (!src || t[11 + strspn(t + 11, "0123456789")] != ',')
+            continue;
+        src += 2;
+        if (src[0] == '@' || ((src[0] == 'R' || src[0] == 'I' || src[0] == 'F' || src[0] == 'P') && isdigit((unsigned char)src[1])) ||
+            strncmp(src, "LOC", 3) == 0 || strncmp(src, "UP", 2) == 0)
+            continue;
+        snprintf(reg, sizeof reg, "R%d", r);
+        memset(fl.seen, 0, (size_t)fl.n + 1);
+        int budget = 400;
+        fl.t[i] = NULL;     /* (the search starts after it) */
+        bool reads = flow_reads(&fl, i + 1, reg, &budget);
+        fl.t[i] = (char *)t;
+        dead[i] = !reads;
+    }
+    int ncode = fs->code.n;
+    for (int pass = 0; pass < 2; pass++) {
+        Buf *b = pass ? &fs->cold : &fs->code;
+        int base = pass ? ncode : 0, o = 0;
+        for (int i = 0; i < b->n; i++) {
+            if (dead[base + i]) {
+                free(b->v[i].text);
+                continue;
+            }
+            b->v[o++] = b->v[i];
+        }
+        b->n = o;
+    }
+    free(dead);
+    free(fl.seen);
+    free(fl.label);
+    free(fl.t);
+}
+
 static void pack_scratch(FS *fs) {
     peephole(&fs->code);
     peephole(&fs->cold);
+    dead_tags(fs);
     bool used[4][32] = {{false}};
     each_reg(&fs->code, NULL, used);
     each_reg(&fs->cold, NULL, used);
@@ -4863,6 +5548,8 @@ void generate(GenInput *in, FILE *f) {
 
     gen_chunk(in->prelude, &G);
     gen_chunk(in->main, &G);
+    for (int i = 0; i < clone_queue.n; i++)
+        gen_function_as(clone_queue.v[i]->f, NULL, clone_queue.v[i]);
 
     int nlines = 0;
     VEC(int) map = {0};

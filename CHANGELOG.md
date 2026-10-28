@@ -68,6 +68,11 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   `local o = t[i]`, or as a parameter) keeps its shape and hash slots in
   registers, reloaded after calls; numeric `for` loops with a constant
   step use one register fewer (nbody: 1.13s to 1.04s).
+* Typed copies of local functions: arguments of known types are passed
+  in one register each, and a function whose returns always give one
+  value of one type returns just that value (fib: 0.13s to 0.09s;
+  spectralnorm: 0.31s to 0.27s; binarytrees: 0.66s to 0.62s). Tag writes
+  that nothing reads are removed.
 * Fixed: unary minus on a string that converts to a number (`-"10"`)
   raised "number has no integer representation".
 * Fixed: errors from a method call on a value that cannot be indexed name
