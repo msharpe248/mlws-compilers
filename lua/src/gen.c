@@ -515,6 +515,28 @@ static const char *VR(Val *v) {
     return "null";
 }
 
+/* A value's halves as operands, with a constant for a half its type
+   leaves unused (an integer's F, a float's I, a table's I and F): the
+   register is then not read, so a call need not clear it. */
+static const char *HI(FS *fs, Val *v) {
+    Ty t = vty(fs, v);
+    return v->k == V_SLOT && t != TY_INT && t != TY_ANY ? "0" : VI(v);
+}
+
+static const char *HF(FS *fs, Val *v) {
+    Ty t = vty(fs, v);
+    return v->k == V_SLOT && t != TY_FLT && t != TY_ANY ? "0.0" : VF(v);
+}
+
+static const char *HR(FS *fs, Val *v) {
+    Ty t = vty(fs, v);
+    return v->k == V_SLOT && t == TY_INT ? "null" : v->k == V_SLOT && t == TY_FLT ? FLT : VR(v);
+}
+
+static const char *SHI(FS *fs, int k) { Val v = vslot(k); return HI(fs, &v); }
+static const char *SHF(FS *fs, int k) { Val v = vslot(k); return HF(fs, &v); }
+static const char *SHR(FS *fs, int k) { Val v = vslot(k); return HR(fs, &v); }
+
 /* Does the R half need writing when a slot of type `have` gets a value of
    type t? (INT means R is null, FLT means it is 4n.) */
 static void put(FS *fs, int d, Val v) {
@@ -1089,9 +1111,9 @@ static Val gen_index_val(FS *fs, Val t, Val k, int dst, const char *desc) {
         cold_begin(fs);
         place(fs, slow);
     }
-    const char *kr = VR(&k);
-    emit(fs, "    call rt$index (%s, %s, %s, %s, %s, %s, %s) -> (%s, %s, %s)", SI(ts), SF(ts), SR(ts),
-         VI(&k), VF(&k), kr, desc, SI(d), SF(d), SR(d));
+    const char *kr = HR(fs, &k);
+    emit(fs, "    call rt$index (%s, %s, %s, %s, %s, %s, %s) -> (%s, %s, %s)", SHI(fs, ts), SHF(fs, ts), SHR(fs, ts),
+         HI(fs, &k), HF(fs, &k), kr, desc, SI(d), SF(d), SR(d));
     ty_set(fs, d, TY_ANY);
     if (inl) {
         jump(fs, cont);
@@ -1165,10 +1187,10 @@ static void gen_setindex(FS *fs, Val t, Val k, Val v, const char *desc) {
         cold_begin(fs);
         place(fs, slow);
     }
-    const char *kr = VR(&k);
-    const char *vr = VR(&v);
-    emit(fs, "    call rt$setindex (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", SI(ts), SF(ts), SR(ts),
-         VI(&k), VF(&k), kr, VI(&v), VF(&v), vr, desc);
+    const char *kr = HR(fs, &k);
+    const char *vr = HR(fs, &v);
+    emit(fs, "    call rt$setindex (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", SHI(fs, ts), SHF(fs, ts), SHR(fs, ts),
+         HI(fs, &k), HF(fs, &k), kr, HI(fs, &v), HF(fs, &v), vr, desc);
     if (inl) {
         jump(fs, cont);
         cold_end(fs);
@@ -1362,9 +1384,9 @@ static const char *as_float(FS *fs, Val *v, const char *scratch) {
 static bool numeric(Ty t) { return t == TY_INT || t == TY_FLT; }
 
 static void call_arith(FS *fs, int op, Val *a, Val *b, int d, const char *da, const char *db) {
-    const char *ar = VR(a), *br = VR(b);
-    emit(fs, "    call rt$arith (%d, %s, %s, %s, %s, %s, %s, %s, %s) -> (%s, %s, %s)", op, VI(a), VF(a), ar,
-         VI(b), VF(b), br, da, db, SI(d), SF(d), SR(d));
+    const char *ar = HR(fs, a), *br = HR(fs, b);
+    emit(fs, "    call rt$arith (%d, %s, %s, %s, %s, %s, %s, %s, %s) -> (%s, %s, %s)", op, HI(fs, a), HF(fs, a), ar,
+         HI(fs, b), HF(fs, b), br, da, db, SI(d), SF(d), SR(d));
     ty_set(fs, d, TY_ANY);
 }
 
@@ -1639,8 +1661,8 @@ static void compare_branch(FS *fs, int op, Val a, Val b, int label, bool when) {
             cold_begin(fs);
             place(fs, slow);
         }
-        const char *ar = VR(&a), *br = VR(&b);
-        emit(fs, "    call rt$eq (%s, %s, %s, %s, %s, %s) -> (I31)", VI(&a), VF(&a), ar, VI(&b), VF(&b), br);
+        const char *ar = HR(fs, &a), *br = HR(fs, &b);
+        emit(fs, "    call rt$eq (%s, %s, %s, %s, %s, %s) -> (I31)", HI(fs, &a), HF(fs, &a), ar, HI(fs, &b), HF(fs, &b), br);
         branch(fs, label, "%s I31", when ? "bnz" : "bz");
         jump(fs, cont);
         if (inl)
@@ -1910,10 +1932,10 @@ static Val gen_concat(FS *fs, Expr *e, int dst) {
 
 /* ------------------------------------------------------------------ calls */
 
-static void call_list(Val *vals, int n, SB *ops) {
+static void call_list(FS *fs, Val *vals, int n, SB *ops) {
     for (int i = 0; i < n; i++) {
-        const char *r = VR(&vals[i]);
-        sb_add(ops, "%s%s, %s, %s", ops->n ? ", " : "", VI(&vals[i]), VF(&vals[i]), r);
+        const char *r = HR(fs, &vals[i]);
+        sb_add(ops, "%s%s, %s, %s", ops->n ? ", " : "", HI(fs, &vals[i]), HF(fs, &vals[i]), r);
     }
 }
 
@@ -2294,7 +2316,7 @@ static void gen_method(FS *fs, int ss, Str name, const char *desc, int d) {
     cold_begin(fs);
     place(fs, slow);
     char *nm = masm_string(name);
-    emit(fs, "    call rt$methodc (%s, %s, %s, %s, %s) -> (%s, %s, %s, R31)", SI(ss), SF(ss), SR(ss), nm,
+    emit(fs, "    call rt$methodc (%s, %s, %s, %s, %s) -> (%s, %s, %s, R31)", SHI(fs, ss), SHF(fs, ss), SHR(fs, ss), nm,
          desc, SI(d), SF(d), SR(d));
     free(nm);
     emit(fs, "    mov.r @mc$%d, R31", site);
@@ -2467,7 +2489,7 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
     if (tail && any_spilled)
         tail = false;   /* tail calls take register arguments only */
     SB ops = {0};
-    call_list(vals, n, &ops);
+    call_list(fs, vals, n, &ops);
     const char *argl = sb_str(&ops);
     char res[200];
     snprintf(res, sizeof res, "(I31, %s, %s, %s)", SI(d), SF(d), SR(d));
@@ -2499,7 +2521,7 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
             else if (t == TY_FLT)
                 sb_add(&a, "%s%s", sep, VF(&vals[i]));
             else if (t == TY_ANY)
-                sb_add(&a, "%s%s, %s, %s", sep, VI(&vals[i]), VF(&vals[i]), VR(&vals[i]));
+                sb_add(&a, "%s%s, %s, %s", sep, HI(fs, &vals[i]), HF(fs, &vals[i]), HR(fs, &vals[i]));
             else
                 sb_add(&a, "%s%s", sep, VR(&vals[i]));
         }
@@ -2572,7 +2594,7 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
             jump(fs, cont);
         }
         place(fs, slow);
-        emit(fs, "    call rt$call%d (%s, %s, %s, %s%s%s) -> %s", n, desc, SI(fslot), SF(fslot), SR(fslot),
+        emit(fs, "    call rt$call%d (%s, %s, %s, %s%s%s) -> %s", n, desc, SHI(fs, fslot), SHF(fs, fslot), SHR(fs, fslot),
              n ? ", " : "", argl, res);
         ty_set(fs, d, TY_ANY);
         if (tail) {
@@ -2941,7 +2963,7 @@ static Val gen_len(FS *fs, Val a, int dst, const char *desc) {
         cold_begin(fs);
         place(fs, slow);
     }
-    emit(fs, "    call rt$len (%s, %s, %s, %s) -> (%s, %s, %s)", SI(as), SF(as), SR(as), desc, SI(d), SF(d),
+    emit(fs, "    call rt$len (%s, %s, %s, %s) -> (%s, %s, %s)", SHI(fs, as), SHF(fs, as), SHR(fs, as), desc, SI(d), SF(d),
          SR(d));
     ty_set(fs, d, TY_ANY);
     if (t == TY_ANY || t == TY_TAB) {
@@ -4048,8 +4070,8 @@ static void gen_return(FS *fs, Stmt *s) {
             }
         }
     }
-    const char *r = VR(&vals[0]);
-    emit(fs, "    ret %d, %s, %s, %s", n, VI(&vals[0]), VF(&vals[0]), r);
+    const char *r = HR(fs, &vals[0]);
+    emit(fs, "    ret %d, %s, %s, %s", n, HI(fs, &vals[0]), HF(fs, &vals[0]), r);
     fs->dead = true;
     free(vals);
 }
@@ -4445,7 +4467,7 @@ static void gen_stmt(FS *fs, Stmt *s) {
 /* A call with arguments already evaluated (the generic for's iterator). */
 static void emit_call(FS *fs, int fslot, Val *vals, int n, int d, const char *desc) {
     SB ops = {0};
-    call_list(vals, n, &ops);
+    call_list(fs, vals, n, &ops);
     const char *argl = sb_str(&ops);
     char res[200];
     snprintf(res, sizeof res, "(I31, %s, %s, %s)", SI(d), SF(d), SR(d));
@@ -4459,7 +4481,7 @@ static void emit_call(FS *fs, int fslot, Val *vals, int n, int d, const char *de
     ty_set(fs, d, TY_ANY);
     cold_begin(fs);
     place(fs, slow);
-    emit(fs, "    call rt$call%d (%s, %s, %s, %s%s%s) -> %s", n, desc, SI(fslot), SF(fslot), SR(fslot),
+    emit(fs, "    call rt$call%d (%s, %s, %s, %s%s%s) -> %s", n, desc, SHI(fs, fslot), SHF(fs, fslot), SHR(fs, fslot),
          n ? ", " : "", argl, res);
     ty_set(fs, d, TY_ANY);
     jump(fs, cont);
