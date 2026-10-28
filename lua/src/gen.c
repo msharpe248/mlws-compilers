@@ -567,7 +567,9 @@ static void set_tag(FS *fs, int d, Ty t) {
 /* Push a value onto the list in R register / operand `list`, as two words.
    lpush of registers is the VM's fast form (constants and memory operands
    go through scratch registers first). */
-static void push_val(FS *fs, const char *list, Val *v) {
+/* Append v to a list (as its R half and its I or F word), after the
+   operands in pre (such as a key: "\"x\", 0.0, "), in one lpush. */
+static void push_pre(FS *fs, const char *list, const char *pre, Val *v) {
     Ty t = vty(fs, v);
     char lst[96];
     snprintf(lst, sizeof lst, "%s", list);
@@ -577,20 +579,17 @@ static void push_val(FS *fs, const char *list, Val *v) {
     }
     switch (v->k) {
     case V_INT:
-        emit(fs, "    mov I30, %lld", (long long)v->i);
+        /* (an untyped null operand would be an i64) */
         emit(fs, "    mov.r R30, null");
-        emit(fs, "    lpush %s, R30, I30", lst);
+        emit(fs, "    lpush %s, %sR30, %lld", lst, pre, (long long)v->i);
         return;
     case V_FLT:
-        emit(fs, "    mov F30, %s", VF(v));
-        emit(fs, "    mov.r R30, " FLT);
-        emit(fs, "    lpush %s, R30, F30", lst);
+        emit(fs, "    lpush %s, %s" FLT ", %s", lst, pre, VF(v));
         return;
     case V_SLOT:
         break;
     default:
-        emit(fs, "    mov.r R30, %s", VR(v));
-        emit(fs, "    lpush %s, R30, F30", lst);
+        emit(fs, "    lpush %s, %s%s, 0.0", lst, pre, VR(v));
         return;
     }
     int s = v->slot;
@@ -608,19 +607,21 @@ static void push_val(FS *fs, const char *list, Val *v) {
         }
     }
     if (t == TY_INT) {
-        emit(fs, "    lpush %s, %s, %s", lst, rr, ri);
+        emit(fs, "    lpush %s, %s%s, %s", lst, pre, rr, ri);
     } else if (t == TY_ANY) {
         int l1 = new_label(fs), l2 = new_label(fs);
         emit(fs, "    bnz %s, .L%d", rr, l1);
-        emit(fs, "    lpush %s, %s, %s", lst, rr, ri);
+        emit(fs, "    lpush %s, %s%s, %s", lst, pre, rr, ri);
         emit(fs, "    jmp .L%d", l2);
         emit(fs, ".L%d:", l1);
-        emit(fs, "    lpush %s, %s, %s", lst, rr, rf);
+        emit(fs, "    lpush %s, %s%s, %s", lst, pre, rr, rf);
         emit(fs, ".L%d:", l2);
     } else {
-        emit(fs, "    lpush %s, %s, %s", lst, rr, rf);
+        emit(fs, "    lpush %s, %s%s, %s", lst, pre, rr, rf);
     }
 }
+
+static void push_val(FS *fs, const char *list, Val *v) { push_pre(fs, list, "", v); }
 
 /* ------------------------------------------------------------ descriptions */
 
@@ -1881,6 +1882,12 @@ static void append_multi(FS *fs, int l, Expr *e) {
     emit(fs, "    call rt$appendmv (%s, I31, %s, %s, %s)", SR(l), SI(t), SF(t), SR(t));
 }
 
+/* A global or local variable called name. */
+static bool named(Expr *e, const char *name) {
+    Str s = e->k == X_GLOBAL ? e->s : e->k == X_LOCAL ? e->var->name : (Str){0};
+    return s.s && s.len == (int)strlen(name) && memcmp(s.s, name, (size_t)s.len) == 0;
+}
+
 static Func *known_func(FS *fs, Expr *callee) {
     (void)fs;
     if (callee->k == X_LOCAL && callee->var->localfn && !callee->var->assigned)
@@ -2020,6 +2027,56 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
         many = new_label(fs);
         branch(fs, many, "bne I31, 1");
     }
+    /* setmetatable(t, mt), when the function is the library's: inline,
+       with the call for anything it would complain about */
+    int inl_cont = -1;
+    Ty mty = n == 2 ? vty(fs, &vals[1]) : TY_ANY;
+    if (!method && n == 2 && !multi && fslot >= 0 && named(e->a, "setmetatable") &&
+        (vals[1].k == V_SLOT || mty == TY_NIL)) {
+        int slow = new_label(fs);
+        inl_cont = new_label(fs);
+        branch(fs, slow, "bne.r %s, @rt$setmt", RB(fs, fslot, "R28"));
+        int ts = in_slot(fs, vals[0]);
+        vals[0] = vslot(ts);
+        if (ty_get(fs, ts) != TY_TAB)
+            branch(fs, slow, "bnisa %s, Tab", RB(fs, ts, "R28"));
+        if (args.v[0]->k != X_TABLE) {
+            /* a protected metatable cannot be changed */
+            int ok = new_label(fs);
+            emit(fs, "    mov R31, %s->Tab.meta", RB(fs, ts, "R28"));
+            emit(fs, "    bz R31, .L%d", ok);
+            emit(fs, "    mov I31, R31->Tab.prot");
+            branch(fs, slow, "bnz I31");
+            emit(fs, ".L%d:", ok);
+        }
+        if (mty == TY_NIL) {
+            emit(fs, "    mov.r %s->Tab.meta, null", RB(fs, ts, "R28"));
+        } else if (mty == TY_TAB) {
+            const char *m = RB(fs, vals[1].slot, "R29");
+            emit(fs, "    mov %s->Tab.meta, %s", RB(fs, ts, "R28"), m);
+        } else {
+            int isnil = new_label(fs), set = new_label(fs);
+            const char *m = RB(fs, vals[1].slot, "R29");
+            emit(fs, "    beq.r %s, " NIL ", .L%d", m, isnil);
+            branch(fs, slow, "bnisa %s, Tab", m);
+            emit(fs, "    mov %s->Tab.meta, %s", RB(fs, ts, "R28"), m);
+            emit(fs, "    jmp .L%d", set);
+            emit(fs, ".L%d:", isnil);
+            emit(fs, "    mov.r %s->Tab.meta, null", RB(fs, ts, "R28"));
+            emit(fs, ".L%d:", set);
+        }
+        if (tail) {
+            emit(fs, "    ret 1, 0, 0.0, %s", RB(fs, ts, "R28"));
+            fs->dead = true;
+        } else {
+            emit(fs, "    mov I31, 1");
+            emit(fs, "    mov %s, %s", SR(d), RB(fs, ts, "R28"));
+            ty_set(fs, d, TY_TAB);
+            jump(fs, inl_cont);
+        }
+        cold_begin(fs);
+        place(fs, slow);
+    }
     bool any_spilled = false;
     for (int i = 0; i < n; i++)
         if (spilled(&vals[i]))
@@ -2132,6 +2189,18 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
             fs->dead = true;
         }
     }
+    if (inl_cont >= 0) {
+        if (tail0 && !fs->dead) {
+            emit(fs, "    ret I31, %s, %s, %s", SI(d), SF(d), SR(d));
+            fs->dead = true;
+        }
+        jump(fs, inl_cont);
+        cold_end(fs);
+        if (!tail0) {
+            place(fs, inl_cont);
+            ty_set(fs, d, TY_ANY);
+        }
+    }
     free(ops.s);
     free(vals);
     free(desc);
@@ -2181,13 +2250,11 @@ static Val gen_table(FS *fs, Expr *e, int dst) {
             if (vt == TY_NIL)
                 ndead++;
             char *ks = masm_string(e->fields[i].key->s);
-            const char *lr = l < NREG ? SR(l) : "R29";
-            if (l >= NREG)
-                emit(fs, "    mov R29, %s", SR(l));
-            emit(fs, "    mov.r R30, %s", ks);
-            emit(fs, "    lpush %s, R30, F30", lr);
+            SB pre = {0};
+            sb_add(&pre, "%s, 0.0, ", ks);
+            push_pre(fs, SR(l), sb_str(&pre), &v);
+            free(pre.s);
             free(ks);
-            push_val(fs, SR(l), &v);
             fs->nslots = mark;
         }
         /* the constructor's shape (global ct$<site>), made the first time

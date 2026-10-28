@@ -76,6 +76,7 @@ rt$cur:     .zero 8     ; the running Thread
 rt$main:    .zero 8     ; the main Thread
 rt$ipairs_aux: .zero 8
 rt$next_fn: .zero 8
+rt$setmt:   .zero 8     ; the library's setmetatable, for calls made inline
 rt$stdout:  .zero 8     ; io.stdout, set by the prelude
 rt$fmtslow: .zero 8     ; the prelude's string.format, for what B$str_format leaves
 rt$start:   .i64 0
@@ -294,6 +295,8 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     call rt$setfield (R1, "mininteger", I1, 0.0, null)
     call rt$getfield (R0, "next") -> (I0, F0, R1)
     mov @rt$next_fn, R1
+    call rt$getfield (R0, "setmetatable") -> (I0, F0, R1)
+    mov @rt$setmt, R1
     mov R1, @rt$P
     call rt$getfield (R1, "ipairs_aux") -> (I0, F0, R2)
     mov @rt$ipairs_aux, R2

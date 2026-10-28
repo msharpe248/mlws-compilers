@@ -60,6 +60,10 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   value in a list, and `bnisa` for "is it a table / function" checks; the
   output needs MLWSVM M32 (methods: 0.78s to 0.74s; nbody: 1.18s to
   1.12s).
+* `setmetatable(t, mt)` is made inline when `setmetatable` is still the
+  library's function, and a table constructor pushes each key with its
+  value in one instruction (methods: 13% fewer instructions, 0.74s to
+  0.72s).
 * Fixed: unary minus on a string that converts to a number (`-"10"`)
   raised "number has no integer representation".
 * Fixed: errors from a method call on a value that cannot be indexed name

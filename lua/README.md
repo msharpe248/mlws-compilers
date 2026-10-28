@@ -202,6 +202,12 @@ metatable's `__index` table through an inline cache, with no runtime call.
   when `g` returns one value; any other count builds a list of arguments.
   A constructor of positional values (`{a, g()}`) builds its array part
   inline, the same way.
+* **`setmetatable(t, mt)`** is done inline when the function called is
+  the library's (one compare with the value saved at start-up): it checks
+  `t` and `mt` and that `t`'s metatable is not protected, and otherwise
+  makes the call, so errors are the library's.
+* **Table constructors** push each constant key and its value with one
+  `lpush`.
 * **Generic `for`** over `pairs` and `ipairs` is recognised at run time:
   `pairs` walks the table by position and `ipairs` reads the array part
   inline, instead of calling `next` or the iterator.
@@ -237,7 +243,7 @@ Apple M5 Pro, MLWSVM M32), in seconds, with Lua 5.5.1 for comparison:
 |---|---|---|
 | fib (32) | 0.13 | 0.05 |
 | loop | 0.22 | 0.21 |
-| methods (2M method calls and objects) | 0.74 | 0.34 |
+| methods (2M method calls and objects) | 0.72 | 0.34 |
 | strings (format, gmatch, gsub) | 0.40 | 0.13 |
 | iterate (pairs, ipairs) | 0.12 | 0.05 |
 | binarytrees (15) | 0.63 | 0.37 |

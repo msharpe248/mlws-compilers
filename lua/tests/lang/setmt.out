@@ -1,0 +1,22 @@
+A	1	true
+true	B
+A	nil	nil
+true	nil
+false	cannot change a protected metatable
+false	setmt.lua:21: cannot change a protected metatable
+false	setmt.lua:22: cannot change a protected metatable
+locked
+false	setmt.lua:26: bad argument #1 to 'setmetatable' (table expected, got number)
+false	setmt.lua:27: bad argument #2 to 'setmetatable' (nil or table expected, got number)
+false	setmt.lua:28: bad argument #2 to 'setmetatable' (nil or table expected, got string)
+false	setmt.lua:29: bad argument #1 to 'setmetatable' (table expected, got nil)
+A
+B
+nil
+B
+mine	table	table
+A
+mine	table	table
+A
+A
+hi!	36
