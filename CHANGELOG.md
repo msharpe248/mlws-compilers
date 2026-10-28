@@ -64,6 +64,10 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   library's function, and a table constructor pushes each key with its
   value in one instruction (methods: 13% fewer instructions, 0.74s to
   0.72s).
+* A table in a local whose fields are used twice or more (in a loop, after
+  `local o = t[i]`, or as a parameter) keeps its shape and hash slots in
+  registers, reloaded after calls; numeric `for` loops with a constant
+  step use one register fewer (nbody: 1.13s to 1.04s).
 * Fixed: unary minus on a string that converts to a number (`-"10"`)
   raised "number has no integer representation".
 * Fixed: errors from a method call on a value that cannot be indexed name

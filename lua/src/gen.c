@@ -87,6 +87,12 @@ typedef struct {
     int level;          /* active locals before it */
 } CloseVar;
 
+/* A shape cache: table slot t's Tab.hm and Tab.hs in the R halves of
+   slots m (or -1: none) and s. */
+typedef struct {
+    int t, m, s;
+} SCache;
+
 typedef struct FS {
     struct FS *parent;
     Func *f;
@@ -115,6 +121,9 @@ typedef struct FS {
     struct { int t, c; } ac[8];  /* array caches: table slot t's n and arr in slot c's I and R */
     int nac;
     int ac_added;       /* caches the last loop set up */
+    SCache sc[8];
+
+    int nsc;
 } FS;
 
 typedef struct {
@@ -152,8 +161,9 @@ static void emit(FS *fs, const char *fmt, ...) {
         return;
     }
     buf_add(fs->cur, line_of(fs), buf);
-    /* a call can change any table's array part: reload the cached ones */
-    if (fs->nac && (strncmp(buf, "    call ", 9) == 0 || strncmp(buf, "    calli ", 10) == 0))
+    /* a call can change any table's array part and shape: reload the
+       cached ones */
+    if ((fs->nac || fs->nsc) && (strncmp(buf, "    call ", 9) == 0 || strncmp(buf, "    calli ", 10) == 0)) {
         for (int i = 0; i < fs->nac; i++) {
             char r[128];
             snprintf(r, sizeof r, "    mov I%d, R%d->Tab.n", fs->ac[i].c, fs->ac[i].t);
@@ -161,6 +171,16 @@ static void emit(FS *fs, const char *fmt, ...) {
             snprintf(r, sizeof r, "    mov R%d, R%d->Tab.arr", fs->ac[i].c, fs->ac[i].t);
             buf_add(fs->cur, line_of(fs), r);
         }
+        for (int i = 0; i < fs->nsc; i++) {
+            char r[128];
+            if (fs->sc[i].m >= 0) {
+                snprintf(r, sizeof r, "    mov R%d, R%d->Tab.hm", fs->sc[i].m, fs->sc[i].t);
+                buf_add(fs->cur, line_of(fs), r);
+            }
+            snprintf(r, sizeof r, "    mov R%d, R%d->Tab.hs", fs->sc[i].s, fs->sc[i].t);
+            buf_add(fs->cur, line_of(fs), r);
+        }
+    }
 }
 
 /* The slot caching table slot t's array part, or -1. */
@@ -169,6 +189,14 @@ static int acache(FS *fs, int t) {
         if (fs->ac[i].t == t)
             return fs->ac[i].c;
     return -1;
+}
+
+/* The shape cache of table slot t, or NULL. */
+static SCache *scache(FS *fs, int t) {
+    for (int i = 0; i < fs->nsc; i++)
+        if (fs->sc[i].t == t)
+            return &fs->sc[i];
+    return NULL;
 }
 
 /* A dynamically built string. */
@@ -948,22 +976,33 @@ static void write_global(FS *fs, Expr *e, Val v) {
 /* ------------------------------------------------------- table access */
 
 /* Find constant string key k in the hash part of the table in slot ts:
-   leave its hash slots in R31 and the index of its value word in I31, or
-   branch to notfound if it is not there. The table is in register t
-   (not R29..R31). Each site has an inline cache of
+   return the register holding its hash slots, with the index of its value
+   word in I31, or branch to notfound if it is not there. The table is in
+   register t (not R29..R31). Each site has an inline cache of
    the shape it saw last time and the word it found the key at (globals
    ic$<site>s and ic$<site>w): a table of that shape has the key there, so
    a hit costs one compare. Tables with a map of their own (more than 16
    slots, as a library's) miss, and then use the cached word if it holds
-   this very key, before looking the key up. */
-static void ic_lookup(FS *fs, const char *t, Str k, int notfound) {
+   this very key, before looking the key up. A table with a shape cache
+   (scache) has its map and hash slots in registers already. */
+static const char *ic_lookup(FS *fs, int ts, const char *t, Str k, int notfound) {
     int site = G.nic++;
     int miss = new_label(fs), load = new_label(fs), look = new_label(fs), own = new_label(fs),
         set = new_label(fs);
+    SCache *c = ts >= 0 ? scache(fs, ts) : NULL;
+    char hm[16] = "R31", *hs = ring();
+    snprintf(hs, 96, "R31");
+    if (c) {
+        if (c->m >= 0)
+            snprintf(hm, sizeof hm, "R%d", c->m);
+        snprintf(hs, 96, "R%d", c->s);
+    }
     char *ks = masm_string(k);
-    emit(fs, "    mov R31, %s->Tab.hm", t);
-    branch(fs, miss, "bne.r R31, @ic$%ds", site);
-    emit(fs, "    mov R31, %s->Tab.hs", t);
+    if (!c || c->m < 0)
+        emit(fs, "    mov R31, %s->Tab.hm", t);
+    branch(fs, miss, "bne.r %s, @ic$%ds", hm, site);
+    if (!c)
+        emit(fs, "    mov R31, %s->Tab.hs", t);
     emit(fs, "    mov I31, @ic$%dw", site);
     emit(fs, ".L%d:", load);
     cold_begin(fs);
@@ -971,30 +1010,37 @@ static void ic_lookup(FS *fs, const char *t, Str k, int notfound) {
     emit(fs, "    mov I29, @ic$%dw", site);
     emit(fs, "    mov I28, %s->Tab.hw", t);
     emit(fs, "    bge I29, I28, .L%d", look);
-    emit(fs, "    mov R30, %s->Tab.hs", t);
+    const char *slots = hs;
+    if (!c) {
+        emit(fs, "    mov R30, %s->Tab.hs", t);
+        slots = "R30";
+    }
     emit(fs, "    sub I28, I29, 2");
-    emit(fs, "    mov R29, R30[I28]");
+    emit(fs, "    mov R29, %s[I28]", slots);
     emit(fs, "    bne.r R29, %s, .L%d", ks, look);
     emit(fs, "    mov I31, I29");
-    emit(fs, "    mov R31, R30");
+    if (!c)
+        emit(fs, "    mov R31, R30");
     emit(fs, "    jmp .L%d", load);
     emit(fs, ".L%d:", look);
-    emit(fs, "    bz R31, .L%d", notfound);
-    emit(fs, "    mget I31, R31, %s, -1", ks);
+    emit(fs, "    bz %s, .L%d", hm, notfound);
+    emit(fs, "    mget I31, %s, %s, -1", hm, ks);
     emit(fs, "    blt I31, 0, .L%d", notfound);
     emit(fs, "    mov @ic$%dw, I31", site);
     emit(fs, "    mov I30, %s->Tab.hmshared", t);
     emit(fs, "    bz I30, .L%d", own);
-    emit(fs, "    mov.r @ic$%ds, R31", site);
+    emit(fs, "    mov.r @ic$%ds, %s", site, hm);
     emit(fs, "    jmp .L%d", set);
     emit(fs, ".L%d:", own);
     emit(fs, "    mov.r @ic$%ds, " NIL, site);
     emit(fs, ".L%d:", set);
-    emit(fs, "    mov R31, %s->Tab.hs", t);
+    if (!c)
+        emit(fs, "    mov R31, %s->Tab.hs", t);
     emit(fs, "    jmp .L%d", load);
     cold_end(fs);
     record(fs, notfound);
     free(ks);
+    return hs;
 }
 
 /* t[k] for Vals: inline paths for a table with an integer or constant
@@ -1031,7 +1077,7 @@ static Val gen_index_val(FS *fs, Val t, Val k, int dst, const char *desc) {
             if (c < 0)
                 emit(fs, "    mov R31, %s->Tab.arr", RB(fs, ts, "R28"));
         } else {
-            ic_lookup(fs, RB(fs, ts, "R28"), k.s, slow);
+            snprintf(arr, sizeof arr, "%s", ic_lookup(fs, ts, RB(fs, ts, "R28"), k.s, slow));
         }
         emit(fs, "    mov %s, %s[I31]", SR(d), arr);
         emit(fs, "    ldv %s, %s, %s[I31+1]", SI(d), SF(d), arr);
@@ -1082,7 +1128,7 @@ static void gen_setindex(FS *fs, Val t, Val k, Val v, const char *desc) {
             if (c < 0)
                 emit(fs, "    mov R31, %s->Tab.arr", RB(fs, ts, "R28"));
         } else {
-            ic_lookup(fs, RB(fs, ts, "R28"), k.s, slow);
+            snprintf(arr, sizeof arr, "%s", ic_lookup(fs, ts, RB(fs, ts, "R28"), k.s, slow));
         }
         /* only an existing non-nil value is overwritten inline */
         emit(fs, "    mov R30, %s[I31]", arr);
@@ -1907,13 +1953,18 @@ static void gen_method(FS *fs, int ss, Str name, const char *desc, int d) {
     if (ty_get(fs, ss) != TY_TAB) {
         branch(fs, slow, "bnisa %s, Tab", SR(ss));
     }
-    emit(fs, "    mov R31, %s->Tab.hm", RB(fs, ss, "R28"));
-    branch(fs, slow, "bne.r R31, @mc$%d", site);
+    SCache *c = scache(fs, ss);
+    if (c && c->m >= 0) {
+        branch(fs, slow, "bne.r R%d, @mc$%d", c->m, site);
+    } else {
+        emit(fs, "    mov R31, %s->Tab.hm", RB(fs, ss, "R28"));
+        branch(fs, slow, "bne.r R31, @mc$%d", site);
+    }
     emit(fs, "    mov R31, %s->Tab.meta", RB(fs, ss, "R28"));
     branch(fs, slow, "bz R31");
     emit(fs, "    mov R28, R31->Tab.idx");
     branch(fs, slow, "bnisa R28, Tab");
-    ic_lookup(fs, "R28", name, slow);
+    ic_lookup(fs, -1, "R28", name, slow);
     emit(fs, "    mov %s, R31[I31]", SR(d));
     emit(fs, "    ldv %s, %s, R31[I31+1]", SI(d), SF(d));
     branch(fs, slow, "beq.r %s, " NIL, SR(d));
@@ -2847,7 +2898,7 @@ typedef void (*LoopBody)(FS *fs, void *ctx, int head);
 /* Tables a loop indexes with integer-like keys, by local variable. */
 typedef struct {
     Var *v[16];
-    int n[16], nv;
+    int n[16], f[16], nv;   /* uses with integer-like keys, with constant string keys */
     Var *decl[64];      /* declared inside the loop */
     int nd;
 } ArrUses;
@@ -2863,16 +2914,20 @@ static void arr_uses_exprs(Expr **v, int n, ArrUses *u) {
 static void arr_uses_expr(Expr *e, ArrUses *u) {
     if (!e || e->k == X_FUNC)
         return;
-    if (e->k == X_INDEX && e->a->k == X_LOCAL && e->b->k != X_STR) {
+    if ((e->k == X_INDEX || e->k == X_METHOD) && e->a->k == X_LOCAL) {
+        bool arr = e->k == X_INDEX && e->b->k != X_STR;
+        bool fld = e->k == X_METHOD || (e->b->k == X_STR && !(e->b->s.len >= 2 && e->b->s.s[0] == '_' && e->b->s.s[1] == '_'));
         int i = 0;
         while (i < u->nv && u->v[i] != e->a->var)
             i++;
-        if (i < 16) {
+        if (i < 16 && (arr || fld)) {
             if (i == u->nv) {
                 u->v[u->nv] = e->a->var;
-                u->n[u->nv++] = 0;
+                u->n[u->nv] = u->f[u->nv] = 0;
+                u->nv++;
             }
-            u->n[i]++;
+            u->n[i] += arr;
+            u->f[i] += fld;
         }
     }
     if (e->k == X_TABLE) {
@@ -2915,17 +2970,39 @@ static void arr_uses_block(Block *b, ArrUses *u) {
    to be a table and never assigned, that the loop indexes twice or more
    gets a slot holding its Tab.n (I) and Tab.arr (R), loaded on entry and
    after every call (only a call changes them). */
+/* A shape cache for the table in slot t: slots holding its Tab.hm (with
+   map) and Tab.hs in their R halves, loaded now and after every call (only
+   a call changes them). */
+static bool cache_shape(FS *fs, int t, bool map) {
+    int n = map ? 2 : 1;
+    if (fs->nsc == 8 || t >= NREG || scache(fs, t) || fs->nslots + n >= NREG)
+        return false;
+    int c = alloc_slots(fs, n);
+    fs->nlocals = fs->nslots;
+    SCache *sc = &fs->sc[fs->nsc++];
+    sc->t = t;
+    sc->m = map ? c : -1;
+    sc->s = c + n - 1;
+    if (map)
+        emit(fs, "    mov R%d, R%d->Tab.hm", sc->m, t);
+    emit(fs, "    mov R%d, R%d->Tab.hs", sc->s, t);
+    return true;
+}
+
 static int cache_arrays(FS *fs, Stmt *ls) {
     ArrUses u = {0};
     arr_uses_stmt(ls, &u);
     int added = 0;
-    for (int i = 0; i < u.nv && fs->nac < 8; i++) {
+    for (int i = 0; i < u.nv; i++) {
         Var *v = u.v[i];
         bool inner = false;
         for (int j = 0; j < u.nd; j++)
             inner |= u.decl[j] == v;
-        if (inner || u.n[i] < 2 || v->fn != fs->f || v->assigned || v->boxed || v->slot >= NREG ||
-            ty_get(fs, v->slot) != TY_TAB || acache(fs, v->slot) >= 0 || fs->nslots + 1 >= NREG)
+        if (inner || v->fn != fs->f || v->assigned || v->boxed || v->slot >= NREG || ty_get(fs, v->slot) != TY_TAB)
+            continue;
+        if (u.f[i] >= 2)
+            added += cache_shape(fs, v->slot, true);
+        if (fs->nac == 8 || u.n[i] < 2 || acache(fs, v->slot) >= 0 || fs->nslots + 1 >= NREG)
             continue;
         int c = alloc_slot(fs);
         fs->nlocals = fs->nslots;
@@ -2945,7 +3022,7 @@ static void speculate(FS *fs, LoopBody body, void *ctx, Stmt *ls) {
     Snap s0 = snap(fs);
     int max0 = fs->maxslots;
     fs->maxslots = fs->nslots;
-    int nac0 = fs->nac;
+    int nac0 = fs->nac, nsc0 = fs->nsc;
     speculate1(fs, body, ctx, ls, true);
     bool cached = fs->ac_added;
     int peak = fs->maxslots;
@@ -2953,13 +3030,14 @@ static void speculate(FS *fs, LoopBody body, void *ctx, Stmt *ls) {
     if (cached && peak > NREG) {
         restore(fs, s0);
         fs->nac = nac0;
+        fs->nsc = nsc0;
         fs->maxslots = max0;
         speculate1(fs, body, ctx, ls, false);
     }
 }
 
 static void speculate1(FS *fs, LoopBody body, void *ctx, Stmt *ls, bool cache) {
-    int nslots0 = fs->nslots, nlocals0 = fs->nlocals, nac0 = fs->nac;
+    int nslots0 = fs->nslots, nlocals0 = fs->nlocals, nac0 = fs->nac, nsc0 = fs->nsc;
     fs->ac_added = cache && !fs->dead ? cache_arrays(fs, ls) : 0;
     int added = fs->ac_added;
     int active = fs->nslots;
@@ -2996,6 +3074,7 @@ static void speculate1(FS *fs, LoopBody body, void *ctx, Stmt *ls, bool cache) {
     }
     free(h);
     fs->nac = nac0;
+    fs->nsc = nsc0;
     fs->nlocals = nlocals0;
     fs->nslots = nslots0;
     fs->ac_added = added;
@@ -3031,6 +3110,7 @@ typedef struct {
     int tab, num;       /* uses as a table, as an operand of arithmetic or an order */
     int nodes;
     bool gotos;
+    int fld;            /* uses as a table with a constant string key (t.name, t:name()) */
 } Uses;
 
 static void uses_expr(Expr *e, Uses *u);
@@ -3050,8 +3130,11 @@ static void uses_expr(Expr *e, Uses *u) {
     case X_FUNC:
         return;
     case X_INDEX: case X_METHOD:
-        if (is_var(e->a, u->v))
+        if (is_var(e->a, u->v)) {
             u->tab++;
+            if (e->k == X_METHOD || (e->b->k == X_STR && !(e->b->s.len >= 2 && e->b->s.s[0] == '_' && e->b->s.s[1] == '_')))
+                u->fld++;
+        }
         break;
     case X_BIN:
         if (e->op <= OP_IDIV || (e->op >= OP_LT && e->op <= OP_GE))
@@ -3105,6 +3188,46 @@ static void uses_block(Block *b, Uses *u) {
 
 static void gen_stmts_from(FS *fs, Block *b, int from);
 
+typedef struct { Block *b; int from; Func *f; } Stretch;
+
+static void gen_body(FS *fs, Func *f);
+
+static void gen_stretch(FS *fs, Stretch *st) {
+    if (st->f)
+        gen_body(fs, st->f);
+    else
+        gen_stmts_from(fs, st->b, st->from);
+}
+
+/* Generate a stretch of code with shape caches for the tables in slots
+   ts[0..n), unless their slots push its slots past the registers: then
+   again without them. */
+static void with_shapes(FS *fs, const int *ts, int n, Stretch *st) {
+    Snap s0 = snap(fs);
+    int tyn0 = fs->tycap, max0 = fs->maxslots, nsc0 = fs->nsc, nlocals0 = fs->nlocals, nactive0 = fs->nactive;
+    Ty *ty0 = ty_copy(fs);
+    /* each table's map and hash slots, then its hash slots, then nothing */
+    for (int pass = 0;; pass++) {
+        fs->maxslots = fs->nslots;
+        int added = 0;
+        for (int i = 0; i < n && pass < 2; i++)
+            added += cache_shape(fs, ts[i], pass == 0);
+        gen_stretch(fs, st);
+        if (!added || fs->maxslots <= NREG)
+            break;
+        restore(fs, s0);
+        for (int i = 0; i < fs->tycap; i++)
+            fs->ty[i] = i < tyn0 ? ty0[i] : TY_ANY;
+        fs->nsc = nsc0;
+        fs->nlocals = nlocals0;
+        fs->nactive = nactive0;
+    }
+    free(ty0);
+    fs->nsc = nsc0;
+    if (fs->maxslots < max0)
+        fs->maxslots = max0;
+}
+
 /* After `local x = e` in a loop: if the rest of the block uses x as a table
    twice or more, check it once and generate the rest with and without the
    fact. */
@@ -3115,18 +3238,21 @@ static bool version_tail(FS *fs, Block *b, int i) {
     if (s->k != S_LOCAL || i + 1 >= b->n || fs->noversion || fs->cur == &fs->cold || fs->dead || !fs->loops.n)
         return false;
     Var *tabs[8];
-    int n = 0;
+    int n = 0, shaped[8], nshaped = 0;
     for (int j = 0; j < s->nvars && n < 8; j++) {
         Var *v = s->vars[j];
         if (v->assigned || v->boxed || v->attrib != ATTR_NONE || ty_get(fs, v->slot) != TY_ANY)
             continue;
-        Uses u = {v, 0, 0, 0, false};
+        Uses u = {.v = v};
         for (int k = i + 1; k < b->n; k++)
             uses_stmt(b->stmts[k], &u);
         if (u.gotos || u.nodes > TAILMAX)
             return false;
-        if (u.tab >= 2)
+        if (u.tab >= 2) {
+            if (u.fld >= 2)
+                shaped[nshaped++] = v->slot;
             tabs[n++] = v;
+        }
     }
     if (!n)
         return false;
@@ -3136,7 +3262,7 @@ static bool version_tail(FS *fs, Block *b, int i) {
         ty_set(fs, tabs[j]->slot, TY_TAB);
     }
     Scope sc = scope_open(fs);
-    gen_stmts_from(fs, b, i + 1);
+    with_shapes(fs, shaped, nshaped, &(Stretch){b, i + 1, NULL});
     Scope end = scope_open(fs);
     int cont = new_label(fs);
     jump(fs, cont);
@@ -3191,17 +3317,21 @@ static bool version_entry(FS *fs, Func *f) {
         return false;
     Ty want[MAXARGS];
     bool any = false;
+    int shaped[MAXARGS], nshaped = 0;
     for (int i = 0; i < f->np; i++) {
         Var *v = f->params[i];
         want[i] = TY_ANY;
         if (v->boxed || ty_get(fs, v->slot) != TY_ANY)
             continue;
-        Uses u = {v, 0, 0, 0, false};
+        Uses u = {.v = v};
         uses_block(f->body, &u);
         if (u.gotos || u.nodes > BODYMAX)
             return false;
-        if (u.tab && !u.num)
+        if (u.tab && !u.num) {
             want[i] = TY_TAB;
+            if (u.fld >= 2 && !v->assigned)
+                shaped[nshaped++] = v->slot;
+        }
         else if (u.num && !u.tab)
             want[i] = v->lf ? TY_FLT : TY_INT;
         any |= want[i] != TY_ANY;
@@ -3222,7 +3352,7 @@ static bool version_entry(FS *fs, Func *f) {
             ty_set(fs, k, want[i]);
     }
     Scope sc = scope_open(fs);
-    gen_body(fs, f);
+    with_shapes(fs, shaped, nshaped, &(Stretch){NULL, 0, f});
     fs->nslots = sc.nslots;
     fs->nlocals = sc.nlocals;
     fs->nactive = sc.nactive;
@@ -3544,25 +3674,56 @@ static void numfor_generic_body(FS *fs, void *c, int head) {
     place(fs, x->exit);
 }
 
+/* A constant integer step (none is 1): its value in *k. */
+static bool const_step(Expr *e, int64_t *k) {
+    if (!e) {
+        *k = 1;
+        return true;
+    }
+    if (e->k == X_INT) {
+        *k = e->i;
+        return true;
+    }
+    if (e->k == X_UN && e->op == OP_UNM && e->a->k == X_INT && e->a->i != INT64_MIN) {
+        *k = -e->a->i;
+        return true;
+    }
+    return false;
+}
+
 static void gen_numfor(FS *fs, Stmt *s) {
     Scope sc = scope_open(fs);
     ForCtx x = {s, new_label(fs), 0, 0, 0, 0, 1, true};
-    /* the loop's slots, which the start, limit and step are evaluated into */
+    /* the loop's slots, which the start, limit and step are evaluated into;
+       a constant step needs none until a loop of floats, and an integer
+       limit in a local that is never assigned is used where it is */
+    int64_t k;
+    bool kstep = const_step(s->step, &k);
     x.var = alloc_slot(fs);
-    x.lim = alloc_slot(fs);
-    x.step = alloc_slot(fs);
     int mark = fs->nslots;
     Val start = gen(fs, s->start, x.var);
     put(fs, x.var, start);
     fs->nslots = mark;
-    Val limit = gen(fs, s->limit, x.lim);
-    put(fs, x.lim, limit);
-    fs->nslots = mark;
-    Val step = s->step ? gen(fs, s->step, x.step) : vint(1);
-    put(fs, x.step, step);
+    Ty ts = ty_get(fs, x.var);
+    Var *lv = s->limit->k == X_LOCAL ? s->limit->var : NULL;
+    if (kstep && (k == 1 || k == -1) && ts == TY_INT && lv && lv->fn == fs->f && !lv->assigned && !lv->boxed &&
+        ty_get(fs, lv->slot) == TY_INT) {
+        x.lim = lv->slot;
+    } else {
+        x.lim = alloc_slot(fs);
+        mark = fs->nslots;
+        Val limit = gen(fs, s->limit, x.lim);
+        put(fs, x.lim, limit);
+        fs->nslots = mark;
+    }
+    x.step = kstep ? -1 : alloc_slot(fs);
+    mark = fs->nslots;
+    Val step = kstep ? vint(k) : gen(fs, s->step, x.step);
+    if (x.step >= 0)
+        put(fs, x.step, step);
     fs->nslots = mark;
     s->var->slot = x.var;
-    Ty ts = ty_get(fs, x.var), tst = ty_get(fs, x.step);
+    Ty tst = x.step >= 0 ? ty_get(fs, x.step) : TY_INT;
     x.const_step = step.k == V_INT;
     x.cstep = step.k == V_INT ? step.i : 0;
     bool unit = ts == TY_INT && x.const_step && (x.cstep == 1 || x.cstep == -1);
@@ -3583,7 +3744,12 @@ static void gen_numfor(FS *fs, Stmt *s) {
         }
         if (clip) {
             /* the limit, clipped to an integer; I31 = 0 when the loop does not run */
-            emit(fs, "    call rt$forprepi (%s, %s, %s, %s, %s) -> (I31, %s, %s)", SI(x.var), SI(x.step), SI(x.lim),
+            char stp[32];
+            if (x.step >= 0)
+                snprintf(stp, sizeof stp, "%s", SI(x.step));
+            else
+                snprintf(stp, sizeof stp, "%lld", (long long)x.cstep);
+            emit(fs, "    call rt$forprepi (%s, %s, %s, %s, %s) -> (I31, %s, %s)", SI(x.var), stp, SI(x.lim),
                  SF(x.lim), SR(x.lim), SI(x.lim), unit ? "I30" : SI(x.count));
             set_tag(fs, x.lim, TY_INT);
             if (!unit)
@@ -3603,6 +3769,10 @@ static void gen_numfor(FS *fs, Stmt *s) {
         fs->nactive++;
         speculate(fs, numfor_body, &x, s);
     } else {
+        if (x.step < 0) {
+            x.step = alloc_slot(fs);
+            put(fs, x.step, step);
+        }
         emit(fs, "    call rt$forprep (%s, %s, %s, %s, %s, %s, %s, %s, %s) -> (I31, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
              SI(x.var), SF(x.var), SR(x.var), SI(x.lim), SF(x.lim), SR(x.lim), SI(x.step), SF(x.step), SR(x.step),
              SI(x.var), SF(x.var), SR(x.var), SI(x.lim), SF(x.lim), SR(x.lim), SI(x.step), SF(x.step), SR(x.step));

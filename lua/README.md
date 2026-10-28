@@ -198,6 +198,15 @@ metatable's `__index` table through an inline cache, with no runtime call.
   call, since only a call can change them. If the extra registers would
   push the loop's variables into memory, the loop is generated again
   without them.
+* **Shape caches.** Where a table held in a local (known to be a table
+  and never assigned) has its fields read or written twice or more, as in
+  a loop, the rest of a block after `local o = t[i]`, or a function whose
+  parameter is a table, its map and hash slots (`Tab.hm`, `Tab.hs`) are
+  kept in registers, loaded on entry and after every call. A field access
+  is then the inline cache's compare and the load. If the registers would
+  push variables into memory, only the hash slots are kept, or nothing.
+* **Numeric `for`** with a constant step keeps no step register, and a
+  limit in an integer local that is never assigned is used where it is.
 * **Calls** whose last argument is a call (`f(a, g())`) are made directly
   when `g` returns one value; any other count builds a list of arguments.
   A constructor of positional values (`{a, g()}`) builds its array part

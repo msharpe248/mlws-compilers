@@ -1,0 +1,10 @@
+1	2	23	nil	5	3	1
+1	2	23	nil	5	3	1
+1	2	23	idx:a	5	3	1
+1315	110	2	30	25
+0:10:10:true:2 nil 0:20:20:true:2 nil 0:30:30:true:2 nil 0:40:40:true:2 nil
+6,15,23
+61	40
+false	shapecache.lua:69: attempt to perform arithmetic on a nil value (field 'f20')
+1
+52
