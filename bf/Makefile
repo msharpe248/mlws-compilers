@@ -9,7 +9,7 @@ mlws-vm-bfc: bfc.c VERSION
 
 test: mlws-vm-bfc
 	../tools/run-tests.py bf tests
-	../tools/test-drivers.sh ./mlws-vm-bf tests/hello.b tests/hello.out
+	../tools/test-drivers.sh ./mlws-vm-bf tests/hello.b tests/hello.out 1
 
 clean:
 	rm -f mlws-vm-bfc tests/*.masm examples/*.masm

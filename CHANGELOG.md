@@ -5,6 +5,12 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
 ## Unreleased
 
+### bf
+
+* The assembly gives each stretch of code the line of the program it came
+  from (`.loc`, MLWSVM M34), so the VM's profiler, tracer and debugger name
+  lines of the brainfuck program. It needs MLWSVM M34 or later.
+
 ### Lox
 
 * The assembly gives each stretch of code the Lox line it came from

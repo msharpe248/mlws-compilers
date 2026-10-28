@@ -32,7 +32,10 @@ mlws-vm-bfc [options] program.b
 
 The assembly is one self-contained file (no imports), so it can also be
 assembled to a binary module (`mlwsvm asm hello.masm -o hello.mlwso`), or
-run under `mlwsvm debug`, `--profile` or `--trace`.
+run under `mlwsvm debug`, `--profile` or `--trace`. Its code carries the
+lines of the program it came from (`.loc`, MLWSVM M34 or later), so the
+profiler lists the hottest lines of the brainfuck program and the debugger
+takes `break hello.b:3`.
 
 ## Semantics
 

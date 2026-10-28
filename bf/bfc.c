@@ -39,7 +39,7 @@ struct op {
     enum op_kind kind;
     long off;           /* cell offset from the pointer */
     long n;             /* amount, step or multiplier */
-    int line;           /* source line, for comments */
+    int line;           /* source line, for .loc and comments */
     struct op *body;    /* OP_LOOP */
     int nbody;
 };
@@ -83,6 +83,7 @@ static int line = 1;
 static struct oplist parse_block(int nested, int open_line) {
     struct oplist out = {0};
     long off = 0; /* pending pointer movement */
+    int off_line = line; /* the line of its last < or > */
 
     for (;;) {
         if (pos >= len) {
@@ -106,12 +107,12 @@ static struct oplist parse_block(int nested, int open_line) {
             }
             break;
         }
-        case '>': off++; break;
-        case '<': off--; break;
+        case '>': off++; off_line = line; break;
+        case '<': off--; off_line = line; break;
         case '.': push(&out, (struct op){OP_OUT, off, 0, line, NULL, 0}); break;
         case ',': push(&out, (struct op){OP_IN, off, 0, line, NULL, 0}); break;
         case '[': {
-            if (off) push(&out, (struct op){OP_MOVE, 0, off, line, NULL, 0});
+            if (off) push(&out, (struct op){OP_MOVE, 0, off, off_line, NULL, 0});
             off = 0;
             int l = line;
             struct oplist body = parse_block(1, l);
@@ -123,12 +124,12 @@ static struct oplist parse_block(int nested, int open_line) {
                 fprintf(stderr, "%s:%d: error: unmatched ']'\n", src_name, line);
                 exit(65);
             }
-            if (off) push(&out, (struct op){OP_MOVE, 0, off, line, NULL, 0});
+            if (off) push(&out, (struct op){OP_MOVE, 0, off, off_line, NULL, 0});
             return out;
         default: break; /* everything else is a comment */
         }
     }
-    if (off) push(&out, (struct op){OP_MOVE, 0, off, line, NULL, 0});
+    if (off) push(&out, (struct op){OP_MOVE, 0, off, off_line, NULL, 0});
     return out;
 }
 
@@ -198,6 +199,24 @@ static void emit(const char *fmt, ...) {
     va_end(ap);
 }
 
+/* The source position of the code that follows (.loc), when its line
+ * changes; 0 for none. */
+static int cur_line;
+
+static void loc(int l) {
+    if (l == cur_line) return;
+    cur_line = l;
+    if (!l) { emit(".loc"); return; }
+    fputs("    .loc \"", out);
+    for (const char *p = strcmp(src_name, "-") == 0 ? "stdin" : src_name; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c == '"' || c == '\\') fprintf(out, "\\%c", c);
+        else if (c < 0x20 || c >= 0x7f) fprintf(out, "\\x%02x", c);
+        else fputc(c, out);
+    }
+    fprintf(out, "\", %d\n", l);
+}
+
 /* The operand for cell[off]: R0[I1], or R0[I3] after computing the index. */
 static const char *cell(long off) {
     if (off == 0) return "R0[I1]";
@@ -210,6 +229,7 @@ static void gen_ops(struct op *ops, int n);
 static void gen_op(struct op *o) {
     const char *c;
     int l;
+    loc(o->line);
     switch (o->kind) {
     case OP_ADD:
         c = cell(o->off);
@@ -268,6 +288,7 @@ static void gen_op(struct op *o) {
         emit("bz I2, .Le%d", l);
         fprintf(out, ".Lb%d:                ; [ line %d\n", l, o->line);
         gen_ops(o->body, o->nbody);
+        loc(o->line);
         emit("mov I2, R0[I1]");
         emit("and I2, 255");
         emit("bnz I2, .Lb%d", l);
@@ -282,6 +303,7 @@ static void gen_ops(struct op *ops, int n) {
         /* A multiply-add loop: MUL... CLEAR. Skip it all if cell 0 is zero, so
          * that cells the loop would never have reached are not touched. */
         int l = label_counter++;
+        loc(ops[i].line);
         emit("mov I5, R0[I1]");
         emit("and I5, 255");
         emit("bz I5, .Lm%d", l);
@@ -348,6 +370,7 @@ static void gen_program(struct oplist *prog, long tape_size) {
         ".try fault\n",
         src_name, tape_size);
     gen_ops(prog->v, prog->n);
+    loc(0);
     fprintf(out,
         ".endtry\n"
         "    call flush (R1)\n"
