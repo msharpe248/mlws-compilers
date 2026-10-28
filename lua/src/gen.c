@@ -131,7 +131,8 @@ typedef struct FS {
 
 typedef struct {
     const char *chunk;
-    Buf out;            /* the functions */
+    Buf out;            /* the program's functions */
+    Buf libout;         /* the prelude's (the library written in Lua) */
     Buf data;           /* module data */
     VEC(char *) pinned; /* global names with fixed slots in _G */
     bool env_fast;      /* free names use the pinned slots of _G */
@@ -4616,26 +4617,27 @@ static void gen_function_as(Func *f, FS *parent, Clone *c) {
         sig_params(f, params, sizeof params);
         snprintf(head, sizeof head, ".func L%d$%s(%s) -> (i64, i64, f64, ref)", f->id, f->name, params);
     }
-    buf_add(&G.out, f->prelude ? -2 : f->line, head);
+    Buf *dst = f->prelude ? &G.libout : &G.out;
+    buf_add(dst, f->prelude ? -2 : f->line, head);
     if (fs.maxslots > NREG) {
         int words = 3 * (fs.maxslots - NREG);
         snprintf(head, sizeof head, "    enter %d", words);
-        buf_add(&G.out, f->prelude ? -2 : f->line, head);
+        buf_add(dst, f->prelude ? -2 : f->line, head);
         /* give the words their types: closures and lists copy a word with
            its type, and an unwritten word would read back as an i64 */
         for (int w = 0; w < words; w += 3) {
             snprintf(head, sizeof head, "    mov.r LOC[%d], " NIL, w);
-            buf_add(&G.out, 0, head);
+            buf_add(dst, 0, head);
             snprintf(head, sizeof head, "    mov.i64 LOC[%d], 0", w + 1);
-            buf_add(&G.out, 0, head);
+            buf_add(dst, 0, head);
             snprintf(head, sizeof head, "    mov.f64 LOC[%d], 0.0", w + 2);
-            buf_add(&G.out, 0, head);
+            buf_add(dst, 0, head);
         }
     }
-    buf_cat(&G.out, &fs.code);
-    buf_cat(&G.out, &fs.cold);
-    buf_add(&G.out, 0, ".endf");
-    buf_add(&G.out, 0, "");
+    buf_cat(dst, &fs.code);
+    buf_cat(dst, &fs.cold);
+    buf_add(dst, 0, ".endf");
+    buf_add(dst, 0, "");
     buf_truncate(&fs.code, 0);
     buf_truncate(&fs.cold, 0);
 }
@@ -5373,14 +5375,14 @@ typedef struct {
 
 #include "builtins.h"
 
-static void out(FILE *f, int *nlines, VEC(int) *map, int line, const char *fmt, ...) {
+/* Add a formatted line (with no Lua line) to b. */
+static void bufl(Buf *b, const char *fmt, ...) {
+    char line[4096];
     va_list ap;
     va_start(ap, fmt);
-    vfprintf(f, fmt, ap);
+    vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
-    fputc('\n', f);
-    (*nlines)++;
-    vec_push(*map, line);
+    buf_add(b, 0, line);
 }
 
 static void gen_helpers(Buf *b) {
@@ -5548,14 +5550,225 @@ static void gen_chunk(Func *top, Gen *g) {
     gen_function(top, NULL);
 }
 
+/* The symbols a module defines (its functions, structs and data), as a
+   set: the library's exports, and the names in a program that refer to
+   the library. */
+typedef struct {
+    char **slot;
+    int cap, n;
+    VEC(char *) order;
+} SymSet;
+
+static unsigned sym_hash(const char *s, size_t n) {
+    unsigned h = 2166136261u;
+    for (size_t i = 0; i < n; i++)
+        h = (h ^ (unsigned char)s[i]) * 16777619u;
+    return h;
+}
+
+static char **sym_find(SymSet *set, const char *s, size_t n) {
+    for (unsigned i = sym_hash(s, n) & (unsigned)(set->cap - 1);; i = (i + 1) & (unsigned)(set->cap - 1)) {
+        char *e = set->slot[i];
+        if (!e || (strlen(e) == n && memcmp(e, s, n) == 0))
+            return &set->slot[i];
+    }
+}
+
+static bool sym_has(SymSet *set, const char *s, size_t n) { return set->cap && *sym_find(set, s, n); }
+
+static void sym_add(SymSet *set, const char *s, size_t n) {
+    if (2 * (set->n + 1) > set->cap) {
+        SymSet big = {xmalloc(sizeof(char *) * (size_t)(set->cap ? 2 * set->cap : 1024)), set->cap ? 2 * set->cap : 1024,
+                      0, {0}};
+        memset(big.slot, 0, sizeof(char *) * (size_t)big.cap);
+        for (int i = 0; i < set->cap; i++)
+            if (set->slot[i])
+                *sym_find(&big, set->slot[i], strlen(set->slot[i])) = set->slot[i];
+        free(set->slot);
+        set->slot = big.slot;
+        set->cap = big.cap;
+    }
+    char **e = sym_find(set, s, n);
+    if (*e)
+        return;
+    *e = xstrndup(s, n);
+    set->n++;
+    vec_push(set->order, *e);
+}
+
+static bool ident_start(char c) { return isalpha((unsigned char)c) || c == '_' || c == '$'; }
+static bool ident_char(char c) { return isalnum((unsigned char)c) || c == '_' || c == '$'; }
+
+/* Add what a line of a module defines: a function, a struct, or data (a
+   label outside functions, except the inline caches, which are the
+   module's own). Macros' bodies are skipped (what a macro defines is the
+   library's own). *state is 1 in a function, 2 in a macro. */
+static void collect_symbols(SymSet *set, const char *t, int *state) {
+    const char *p = NULL;
+    if (*state == 2) {
+        if (strncmp(t, ".endm", 5) == 0)
+            *state = 0;
+        return;
+    }
+    if (strncmp(t, ".macro ", 7) == 0) {
+        *state = 2;
+    } else if (strncmp(t, ".func ", 6) == 0) {
+        p = t + 6;
+        *state = 1;
+    } else if (strncmp(t, ".endf", 5) == 0) {
+        *state = 0;
+    } else if (strncmp(t, ".struct ", 8) == 0) {
+        p = t + 8;
+    } else if (!*state && ident_start(t[0])) {
+        size_t n = 0;
+        while (ident_char(t[n]))
+            n++;
+        if (t[n] == ':' && strncmp(t, "ic$", 3) != 0 && strncmp(t, "mc$", 3) != 0 && strncmp(t, "ct$", 3) != 0)
+            sym_add(set, t, n);
+        return;
+    }
+    if (p) {
+        while (*p == ' ')
+            p++;
+        size_t n = 0;
+        while (ident_char(p[n]))
+            n++;
+        sym_add(set, p, n);
+    }
+}
+
+/* Line t with every name the library defines qualified as lua.name (not
+   in strings and comments, nor after a '.', as a struct's fields are). */
+static void qualify(SB *o, const char *t, SymSet *lib) {
+    for (size_t i = 0; t[i];) {
+        char c = t[i];
+        if (c == '"') {
+            size_t j = i + 1;
+            while (t[j] && t[j] != '"')
+                j += t[j] == '\\' && t[j + 1] ? 2 : 1;
+            if (t[j])
+                j++;
+            sb_add(o, "%.*s", (int)(j - i), t + i);
+            i = j;
+        } else if (c == ';') {
+            sb_add(o, "%s", t + i);
+            return;
+        } else if (ident_start(c) && (i == 0 || !(ident_char(t[i - 1]) || t[i - 1] == '.'))) {
+            size_t j = i;
+            while (ident_char(t[j]))
+                j++;
+            sb_add(o, "%s%.*s", sym_has(lib, t + i, j - i) ? "lua." : "", (int)(j - i), t + i);
+            i = j;
+        } else {
+            sb_add(o, "%c", c);
+            i++;
+        }
+    }
+}
+
+static void add_pins(Buf *b, const char *fname, int from, int to) {
+    bufl(b, ".func %s", fname);
+    for (int i = from; i < to; i++) {
+        char *nm = cstr_lit(G.pinned.v[i]);
+        bufl(b, "    call rt$pin (%s)", nm);
+        free(nm);
+    }
+    bufl(b, "    ret");
+    bufl(b, ".endf");
+    bufl(b, "%s", "");
+}
+
+/* The inline caches from..to-1, each empty: a shape no table has (nil),
+   and a word index past any table's slots. */
+static void add_init_ic(Buf *b, const char *fname, int from, int to) {
+    bufl(b, ".func %s", fname);
+    for (int i = from; i < to; i++)
+        bufl(b, "    mov.r @ic$%ds, " NIL, i);
+    bufl(b, "    ret");
+    bufl(b, ".endf");
+    bufl(b, "%s", "");
+}
+
+static void add_data(Buf *b, int ic0, int ic1, int mc0, int mc1, int ct0, int ct1) {
+    bufl(b, "        .align 8");
+    for (int i = ic0; i < ic1; i++) {
+        bufl(b, "ic$%ds: .zero 8", i);
+        bufl(b, "ic$%dw: .i64 1099511627776", i);
+    }
+    for (int i = mc0; i < mc1; i++)
+        bufl(b, "mc$%d: .zero 8", i);
+    for (int i = ct0; i < ct1; i++)
+        bufl(b, "ct$%d: .zero 8", i);
+}
+
+/* The library: the runtime, the library's functions and the prelude
+   (compiled), and the start-up code they need. A program compiled
+   against it relies on the global names it pins (the first npins) and on
+   its table constructors (the first nctor sites); rt$lib_init checks
+   both. */
+static void add_library(Buf *b, GenInput *in, int npins, int nic, int nmc, int nctor) {
+    for (const char *p = in->runtime; *p;) {
+        const char *e = strchr(p, '\n');
+        int len = e ? (int)(e - p) : (int)strlen(p);
+        bufl(b, "%.*s", len, p);
+        p += len + (e ? 1 : 0);
+    }
+    add_pins(b, "rt$init_globals", 0, npins);
+    bufl(b, ".func rt$init_lib");
+    const char *cur = (const char *)-1;
+    for (size_t i = 0; i < sizeof builtins / sizeof *builtins; i++) {
+        const Builtin *bi = &builtins[i];
+        if (bi->lib != cur && (!bi->lib || !cur || cur == (const char *)-1 || strcmp(bi->lib, cur) != 0)) {
+            cur = bi->lib;
+            if (!cur)
+                bufl(b, "    mov R1, @rt$G");
+            else if (strcmp(cur, "P") == 0)
+                bufl(b, "    mov R1, @rt$P");
+            else {
+                char *nm = cstr_lit(cur);
+                bufl(b, "    call rt$deflib (%s) -> (R1)", nm);
+                free(nm);
+            }
+        }
+        char *nm = cstr_lit(bi->name);
+        bufl(b, "    closure %s -> (R2)", bi->fn);
+        bufl(b, "    call rt$defn (R1, %s, R2, %d)", nm, bi->sig);
+        free(nm);
+    }
+    bufl(b, "    ret");
+    bufl(b, ".endf");
+    bufl(b, "%s", "");
+    add_init_ic(b, "rt$init_ic", 0, nic);
+    bufl(b, "; Start-up, up to the program's own globals: the chunk name, the number");
+    bufl(b, "; of globals and of table constructors the program expects the library");
+    bufl(b, "; to have, and the number of table constructors in all.");
+    bufl(b, ".func rt$lib_init(ref chunk, i64 npins, i64 nlibctors, i64 nctors)");
+    bufl(b, "    bne I0, %d, 9f", npins);
+    bufl(b, "    bne I1, %d, 9f", nctor);
+    bufl(b, "    call rt$init (R0)");
+    bufl(b, "    call rt$init_ic");
+    bufl(b, "    call rt$init_shapes (I2)");
+    bufl(b, "    call rt$init_globals");
+    bufl(b, "    ret");
+    bufl(b, "9:  ncall \"fs.stderr\" -> (R1)");
+    bufl(b, "    ncall \"fs.write\" (R1, \"mlws-vm-lua: the program was compiled for another build of the lua "
+            "library (%s)\\n\")", VERSION);
+    bufl(b, "    halt 70");
+    bufl(b, ".endf");
+    bufl(b, "%s", "");
+    gen_helpers(b);
+    buf_cat(b, &G.libout);
+    add_data(b, 0, nic, 0, nmc, 0, nctor);
+}
+
 void generate(GenInput *in, FILE *f) {
     memset(&G, 0, sizeof G);
     G.chunk = in->chunk;
+    /* the prelude first, on its own (its code must not depend on the
+       program's, for a library made without one), then the program */
     FuncVec all = {0};
     analyze(in->prelude, &all);
-    analyze(in->main, &all);
     likely_floats(&all);
-    /* the library's globals, then the program's */
     for (size_t i = 0; i < sizeof builtins / sizeof *builtins; i++) {
         const char *lib = builtins[i].lib ? builtins[i].lib : builtins[i].name;
         if (strcmp(lib, "P") != 0)
@@ -5566,129 +5779,101 @@ void generate(GenInput *in, FILE *f) {
     for (size_t i = 0; i < sizeof extra / sizeof *extra; i++)
         pin_name((Str){extra[i], (int)strlen(extra[i])});
     pin_block(in->prelude->body);
-    pin_block(in->main->body);
-
+    int lib_npins = G.pinned.n;
     gen_chunk(in->prelude, &G);
-    gen_chunk(in->main, &G);
-    for (int i = 0; i < clone_queue.n; i++)
-        gen_function_as(clone_queue.v[i]->f, NULL, clone_queue.v[i]);
+    int q = 0;
+    for (; q < clone_queue.n; q++)
+        gen_function_as(clone_queue.v[q]->f, NULL, clone_queue.v[q]);
+    int lib_nic = G.nic, lib_nmc = G.nmc, lib_nctor = G.nctor;
 
-    int nlines = 0;
-    VEC(int) map = {0};
+    analyze(in->main, &all);
+    likely_floats(&all);
+    pin_block(in->main->body);
+    gen_chunk(in->main, &G);
+    for (; q < clone_queue.n; q++)
+        gen_function_as(clone_queue.v[q]->f, NULL, clone_queue.v[q]);
+
+    Buf lib = {0};
+    add_library(&lib, in, lib_npins, lib_nic, lib_nmc, lib_nctor);
     char *chunk = cstr_lit(in->chunk);
-    out(f, &nlines, (void *)&map, 0, "; Generated by mlws-vm-luac %s from %s", VERSION, chunk);
-    out(f, &nlines, (void *)&map, 0, "%s", "");
-    /* the runtime; the library's functions (B$, P$) are -1 in the line map */
-    int kind = 0;
-    for (const char *p = in->runtime; *p;) {
-        const char *e = strchr(p, '\n');
-        int len = e ? (int)(e - p) : (int)strlen(p);
-        if (strncmp(p, ".func B$", 8) == 0 || strncmp(p, ".func P$", 8) == 0)
-            kind = -1;
-        out(f, &nlines, (void *)&map, kind, "%.*s", len, p);
-        if (strncmp(p, ".endf", 5) == 0)
-            kind = 0;
-        p += len + (e ? 1 : 0);
-    }
-    /* initialisation */
-    out(f, &nlines, (void *)&map, 0, ".func rt$init_globals");
-    for (int i = 0; i < G.pinned.n; i++) {
-        char *nm = cstr_lit(G.pinned.v[i]);
-        out(f, &nlines, (void *)&map, 0, "    call rt$pin (%s)", nm);
-        free(nm);
-    }
-    out(f, &nlines, (void *)&map, 0, "    ret");
-    out(f, &nlines, (void *)&map, 0, ".endf");
-    out(f, &nlines, (void *)&map, 0, "%s", "");
-    out(f, &nlines, (void *)&map, 0, ".func rt$init_lib");
-    const char *cur = (const char *)-1;
-    for (size_t i = 0; i < sizeof builtins / sizeof *builtins; i++) {
-        const Builtin *b = &builtins[i];
-        if (b->lib != cur && (!b->lib || !cur || cur == (const char *)-1 || strcmp(b->lib, cur) != 0)) {
-            cur = b->lib;
-            if (!cur)
-                out(f, &nlines, (void *)&map, 0, "    mov R1, @rt$G");
-            else if (strcmp(cur, "P") == 0)
-                out(f, &nlines, (void *)&map, 0, "    mov R1, @rt$P");
-            else {
-                char *nm = cstr_lit(cur);
-                out(f, &nlines, (void *)&map, 0, "    call rt$deflib (%s) -> (R1)", nm);
-                free(nm);
-            }
+    if (in->mode == GEN_LIBRARY) {
+        fprintf(f, "; The Lua runtime library, generated by mlws-vm-luac %s\n\n.module lua\n\n", VERSION);
+        SymSet syms = {0};
+        int state = 0;
+        for (int i = 0; i < lib.n; i++) {
+            fprintf(f, "%s\n", lib.v[i].text);
+            collect_symbols(&syms, lib.v[i].text, &state);
         }
-        char *nm = cstr_lit(b->name);
-        out(f, &nlines, (void *)&map, 0, "    closure %s -> (R2)", b->fn);
-        out(f, &nlines, (void *)&map, 0, "    call rt$defn (R1, %s, R2, %d)", nm, b->sig);
-        free(nm);
+        for (int i = 0; i < syms.order.n; i += 16) {
+            fprintf(f, "\n.export ");
+            for (int j = i; j < syms.order.n && j < i + 16; j++)
+                fprintf(f, "%s%s", j > i ? ", " : "", syms.order.v[j]);
+        }
+        fprintf(f, "\n");
+        free(chunk);
+        return;
     }
-    out(f, &nlines, (void *)&map, 0, "    ret");
-    out(f, &nlines, (void *)&map, 0, ".endf");
-    out(f, &nlines, (void *)&map, 0, "%s", "");
-    /* the inline caches, each empty: a shape no table has (nil), and a word
-       index past any table's slots */
-    out(f, &nlines, (void *)&map, 0, ".func rt$init_ic");
-    for (int i = 0; i < G.nic; i++)
-        out(f, &nlines, (void *)&map, 0, "    mov.r @ic$%ds, " NIL, i);
-    out(f, &nlines, (void *)&map, 0, "    ret");
-    out(f, &nlines, (void *)&map, 0, ".endf");
-    out(f, &nlines, (void *)&map, 0, "%s", "");
-    out(f, &nlines, (void *)&map, 0, ".func main -> i64");
-    out(f, &nlines, (void *)&map, 0, "    call rt$init (%s)", chunk);
-    out(f, &nlines, (void *)&map, 0, "    call rt$init_ic");
-    out(f, &nlines, (void *)&map, 0, "    call rt$init_shapes (%d)", G.nctor);
-    out(f, &nlines, (void *)&map, 0, "    call rt$init_globals");
-    out(f, &nlines, (void *)&map, 0, "    call rt$init_lib");
-    out(f, &nlines, (void *)&map, 0, "    call rt$init_done");
-    out(f, &nlines, (void *)&map, 0, ".try 8f");
-    out(f, &nlines, (void *)&map, 0, "    lnew R1");
-    out(f, &nlines, (void *)&map, 0, "    lpush R1, @rt$P, 0.0");
-    out(f, &nlines, (void *)&map, 0, "    call L%d$%s (R1) -> (I0, I1, F1, R2)", in->prelude->id, in->prelude->name);
-    out(f, &nlines, (void *)&map, 0, "    call rt$script_args -> (R1)");
-    out(f, &nlines, (void *)&map, 0, "    call L%d$%s (R1) -> (I0, I1, F1, R2)", in->main->id, in->main->name);
-    out(f, &nlines, (void *)&map, 0, ".endtry");
-    out(f, &nlines, (void *)&map, 0, "    call rt$exit (0)");
-    out(f, &nlines, (void *)&map, 0, "    ret 0");
-    out(f, &nlines, (void *)&map, 0, "8:  catch R1");
-    out(f, &nlines, (void *)&map, 0, "    call rt$uncaught (R1)");
-    out(f, &nlines, (void *)&map, 0, "    ret 1");
-    out(f, &nlines, (void *)&map, 0, ".endf");
-    out(f, &nlines, (void *)&map, 0, "%s", "");
-    Buf helpers = {0};
-    gen_helpers(&helpers);
-    for (int i = 0; i < helpers.n; i++)
-        out(f, &nlines, (void *)&map, 0, "%s", helpers.v[i].text);
-    /* the Lua functions, with .loc where the Lua line changes (the
-       prelude's lines, -2, and lines 0 have no position of their own) */
+
+    /* the program */
+    Buf prog = {0};
+    add_pins(&prog, "p$init_globals", lib_npins, G.pinned.n);
+    add_init_ic(&prog, "p$init_ic", lib_nic, G.nic);
+    bufl(&prog, ".func main -> i64");
+    bufl(&prog, "    call rt$lib_init (%s, %d, %d, %d)", chunk, lib_npins, lib_nctor, G.nctor);
+    bufl(&prog, "    call p$init_ic");
+    bufl(&prog, "    call p$init_globals");
+    bufl(&prog, "    call rt$init_lib");
+    bufl(&prog, "    call rt$init_done");
+    bufl(&prog, ".try 8f");
+    bufl(&prog, "    lnew R1");
+    bufl(&prog, "    lpush R1, @rt$P, 0.0");
+    bufl(&prog, "    call L%d$%s (R1) -> (I0, I1, F1, R2)", in->prelude->id, in->prelude->name);
+    bufl(&prog, "    call rt$script_args -> (R1)");
+    bufl(&prog, "    call L%d$%s (R1) -> (I0, I1, F1, R2)", in->main->id, in->main->name);
+    bufl(&prog, ".endtry");
+    bufl(&prog, "    call rt$exit (0)");
+    bufl(&prog, "    ret 0");
+    bufl(&prog, "8:  catch R1");
+    bufl(&prog, "    call rt$uncaught (R1)");
+    bufl(&prog, "    ret 1");
+    bufl(&prog, ".endf");
+    bufl(&prog, "%s", "");
+    /* the program's functions, with .loc where the Lua line changes (lines
+       0 have no position of their own) */
     int loc = 0;
     for (int i = 0; i < G.out.n; i++) {
         Line *l = &G.out.v[i];
         if (strncmp(l->text, ".func ", 6) == 0)
             loc = 0;
         else if (l->line > 0 && l->line != loc && strncmp(l->text, ".endf", 5) != 0) {
-            out(f, &nlines, (void *)&map, l->line, "    .loc %s, %d", chunk, l->line);
+            bufl(&prog, "    .loc %s, %d", chunk, l->line);
             loc = l->line;
         }
-        out(f, &nlines, (void *)&map, l->line, "%s", l->text);
+        buf_add(&prog, l->line, l->text);
     }
-    for (int i = 0; i < G.data.n; i++)
-        out(f, &nlines, (void *)&map, 0, "%s", G.data.v[i].text);
-    out(f, &nlines, (void *)&map, 0, "        .align 8");
-    for (int i = 0; i < G.nic; i++) {
-        out(f, &nlines, (void *)&map, 0, "ic$%ds: .zero 8", i);
-        out(f, &nlines, (void *)&map, 0, "ic$%dw: .i64 1099511627776", i);
-    }
-    for (int i = 0; i < G.nmc; i++)
-        out(f, &nlines, (void *)&map, 0, "mc$%d: .zero 8", i);
-    for (int i = 0; i < G.nctor; i++)
-        out(f, &nlines, (void *)&map, 0, "ct$%d: .zero 8", i);
-    /* the line map: Lua lines of the lines above */
-    int n = map.n;
-    fprintf(f, "\n        .align 8\nrt$nlines: .i64 %d\nrt$linemap:\n", n);
-    for (int i = 0; i < n; i += 16) {
-        fprintf(f, "        .i32 ");
-        for (int j = i; j < n && j < i + 16; j++)
-            fprintf(f, "%s%d", j > i ? ", " : "", map.v[j]);
-        fprintf(f, "\n");
+    add_data(&prog, lib_nic, G.nic, lib_nmc, G.nmc, lib_nctor, G.nctor);
+
+    fprintf(f, "; Generated by mlws-vm-luac %s from %s\n\n", VERSION, chunk);
+    if (in->mode == GEN_SHARED) {
+        /* the library's names in the program are lua.name */
+        SymSet syms = {0};
+        int state = 0;
+        for (int i = 0; i < lib.n; i++)
+            collect_symbols(&syms, lib.v[i].text, &state);
+        if (in->module)
+            fprintf(f, ".module %s\n", in->module);
+        fprintf(f, ".import lua\n.requires lua, \"=%s\"\n\n", VERSION);
+        for (int i = 0; i < prog.n; i++) {
+            SB o = {0};
+            qualify(&o, prog.v[i].text, &syms);
+            fprintf(f, "%s\n", sb_str(&o));
+            free(o.s);
+        }
+    } else {
+        for (int i = 0; i < lib.n; i++)
+            fprintf(f, "%s\n", lib.v[i].text);
+        for (int i = 0; i < prog.n; i++)
+            fprintf(f, "%s\n", prog.v[i].text);
     }
     free(chunk);
 }

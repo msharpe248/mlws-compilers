@@ -190,6 +190,9 @@ def lox_test(path, tmp):
 
 # ------------------------------------------------------------------------ Lua
 
+# Options for the driver, from $LUA_FLAGS (--shared: the runtime as a library).
+LUA_FLAGS = os.environ.get("LUA_FLAGS", "").split()
+
 def lua_test(path, tmp):
     stem = path[:-4]
 
@@ -207,7 +210,7 @@ def lua_test(path, tmp):
     args = (opt(".args") or b"").decode().splitlines()
     driver = os.path.join(ROOT, "lua", "mlws-vm-lua")
     try:
-        r = subprocess.run([driver, os.path.basename(path)] + args, input=opt(".in") or b"",
+        r = subprocess.run([driver] + LUA_FLAGS + [os.path.basename(path)] + args, input=opt(".in") or b"",
                            capture_output=True, timeout=TIMEOUT, cwd=os.path.dirname(path) or ".")
         code, out, err = r.returncode, r.stdout, r.stderr
     except subprocess.TimeoutExpired:
@@ -294,7 +297,8 @@ def main():
                     print("     " + f)
             else:
                 passed += 1
-    print(f"{passed} passed, {failed} failed" + (f", {skipped} skipped" if skipped else ""))
+    mode = f" ({' '.join(LUA_FLAGS)})" if LUA_FLAGS and fn is lua_test else ""
+    print(f"{passed} passed, {failed} failed" + (f", {skipped} skipped" if skipped else "") + mode)
     sys.exit(1 if failed else 0)
 
 

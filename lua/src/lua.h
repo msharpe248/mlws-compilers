@@ -227,10 +227,18 @@ Func *parse_chunk(const char *chunk, const char *src, size_t len, bool prelude, 
 
 /* ---------------------------------------------------------------- codegen */
 
+typedef enum {
+    GEN_INLINE,                 /* one self-contained file: the program and the runtime */
+    GEN_SHARED,                 /* the program, importing the library (module lua) */
+    GEN_LIBRARY,                /* the library's module, lua */
+} GenMode;
+
 typedef struct {
     const char *chunk;          /* the chunk name for messages */
     Func *main, *prelude;
     const char *runtime;        /* src/runtime.masm */
+    GenMode mode;
+    const char *module;         /* GEN_SHARED: the program's module name, or NULL for the default */
 } GenInput;
 
 void generate(GenInput *in, FILE *out);

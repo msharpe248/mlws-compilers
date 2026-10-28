@@ -3,6 +3,22 @@
 Each compiler is versioned on its own (its `VERSION` file); a release of
 this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
+## Unreleased
+
+### Lua
+
+* The runtime as an MLWSVM library: `make lib` builds `lua/lib/lua-VERSION.mlwsl`
+  (from `mlws-vm-luac --library DIR`), and `--shared` (on `mlws-vm-luac`
+  and `mlws-vm-lua`) compiles a program that imports it instead of
+  containing it: 10 KB instead of 790 KB for a small program, assembled in
+  a few milliseconds instead of about 30, and as fast. `make test` runs the
+  Lua tests both ways.
+* Error positions come from the `.loc` positions in the VM's backtraces;
+  the table from assembly lines to Lua lines (`rt$linemap`) is gone.
+* The prelude's code no longer depends on the program's (its float hints
+  come from the prelude alone), so the library and the programs compiled
+  against it agree.
+
 ## Release 0.3.0
 
 bf 0.3.0, Lox 0.3.0 and Lua 0.3.0, for MLWSVM 0.3.0. Lua's assembly needs

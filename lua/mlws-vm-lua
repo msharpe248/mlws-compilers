@@ -6,20 +6,24 @@
 #     -k           keep the assembly after running it
 #     -o FILE      the assembly file (default: program.masm next to the
 #                  source); with -S, '-' writes it to standard output
+#     --shared     compile the program alone, importing the runtime from the
+#                  MLWSVM library lua (lib/lua-VERSION.mlwsl, made by
+#                  `make lib`), instead of one self-contained file
 #     --version    print the compiler's version
 #
 # The VM is found as $MLWSVM, then mlwsvm on PATH, then ../mlws-vm/mlwsvm
 # next to this repository.
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 usage() {
-    echo "usage: mlws-vm-lua [--version] [-S | -k] [-o FILE] program.lua [args...]" >&2
+    echo "usage: mlws-vm-lua [--version] [--shared] [-S | -k] [-o FILE] program.lua [args...]" >&2
     exit 64
 }
 
-compile_only= keep= out= prog=
+compile_only= keep= out= prog= shared=
 while [ $# -gt 0 ]; do
     case "$1" in
         -S) compile_only=1; shift ;;
+        --shared) shared=--shared; shift ;;
         -k) keep=1; shift ;;
         -o) [ $# -ge 2 ] || usage; out=$2; shift 2 ;;
         --version) exec "$here/mlws-vm-luac" --version ;;
@@ -41,8 +45,17 @@ else
     trap 'rm -rf "$tmp"' EXIT INT TERM
     out="$tmp/program.masm"
 fi
-"$here/mlws-vm-luac" -o "$out" "$prog" || exit $?
+"$here/mlws-vm-luac" $shared -o "$out" "$prog" || exit $?
 [ -n "$compile_only" ] && exit 0
 
 . "$here/../tools/find-vm.sh"
+if [ -n "$shared" ]; then
+    lib="$here/lib/lua-$("$here/mlws-vm-luac" --version | sed 's/.* //').mlwsl"
+    if [ ! -f "$lib" ]; then
+        echo "mlws-vm-lua: no library $lib (make it with make -C $here lib)" >&2
+        exit 69
+    fi
+    "$MLWSVM" run -L "$here/lib" "$out" "$@"
+    exit $?
+fi
 "$MLWSVM" run "$out" "$@"

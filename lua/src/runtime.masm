@@ -395,33 +395,47 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 ; functions as Lua does: compiled Lua functions and the library's
 ; functions count; the runtime's helpers and the prelude (the library
 ; written in Lua) are skipped. Returns the Lua line, -1 if that frame is a
-; library function (which has no position), or 0 if there is none. The
-; frames come from the "(file.masm:LINE)" parts and the line map, which
-; gives 0 for helpers, -1 for library functions and -2 for the prelude.
+; library function (which has no position), or 0 if there is none. Each
+; frame is a line "  at module.function (position)": a compiled Lua
+; function's code has .loc positions, so its position is
+; "chunk:LINE; file.masm:N"; the library's functions are B$... and P$....
 .func rt$trace_frame(ref trace, i64 level) -> i64
-    mov I1, 0               ; position in the trace
+    mov I1, 0               ; start of the next line
     mov I8, 0               ; frames counted
+    len I9, R0
 .try 9f
-1:  strfind I2, R0, ".masm:", I1
-    blt I2, 0, 8f
-    add I3, I2, 6
-    strfind I4, R0, ")", I3
-    blt I4, 0, 8f
-    sub I5, I4, I3
-    substr R1, R0, I3, I5
-    parse.i64 I6, R1
-    mov I1, I4
-    blt I6, 1, 1b
-    bgt I6, @rt$nlines, 1b
-    sub I6, 1
-    mul I6, 4
-    mov.i32 I7, @rt$linemap{I6}
-    beq I7, 0, 1b
-    beq I7, -2, 1b
-    beq I8, I0, 2f
+1:  bge I1, I9, 8f
+    strfind I2, R0, "\n", I1
+    bge I2, 0, 2f
+    mov I2, I9
+2:  sub I3, I2, I1
+    substr R1, R0, I1, I3   ; the line
+    add I1, I2, 1
+    strfind I4, R1, " (", 0
+    blt I4, 0, 1b
+    add I5, I4, 2
+    strfind I6, R1, ";", I5
+    blt I6, 0, 5f
+    mov I7, I5              ; the Lua line: after the last ':' before ';'
+3:  strfind I10, R1, ":", I7
+    blt I10, 0, 4f
+    bge I10, I6, 4f
+    add I7, I10, 1
+    jmp 3b
+4:  sub I10, I6, I7
+    substr R3, R1, I7, I10
+    parse.i64 I11, R3
+    jmp 6f
+5:  substr R2, R1, 0, I4    ; "  at module.function"
+    strfind I10, R2, ".B$", 0
+    bge I10, 0, 51f
+    strfind I10, R2, ".P$", 0
+    blt I10, 0, 1b
+51: mov I11, -1
+6:  beq I8, I0, 7f
     inc I8
     jmp 1b
-2:  ret I7
+7:  ret I11
 .endtry
 8:  ret 0
 9:  catch R2

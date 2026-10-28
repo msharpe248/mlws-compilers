@@ -15,3 +15,6 @@ lua/bench/*.masm
 
 .DS_Store
 __pycache__/
+
+# The Lua library made by make -C lua lib
+lua/lib/

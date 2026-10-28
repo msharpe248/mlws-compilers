@@ -8,6 +8,9 @@ make
 ./mlws-vm-lua program.lua [args...]   # compile and run
 ./mlws-vm-lua -S program.lua          # export the assembly: program.masm
 mlwsvm run program.masm [args...]     # which runs on its own
+
+make lib                              # the runtime as an MLWSVM library
+./mlws-vm-lua --shared program.lua    # a program that imports it
 ```
 
 `mlws-vm-lua` compiles a program and runs it:
@@ -18,15 +21,20 @@ mlws-vm-lua [options] program.lua [args...]
   -k             keep the assembly after running the program
   -o FILE        the assembly file (default: program.masm next to the source);
                  with -S, '-' writes it to standard output
+  --shared       compile the program alone, importing the runtime from the
+                 library lib/lua-VERSION.mlwsl (see below)
   --version      print the compiler's version (lua/VERSION)
 ```
 
 `mlws-vm-luac` is the compiler itself; it only compiles:
 
 ```
-mlws-vm-luac [-o FILE] [-n NAME] program.lua
+mlws-vm-luac [--shared] [-o FILE] [-n NAME] program.lua
+mlws-vm-luac --library DIR
   -o FILE        write the assembly to FILE (default: program.masm; '-' for stdout)
   -n NAME        the chunk name in error messages (default: the path as given)
+  --shared       import the runtime from the MLWSVM library lua (see below)
+  --library DIR  write that library's source to DIR
   --version      print the version
 ```
 
@@ -39,6 +47,35 @@ offsets and `bisa`/`bnisa`), so it needs M37 or a later VM. It can be assembled 
 function it came from, and its code carries the Lua lines it came from
 (`.loc`), so backtraces, the profiler's hot program lines and the
 debugger's `break program.lua:12` name lines of the Lua program.
+
+### The runtime as a library
+
+The runtime, the library and the prelude (the part of the library written
+in Lua) are the same for every program, about 780 KB of assembly. They can
+instead be one MLWSVM library, `lua`, that programs import
+([MLWSVM libraries](../../mlws-vm/docs/ASSEMBLY.md#81-libraries)):
+
+```sh
+make lib                                   # lib/lua-VERSION.mlwsl (needs mlwsvm)
+./mlws-vm-luac --shared -o program.masm program.lua
+mlwsvm run -L lib program.masm             # -L: where the library is
+./mlws-vm-lua --shared program.lua         # the same, in one step
+```
+
+`make lib` writes the library's source with `mlws-vm-luac --library
+lib/src` (`library.masm`, and `lua.masm`, the module `lua`, which exports
+the runtime's functions, data and structs) and builds it with `mlwsvm lib
+build`. A program compiled with `--shared` holds only its own code (10 KB
+for `tests/drivers/hello.lua`, against 790 KB), names the library's
+functions as `lua.name`, and says `.requires lua, "=VERSION"`: it relies
+on the runtime's internals, so it needs the library of the same compiler
+version, and checks at start-up that the library pins the globals and
+makes the table constructors it expects. Such a program is assembled in
+a few milliseconds instead of about 30, and runs as fast. Its output must
+not be named `lua.masm`, which would be found instead of the library.
+The runtime tells nil, false and true apart by the identity of constants
+(`1n`, `2n`, `3n`), so the VM must make one object of each constant for
+all modules: MLWSVM after 0.4.0 (bb873ad).
 
 ## What it implements
 
@@ -254,10 +291,10 @@ metatable's `__index` table through an inline cache, with no runtime call.
 A Lua error is an MLWSVM exception carrying a `LuaErr` struct; `pcall` is a
 `.try` around the call, and faults the VM raises itself (stack overflow,
 running out of memory) become Lua errors. Positions come from the VM's
-backtrace: the output contains a table from assembly lines to Lua lines
-(with the library's functions marked, so that an error in one is reported
-at the line that called it, as in Lua), and `error`'s levels count frames
-the way Lua does.
+backtrace: a compiled Lua function's frame shows its Lua line (from
+`.loc`), the library's functions are recognised by name (`B$...`), so that
+an error in one is reported at the line that called it, as in Lua, and
+`error`'s levels count frames the way Lua does.
 
 ## Performance
 
@@ -289,6 +326,7 @@ passed as an argument), bounds checks on array accesses and allocation.
 an object system, coroutine pipelines, text processing). Each `NAME.lua`
 has its expected output in `NAME.out` (and `NAME.err` for the first line of
 an expected error), made by running the reference `lua` 5.5 with
-`tests/expect.sh`, so the tests need only python3 to run. The tests also
-pass with the VM collecting garbage at every allocation
-(`MLWSVM_GC_STRESS=1`).
+`tests/expect.sh`, so the tests need only python3 to run. `make test` runs
+them twice, as self-contained programs and with `--shared` (the library is
+built first). The tests also pass with the VM collecting garbage at every
+allocation (`MLWSVM_GC_STRESS=1`).
