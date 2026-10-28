@@ -3,9 +3,11 @@
 Each compiler is versioned on its own (its `VERSION` file); a release of
 this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
-## Unreleased
+## Release 0.4.2
 
-### Lua
+Lua 0.4.2; bf and Lox stay at 0.4.1. For MLWSVM 0.4.1 or later.
+
+### Lua 0.4.2
 
 * `io.flush()` exists, and `file:flush()` writes out standard output's
   unfinished line (MLWSVM after 0.4.1 writes each process's output a whole
