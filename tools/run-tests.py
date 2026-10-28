@@ -32,6 +32,7 @@ tests.
 import concurrent.futures
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -55,11 +56,21 @@ VM = find_vm()
 TIMEOUT = 60
 
 
-def run(cmd, stdin=b""):
+def run(cmd, stdin=b"", cwd=None):
+    """Run cmd in its own process group; on a timeout kill the whole group,
+    so a driver script's VM is not left running."""
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         cwd=cwd, start_new_session=True)
     try:
-        r = subprocess.run(cmd, input=stdin, capture_output=True, timeout=TIMEOUT)
-        return r.returncode, r.stdout, r.stderr
+        out, err = p.communicate(stdin, timeout=TIMEOUT)
+        return p.returncode, out, err
     except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGTERM)  # the driver's trap removes its temporary files
+        try:
+            p.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(p.pid, signal.SIGKILL)
+            p.communicate()
         return None, b"", b"timeout"
 
 
@@ -209,11 +220,9 @@ def lua_test(path, tmp):
     want_err = opt(".err")
     args = (opt(".args") or b"").decode().splitlines()
     driver = os.path.join(ROOT, "lua", "mlws-vm-lua")
-    try:
-        r = subprocess.run([driver] + LUA_FLAGS + [os.path.basename(path)] + args, input=opt(".in") or b"",
-                           capture_output=True, timeout=TIMEOUT, cwd=os.path.dirname(path) or ".")
-        code, out, err = r.returncode, r.stdout, r.stderr
-    except subprocess.TimeoutExpired:
+    code, out, err = run([driver] + LUA_FLAGS + [os.path.basename(path)] + args, opt(".in") or b"",
+                         cwd=os.path.dirname(path) or ".")
+    if code is None:
         return ["timeout"]
     fails = []
     want_exit = 1 if want_err is not None else 0
