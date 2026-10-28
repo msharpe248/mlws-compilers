@@ -263,15 +263,15 @@ Apple M5 Pro, MLWSVM M32), in seconds, with Lua 5.5.1 for comparison:
 
 | Benchmark | mlws-vm-lua | lua 5.5 |
 |---|---|---|
-| fib (32) | 0.13 | 0.05 |
+| fib (32) | 0.08 | 0.05 |
 | loop | 0.22 | 0.21 |
-| methods (2M method calls and objects) | 0.72 | 0.34 |
+| methods (2M method calls and objects) | 0.71 | 0.34 |
 | strings (format, gmatch, gsub) | 0.40 | 0.13 |
 | iterate (pairs, ipairs) | 0.12 | 0.05 |
-| binarytrees (15) | 0.63 | 0.37 |
-| nbody (500,000) | 1.12 | 0.41 |
-| spectralnorm (500) | 0.33 | 0.18 |
-| fannkuch (10) | 1.98 | 0.80 |
+| binarytrees (15) | 0.61 | 0.37 |
+| nbody (500,000) | 1.03 | 0.38 |
+| spectralnorm (500) | 0.26 | 0.18 |
+| fannkuch (10) | 2.01 | 0.80 |
 
 The profiles (`mlwsvm run --profile`) show almost every instruction on the
 VM's fast paths; what remains is instruction count, mostly type checks on
