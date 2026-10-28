@@ -3,27 +3,29 @@
 Each compiler is versioned on its own (its `VERSION` file); a release of
 this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
-## Unreleased
+## Release 0.2.0
 
-### bf
+bf 0.2.0, Lox 0.2.0 and Lua 0.2.0, for MLWSVM 0.2.0. The assembly of all
+three uses M34's `.loc` source positions, so it needs MLWSVM 0.2.0 or later.
+
+### bf 0.2.0
 
 * The assembly gives each stretch of code the line of the program it came
   from (`.loc`, MLWSVM M34), so the VM's profiler, tracer and debugger name
   lines of the brainfuck program. It needs MLWSVM M34 or later.
 
-### Lox
+### Lox 0.2.0
 
 * The assembly gives each stretch of code the Lox line it came from
   (`.loc`, MLWSVM M34), so the VM's backtraces, profiler, tracer and
   debugger name lines of the Lox program. It needs MLWSVM M34 or later.
 
-### Lua
+### Lua 0.2.0
 
 * The assembly gives each stretch of code the Lua line it came from
   (`.loc`, MLWSVM M34), so the VM's backtraces, profiler (hot program
   lines), tracer and debugger (`break program.lua:12`) name lines of the
   Lua program. It needs MLWSVM M34 or later.
-
 * Faster strings: `string.find`, `match` and `gmatch` and the common
   `string.format` conversions (`%d`, `%s`, `%%`) are in assembly; patterns
   are compiled once and searches skip positions that cannot match; plain

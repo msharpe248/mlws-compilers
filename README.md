@@ -46,6 +46,7 @@ says what changed in each.
 | Release | bf | Lox | Lua |
 |---|---|---|---|
 | 0.1.0 | 0.1.0 | 0.1.0 | 0.1.0 |
+| 0.2.0 | 0.2.0 | 0.2.0 | 0.2.0 |
 
 ## Naming
 
