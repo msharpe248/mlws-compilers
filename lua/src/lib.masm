@@ -1546,6 +1546,13 @@ MATHF1 exp, ncall "math.exp" (F0) -> (F0)
     ret 1, I0, 0.0, null
 .endf
 
+; P.flush(): write out standard output's buffered text, with the
+; unfinished line (the VM otherwise writes it a whole line at a time).
+.func P$flush -> (i64, i64, f64, ref)
+    ncall "io.flush"
+    ret 1, 0, 0.0, 3n
+.endf
+
 ; P.date(t, utc): a table of the fields of time t (seconds).
 .func P$date(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
     mul I2, I0, 1000000000

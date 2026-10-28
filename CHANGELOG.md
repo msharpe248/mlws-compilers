@@ -3,6 +3,15 @@
 Each compiler is versioned on its own (its `VERSION` file); a release of
 this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
+## Unreleased
+
+### Lua
+
+* `io.flush()` exists, and `file:flush()` writes out standard output's
+  unfinished line (MLWSVM after 0.4.1 writes each process's output a whole
+  line at a time); both return `true`, as lua does.
+* `tools/run-tests.py` stops a timed-out test's VM along with its driver.
+
 ## Release 0.4.1
 
 bf 0.4.1, Lox 0.4.1 and Lua 0.4.1, for MLWSVM 0.4.1. Lua's runtime can

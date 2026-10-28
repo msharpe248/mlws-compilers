@@ -12,7 +12,7 @@ if [ $# -eq 0 ]; then
     done
 fi
 for f in "$@"; do
-    dir=$(dirname -- "$f") name=$(basename -- "$f" .lua)
+    dir=$(CDPATH= cd -- "$(dirname -- "$f")" && pwd) name=$(basename -- "$f" .lua)
     args=
     [ -f "$dir/$name.args" ] && args=$(cat "$dir/$name.args")
     input=/dev/null

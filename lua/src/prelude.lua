@@ -870,7 +870,12 @@ function FILE.close(f)
   return true
 end
 
-function FILE.flush(f) return f end
+function FILE.flush(f)
+  checkfile(f, "flush")
+  -- files are written through at once; only standard output is buffered
+  if f.h == 1 then P.flush() end
+  return true
+end
 function FILE.setvbuf(f) return true end
 
 function FILE.seek(f, whence, offset)
@@ -908,6 +913,7 @@ function io.close(f)
 end
 
 function io.read(...) return default_in:read(...) end
+function io.flush() return default_out:flush() end
 
 function io.lines(path, ...)
   if path == nil then return default_in:lines(...) end

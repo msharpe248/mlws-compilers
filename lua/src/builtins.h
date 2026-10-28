@@ -91,6 +91,7 @@ static const Builtin builtins[] = {
     {"P", "read", "P$read", 2},
     {"P", "seek", "P$seek", 3},
     {"P", "now", "P$now", 0},
+    {"P", "flush", "P$flush", 0},
     {"P", "date", "P$date", 2},
     {"P", "time", "P$time", 6},
     {"P", "match", "P$match", 7},

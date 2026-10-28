@@ -7,6 +7,9 @@ nil	no/such/file.txt: No such file or directory	2
 true	nil	file	closed file	nil
 written 1 2.0
 stdout write
+part, true	true	true
+true
+false	attempt to use a closed file
 first line	123	 rest	last
 more
 
