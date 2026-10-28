@@ -33,7 +33,10 @@ The assembly is one self-contained file: the program, the runtime
 (`src/runtime.masm`) and a line map, with no imports. It can also be
 assembled to a binary module (`mlwsvm asm program.masm -o program.mlwso`),
 or run under `mlwsvm debug`, `--profile` or `--trace`; each function is named
-`L<n>$name` after the Lox function it came from.
+`L<n>$name` after the Lox function it came from, and its code carries the
+Lox lines it came from (`.loc`, MLWSVM M34 or later), so backtraces, the
+profiler's hot program lines and the debugger's `break program.lox:12` name
+lines of the Lox program.
 
 It implements the whole language (closures, classes, inheritance, `super`,
 initializers, `clock()`) and behaves like jlox: it passes all 241 applicable

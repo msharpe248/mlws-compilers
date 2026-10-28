@@ -5,7 +5,18 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
 ## Unreleased
 
+### Lox
+
+* The assembly gives each stretch of code the Lox line it came from
+  (`.loc`, MLWSVM M34), so the VM's backtraces, profiler, tracer and
+  debugger name lines of the Lox program. It needs MLWSVM M34 or later.
+
 ### Lua
+
+* The assembly gives each stretch of code the Lua line it came from
+  (`.loc`, MLWSVM M34), so the VM's backtraces, profiler (hot program
+  lines), tracer and debugger (`break program.lua:12`) name lines of the
+  Lua program. It needs MLWSVM M34 or later.
 
 * Faster strings: `string.find`, `match` and `gmatch` and the common
   `string.format` conversions (`%d`, `%s`, `%%`) are in assembly; patterns

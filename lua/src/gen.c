@@ -5657,8 +5657,19 @@ void generate(GenInput *in, FILE *f) {
     gen_helpers(&helpers);
     for (int i = 0; i < helpers.n; i++)
         out(f, &nlines, (void *)&map, 0, "%s", helpers.v[i].text);
-    for (int i = 0; i < G.out.n; i++)
-        out(f, &nlines, (void *)&map, G.out.v[i].line, "%s", G.out.v[i].text);
+    /* the Lua functions, with .loc where the Lua line changes (the
+       prelude's lines, -2, and lines 0 have no position of their own) */
+    int loc = 0;
+    for (int i = 0; i < G.out.n; i++) {
+        Line *l = &G.out.v[i];
+        if (strncmp(l->text, ".func ", 6) == 0)
+            loc = 0;
+        else if (l->line > 0 && l->line != loc && strncmp(l->text, ".endf", 5) != 0) {
+            out(f, &nlines, (void *)&map, l->line, "    .loc %s, %d", chunk, l->line);
+            loc = l->line;
+        }
+        out(f, &nlines, (void *)&map, l->line, "%s", l->text);
+    }
     for (int i = 0; i < G.data.n; i++)
         out(f, &nlines, (void *)&map, 0, "%s", G.data.v[i].text);
     out(f, &nlines, (void *)&map, 0, "        .align 8");

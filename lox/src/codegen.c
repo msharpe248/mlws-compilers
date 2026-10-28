@@ -1863,7 +1863,34 @@ void generate(Func *script, Globals *g, const char *runtime, FILE *out) {
     }
     buf_add(&all, 0, "");
 
-    buf_cat(&all, &out_funcs);
+    /* The functions, with a .loc where the Lox line changes. */
+    char file[1024];
+    size_t fl = 0;
+    file[fl++] = '"';
+    for (const char *p = source_path; *p && fl + 6 < sizeof file; p++) {
+        unsigned char c = (unsigned char)*p;
+        if (c == '"' || c == '\\') { file[fl++] = '\\'; file[fl++] = (char)c; }
+        else if (c < 0x20 || c >= 0x7f) fl += (size_t)snprintf(file + fl, sizeof file - fl, "\\x%02x", c);
+        else file[fl++] = (char)c;
+    }
+    file[fl++] = '"';
+    file[fl] = '\0';
+    size_t start = 0;
+    int loc = 0;
+    for (int i = 0; i < out_funcs.nlines; i++) {
+        char *text = out_funcs.text + start;
+        char *nl = memchr(text, '\n', out_funcs.len - start);
+        int line = out_funcs.lines[i];
+        *nl = '\0';
+        if (strncmp(text, ".func ", 6) == 0) loc = 0;
+        else if (line > 0 && line != loc && strncmp(text, ".endf", 5) != 0) {
+            buf_addf(&all, line, "    .loc %s, %d", file, line);
+            loc = line;
+        }
+        buf_add(&all, line, text);
+        *nl = '\n';
+        start = (size_t)(nl - out_funcs.text) + 1;
+    }
 
     /* The map from assembly lines to Lox lines, for errors the VM raises
      * (such as a stack overflow). Its own lines map to nothing. */

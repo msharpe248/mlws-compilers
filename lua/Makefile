@@ -33,7 +33,7 @@ src/embedded.o: src/embedded.c
 
 test: mlws-vm-luac
 	../tools/run-tests.py lua tests
-	../tools/test-drivers.sh ./mlws-vm-lua tests/drivers/hello.lua tests/drivers/hello.out
+	../tools/test-drivers.sh ./mlws-vm-lua tests/drivers/hello.lua tests/drivers/hello.out 4
 
 clean:
 	rm -f mlws-vm-luac src/*.o src/embedded.c

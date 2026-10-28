@@ -1,9 +1,10 @@
 #!/bin/sh
 # Check a compiler driver's ways of producing assembly (-S, -o, -k).
-#   test-drivers.sh DRIVER PROGRAM EXPECTED_STDOUT
+#   test-drivers.sh DRIVER PROGRAM EXPECTED_STDOUT [LINE]
 # PROGRAM is copied to a scratch directory; EXPECTED_STDOUT is what running
-# it prints.
-driver=$1 prog=$2 expect=$3
+# it prints. LINE, if given, is a line of PROGRAM that the assembly's .loc
+# positions must name (the profiler lists it among the program's lines).
+driver=$1 prog=$2 expect=$3 line=$4
 [ -x "$driver" ] && [ -f "$prog" ] && [ -f "$expect" ] || {
     echo "usage: test-drivers.sh DRIVER PROGRAM EXPECTED_STDOUT" >&2; exit 2; }
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -29,6 +30,10 @@ check "-S writes program.masm and does not run it" \
 check "the exported assembly runs on its own" same_output "$MLWSVM" run "$masm"
 check "the exported assembly assembles to .mlwso" "$MLWSVM" asm "$masm" -o "$tmp/prog.mlwso"
 check "the .mlwso runs" same_output "$MLWSVM" run "$tmp/prog.mlwso"
+if [ -n "$line" ]; then
+    check "the assembly gives positions in $name (line $line)" \
+        sh -c '"$1" run --profile "$2" 2>&1 | grep -q "/$3:$4\$"' _ "$MLWSVM" "$masm" "$name" "$line"
+fi
 rm -f "$masm"
 check "-S -o - writes the assembly to stdout" \
     sh -c '"$1" -S -o - "$2" >"$3" && grep -q "^\.func main" "$3"' _ "$driver" "$src" "$tmp/stdout.masm"

@@ -25,7 +25,7 @@ src/runtime_masm.c: src/runtime.masm
 
 test: mlws-vm-loxc
 	../tools/run-tests.py lox tests
-	../tools/test-drivers.sh ./mlws-vm-lox tests/drivers/hello.lox tests/drivers/hello.out
+	../tools/test-drivers.sh ./mlws-vm-lox tests/drivers/hello.lox tests/drivers/hello.out 4
 
 clean:
 	rm -f mlws-vm-loxc src/*.o src/runtime_masm.c
