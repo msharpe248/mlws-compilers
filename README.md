@@ -87,6 +87,18 @@ The driver scripts (`bf/mlws-vm-bf`, `lox/mlws-vm-lox`, `lua/mlws-vm-lua`) and t
 use the `mlwsvm` executable given by `$MLWSVM`, else `mlwsvm` on the `PATH`, else
 `../mlws-vm/mlwsvm` next to this repository.
 
+## Optimizing
+
+MLWSVM newer than 0.5.0 has an optimizer, off by default, which works on any
+of these compilers' output: `mlwsvm run --opt 3 program.masm`, or
+`MLWSVM_OPT=3` in the environment, which the driver scripts and the test
+runner pass on (`MLWSVM_OPT=3 lua/mlws-vm-lua program.lua`,
+`MLWSVM_OPT=3 make test`). Every module is optimized once as it loads, and the
+result is kept in the module cache. Every test suite passes at `-O3`. Do not
+add the `tailcall` pass (`--opt 3,tailcall`, or `all`): it removes the frames
+Lua counts to find an error's position. See the VM's
+[OPTIMIZER.md](../mlws-vm/docs/OPTIMIZER.md).
+
 ## Layout
 
 ```
