@@ -89,7 +89,7 @@ use the `mlwsvm` executable given by `$MLWSVM`, else `mlwsvm` on the `PATH`, els
 
 ## Optimizing
 
-MLWSVM newer than 0.5.0 has an optimizer, off by default, which works on any
+MLWSVM 0.6.0 and later have an optimizer, off by default, which works on any
 of these compilers' output: `mlwsvm run --opt 3 program.masm`, or
 `MLWSVM_OPT=3` in the environment, which the driver scripts and the test
 runner pass on (`MLWSVM_OPT=3 lua/mlws-vm-lua program.lua`,

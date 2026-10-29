@@ -319,7 +319,7 @@ VM's fast paths; what remains is instruction count, mostly type checks on
 values whose type is not known statically (anything read from a table or
 passed as an argument), bounds checks on array accesses and allocation.
 
-With MLWSVM's optimizer (`MLWSVM_OPT=3`, MLWSVM newer than 0.5.0; see the
+With MLWSVM's optimizer (`MLWSVM_OPT=3`, MLWSVM 0.6.0 or later; see the
 top-level README), the same benchmarks on MLWSVM d7cdc6f, cache warm, run
 from 0% to 27% faster: spectralnorm 0.22 → 0.16, loop 0.19 → 0.17,
 iterate 0.09 → 0.08, binarytrees 0.57 → 0.54, nbody 0.99 → 0.95,
