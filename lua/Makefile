@@ -37,10 +37,11 @@ src/embedded.o: src/embedded.c
 	$(CC) $(CFLAGS) -Wno-overlength-strings -c -o $@ $<
 
 # The runtime and the library as an MLWSVM library, for programs compiled
-# with --shared (needs the VM).
+# with --shared (needs the VM). It is made again when the VM changes, whose
+# module format may have.
 lib: $(LIB)
 
-$(LIB): mlws-vm-luac
+$(LIB): mlws-vm-luac $(wildcard $(MLWSVM))
 	rm -rf lib && mkdir -p lib/src
 	./mlws-vm-luac --library lib/src
 	"$(MLWSVM)" lib build lib/src -o $@
