@@ -128,10 +128,10 @@ machine code (its times include starting it, about 0.07 s):
 | Erlang | MLWSVM | MLWSVM JIT | erl (JIT) |
 |---|---|---|---|
 | fib (30) | 0.04 | 0.02 | 0.08 |
-| ring (1,000 processes, 1,000,000 messages) | 0.32 | 0.32 | 0.24 |
-| binarytrees (16) | 0.64 | 0.31 | 0.12 |
-| nbody (100,000 steps) | 0.78 | 0.57 | 0.15 |
-| sorting (200,000 integers, maps) | 0.74 | 0.46 | 0.10 |
+| ring (1,000 processes, 1,000,000 messages) | 0.29 | 0.27 | 0.25 |
+| binarytrees (16) | 0.66 | 0.31 | 0.12 |
+| nbody (100,000 steps) | 0.49 | 0.23 | 0.16 |
+| sorting (200,000 integers, maps) | 0.76 | 0.45 | 0.10 |
 
 Every test suite passes with the JIT, and prints the same as without it.
 The JIT does least for code that spends its time in the runtime: string

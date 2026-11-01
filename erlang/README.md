@@ -142,22 +142,24 @@ exit reason written as a term, which the VM hands to the monitors in its
 ## Performance
 
 `bench/run.sh` (`make bench`) times five programs on MLWSVM and on
-Erlang/OTP 29 (whose time includes starting the BEAM, about 0.07 s), on
-an Apple M-series machine:
+Erlang/OTP 29 (whose BEAM compiles to machine code, and whose time includes
+starting it, about 0.07 s), on an Apple M5 Pro, in seconds, the best of
+three runs. MLWSVM is run interpreting, and with the JIT on its main branch
+(`MLWSVM_JIT=on`, not yet in a release):
 
-| Benchmark | MLWSVM | erl |
-|---|---|---|
-| fib (fib(30)) | 0.05 | 0.08 |
-| ring (1,000 processes, 1,000,000 messages) | 0.33 | 0.26 |
-| binarytrees (depth 16) | 0.66 | 0.12 |
-| nbody (100,000 steps, floats in tuples) | 0.78 | 0.14 |
-| sorting (200,000 integers, maps) | 0.75 | 0.11 |
+| Benchmark | MLWSVM | MLWSVM JIT | erl |
+|---|---|---|---|
+| fib (fib(30)) | 0.04 | 0.02 | 0.08 |
+| ring (1,000 processes, 1,000,000 messages) | 0.29 | 0.27 | 0.25 |
+| binarytrees (depth 16) | 0.66 | 0.31 | 0.12 |
+| nbody (100,000 steps, floats in tuples) | 0.49 | 0.23 | 0.16 |
+| sorting (200,000 integers, maps) | 0.76 | 0.45 | 0.10 |
 
 These need MLWSVM 0.7.0 or later, whose fast forms for `bitcast`,
 `typeof` and comparisons of list elements came from these programs'
-profiles. BEAM compiles to machine code; MLWSVM interprets. Calls and
-integer arithmetic are as fast as BEAM's; tuples and allocation are where
-the time goes.
+profiles. Calls and integer arithmetic are as fast as BEAM's; tuples and
+allocation are where the time goes. With the JIT, `--jit-report -` shows
+what its machine code could not run itself: here, only `send` and `recv`.
 
 ## Tests
 
