@@ -144,8 +144,8 @@ exit reason written as a term, which the VM hands to the monitors in its
 `bench/run.sh` (`make bench`) times five programs on MLWSVM and on
 Erlang/OTP 29 (whose BEAM compiles to machine code, and whose time includes
 starting it, about 0.07 s), on an Apple M5 Pro, in seconds, the best of
-three runs. MLWSVM is run interpreting, and with the JIT on its main branch
-(`MLWSVM_JIT=on`, not yet in a release):
+three runs. MLWSVM is run interpreting, and with the JIT of MLWSVM 0.8.0
+and later (`MLWSVM_JIT=on`):
 
 | Benchmark | MLWSVM | MLWSVM JIT | erl |
 |---|---|---|---|

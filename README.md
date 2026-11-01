@@ -107,9 +107,9 @@ Lua counts to find an error's position. See the VM's
 
 The Lua and Erlang benchmarks (`make -C lua bench`, `make -C erlang bench`),
 in seconds, the best of three runs, on an Apple M5 Pro. MLWSVM is run
-interpreting, and with its JIT (`mlwsvm run --jit on`, or `MLWSVM_JIT=on` in the
-environment, which works with the driver scripts and `make test` too). The JIT is on MLWSVM's main
-branch (M43) and is not in a release yet. The references are the
+interpreting, and with the JIT of MLWSVM 0.8.0 and later (`mlwsvm run --jit
+on`, or `MLWSVM_JIT=on` in the environment, which works with the driver
+scripts and `make test` too). The references are the
 interpreter `lua` 5.5.1, and Erlang/OTP 29.1.2, whose BEAM compiles to
 machine code (its times include starting it, about 0.07 s):
 
@@ -133,7 +133,8 @@ machine code (its times include starting it, about 0.07 s):
 | nbody (100,000 steps) | 0.49 | 0.23 | 0.16 |
 | sorting (200,000 integers, maps) | 0.76 | 0.45 | 0.10 |
 
-Every test suite passes with the JIT, and prints the same as without it.
+Every test suite passes with the JIT (tested on MLWSVM 0.8.0), and prints the
+same as without it.
 The JIT does least for code that spends its time in the runtime: string
 operations, and sending and receiving messages.
 
