@@ -126,33 +126,58 @@ keysort(N, L) -> sort(fun(A, B) -> element(N, A) =< element(N, B) end, L).
 
 keymerge(N, A, B) -> merge(fun(X, Y) -> element(N, X) =< element(N, Y) end, A, B).
 
-sort(L) -> sort(fun(A, B) -> A =< B end, L).
+%% Sorting: stable bottom-up merge sort, of pairs, then pairs of pairs, ...
+sort(L) -> mergeall(runs(L)).
 
-%% A stable merge sort: Le(A, B) is true when A may come before B.
-sort(Le, L) ->
-    case length(L) of
-        N when N < 2 -> L;
-        N ->
-            {A, B} = split(N div 2, L),
-            merge(Le, sort(Le, A), sort(Le, B))
-    end.
+runs([X, Y | T]) when X =< Y -> [[X, Y] | runs(T)];
+runs([X, Y | T]) -> [[Y, X] | runs(T)];
+runs([X]) -> [[X]];
+runs([]) -> [].
+
+mergeall([]) -> [];
+mergeall([L]) -> L;
+mergeall(Ls) -> mergeall(mergepairs(Ls)).
+
+mergepairs([A, B | T]) -> [merge2(A, B) | mergepairs(T)];
+mergepairs(Ls) -> Ls.
+
+merge2([X | Xs] = A, [Y | Ys] = B) ->
+    if
+        X =< Y -> [X | merge2(Xs, B)];
+        true -> [Y | merge2(A, Ys)]
+    end;
+merge2([], B) -> B;
+merge2(A, []) -> A.
+
+%% Le(A, B) is true when A may come before B.
+sort(Le, L) -> mergeall(Le, runs(Le, L)).
+
+runs(Le, [X, Y | T]) ->
+    case Le(X, Y) of
+        true -> [[X, Y] | runs(Le, T)];
+        false -> [[Y, X] | runs(Le, T)]
+    end;
+runs(_, [X]) -> [[X]];
+runs(_, []) -> [].
+
+mergeall(_, []) -> [];
+mergeall(_, [L]) -> L;
+mergeall(Le, Ls) -> mergeall(Le, mergepairs(Le, Ls)).
+
+mergepairs(Le, [A, B | T]) -> [merge(Le, A, B) | mergepairs(Le, T)];
+mergepairs(_, Ls) -> Ls.
 
 sort(Le, L, _) -> sort(Le, L).
 
-merge(A, B) -> merge(fun(X, Y) -> X =< Y end, A, B).
+merge(A, B) -> merge2(A, B).
 
-merge(Le, A, B) -> merge(Le, A, B, []).
-merge(Le, [X | Xs] = A, [Y | Ys] = B, Acc) ->
+merge(Le, [X | Xs] = A, [Y | Ys] = B) ->
     case Le(X, Y) of
-        true -> merge(Le, Xs, B, [X | Acc]);
-        false ->
-            case Le(Y, X) of
-                true -> merge(Le, A, Ys, [Y | Acc]);
-                false -> merge(Le, Xs, B, [X | Acc])
-            end
+        true -> [X | merge(Le, Xs, B)];
+        false -> [Y | merge(Le, A, Ys)]
     end;
-merge(_, [], B, Acc) -> reverse(Acc, B);
-merge(_, A, [], Acc) -> reverse(Acc, A).
+merge(_, [], B) -> B;
+merge(_, A, []) -> A.
 
 usort(L) -> uniq_sorted(sort(L)).
 usort(Le, L) -> uniq_by(Le, sort(Le, L)).

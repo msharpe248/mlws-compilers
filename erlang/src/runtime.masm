@@ -32,7 +32,9 @@
 .ends
 
 .struct Map
-    kv: ref         ; a list: key R, key I, value R, value I, ... sorted by key
+    kv: ref         ; up to 32 keys: a list, key R, key I, value R, value I, ... sorted by key
+    tree: ref       ; more: a red-black tree of erts_map (kv is null)
+    size: i64       ; the number of keys in the tree
 .ends
 
 .struct Bin
@@ -578,8 +580,8 @@ Ltuple:
     jmp 2b
 3:  ret I11
 Lmap:
-    mov.r R2, ar->Map.kv
-    mov.r R3, br->Map.kv
+    call rt$map_kv (ar) -> R2
+    call rt$map_kv (br) -> R3
     len I5, R2
     len I6, R3
     blt I5, I6, lt
@@ -1700,7 +1702,58 @@ timeout:
     ret 0, R0
 .endf
 
-; Binary search of a map's keys: (1, index) if found, else (0, where it goes).
+; The keys and values of a map in order, as a kv list (a new one for a tree).
+.func rt$map_kv(ref m) -> ref
+    mov.r R1, m->Map.tree
+    bnz.r R1, 1f
+    mov.r R0, m->Map.kv
+    ret R0
+1:  mov I0, m->Map.size
+    shl I0, 2
+    lnew R2, I0
+    call rt$tree_flat (R1, R2)
+    ret R2
+.endf
+
+; Append a tree's keys and values to a kv list, in order.
+.func rt$tree_flat(ref n, ref out)
+1:  beq.r n, "e", 2f
+    mov.r R2, n[2]
+    call rt$tree_flat (R2, out)
+    mov.r R3, n[4]
+    mov I3, n[5]
+    mov.r R4, n[6]
+    mov I4, n[7]
+    lpush out, R3, I3, R4, I4
+    mov.r n, n[8]
+    jmp 1b
+2:  ret
+.endf
+
+.func rt$tree_find(i64 ki, ref n, ref kr) -> (i64, i64, ref)
+1:  beq.r n, "e", 3f
+    mov.r R2, n[4]
+    mov I2, n[5]
+    call rt$compare (ki, I2, 1, kr, R2) -> I3
+    beq I3, 0, 4f
+    blt I3, 0, 2f
+    mov.r n, n[8]
+    jmp 1b
+2:  mov.r n, n[2]
+    jmp 1b
+4:  mov.r R4, n[6]
+    mov I4, n[7]
+    ret 1, I4, R4
+3:  ret 0, 0, null
+.endf
+
+; The order of map keys (exact: 1 and 1.0 are two keys), for erts_map.
+.func rt$mapcmp(i64 a, i64 b, ref ar, ref br) -> (i64, ref)
+    call rt$compare (a, b, 1, ar, br) -> I2
+    ret I2, null
+.endf
+
+; Binary search of a kv list: (1, index) if found, else (0, where it goes).
 .func rt$map_pos(i64 ki, ref kv, ref kr) -> (i64, i64)
     len I1, kv
     sar I1, I1, 2
@@ -1725,37 +1778,84 @@ timeout:
 .endf
 
 .func rt$map_find(i64 ki, ref m, ref kr) -> (i64, i64, ref)
-    mov.r R2, m->Map.kv
+    mov.r R2, m->Map.tree
+    bz.r R2, 1f
+    tcall rt$tree_find (ki, R2, kr)
+1:  mov.r R2, m->Map.kv
     call rt$map_pos (ki, R2, kr) -> (I1, I2)
-    bz I1, 1f
+    bz I1, 2f
     shl I3, I2, 2
     add I3, 2
     mov.r R3, R2[I3]
     inc I3
     mov I4, R2[I3]
     ret 1, I4, R3
-1:  ret 0, 0, null
+2:  ret 0, 0, null
 .endf
 
-.func rt$map_copy(ref m) -> ref
-    mov.r R1, m->Map.kv
+; A copy of a map that put_mut may change: a small one's list copied, a
+; tree shared (insert does not change it).
+.func rt$map_dup(ref m) -> ref
+    new R4, Map
+    mov.r R1, m->Map.tree
+    bz.r R1, 1f
+    mov.r R4->Map.tree, R1
+    mov I0, m->Map.size
+    mov R4->Map.size, I0
+    ret R4
+1:  mov.r R1, m->Map.kv
     len I0, R1
     lnew R2, I0
     mov I1, 0
-1:  bge I1, I0, 2f
+2:  bge I1, I0, 3f
     mov.r R3, R1[I1]
     add I2, I1, 1
     mov I3, R1[I2]
     lpush R2, R3, I3
     add I1, 2
-    jmp 1b
-2:  new R4, Map
-    mov.r R4->Map.kv, R2
+    jmp 2b
+3:  mov.r R4->Map.kv, R2
     ret R4
 .endf
 
-; Put a key in a map that nobody else has seen yet.
+; A kv list (of R and I words) as an Erlang list [K1, V1, K2, V2, ...].
+.func rt$kv_list(ref kv) -> ref
+    len I0, kv
+    mov.r R1, 0d
+1:  dec I0
+    blt I0, 0, 2f
+    sub I1, I0, 1
+    mov.r R2, kv[I1]
+    mov I2, kv[I0]
+    new R3, Cons
+    mov R3->Cons.hi, I2
+    mov.r R3->Cons.hr, R2
+    mov.r R3->Cons.tr, R1
+    mov.r R1, R3
+    dec I0
+    jmp 1b
+2:  ret R1
+.endf
+
+; A map of a kv list in key order.
+.func rt$map_of_kv(ref kv) -> ref
+    new R1, Map
+    len I0, kv
+    bgt I0, 128, 1f
+    mov.r R1->Map.kv, kv
+    ret R1
+1:  call rt$kv_list (kv) -> R2
+    call E$erts_map$from_kv$1 (0, R2) -> (I3, R3)
+    mov.r R1->Map.tree, R3
+    sar I0, I0, 2
+    mov R1->Map.size, I0
+    ret R1
+.endf
+
+; Put a key in a map nobody else has seen yet (made by map_new or map_dup).
 .func rt$map_put_mut(i64 ki, i64 vi, ref kr, ref vr, ref m)
+    mov.r R3, m->Map.tree
+    bnz.r R3, tree
     mov.r R3, m->Map.kv
     call rt$map_pos (ki, R3, kr) -> (I2, I3)
     shl I4, I3, 2
@@ -1768,10 +1868,28 @@ timeout:
     add I6, I5, 1
     ldel R3, I6
     ret
-1:  lins R3, I4, vi
+1:  len I7, R3
+    bge I7, 128, 2f
+    lins R3, I4, vi
     lins R3, I4, vr
     lins R3, I4, ki
     lins R3, I4, kr
+    ret
+2:  ; the 33rd key: from now on a tree
+    call rt$kv_list (R3) -> R5
+    call E$erts_map$from_kv$1 (0, R5) -> (I6, R3)
+    mov.r m->Map.tree, R3
+    mov.r m->Map.kv, null
+    sar I7, I7, 2
+    mov m->Map.size, I7
+tree:
+    call E$erts_map$insert$3 (ki, vi, 0, kr, vr, R3) -> (I8, R8)
+    mov.r R9, R8[0]
+    mov I9, R8[3]
+    mov.r m->Map.tree, R9
+    mov I10, m->Map.size
+    add I10, I9
+    mov m->Map.size, I10
     ret
 .endf
 
@@ -1781,7 +1899,7 @@ timeout:
 
 .func rt$map_put(i64 ki, i64 vi, i64 mi, ref kr, ref vr, ref mr) -> (i64, ref)
     bnisa mr, Map, 9f
-    call rt$map_copy (mr) -> R3
+    call rt$map_dup (mr) -> R3
     call rt$map_put_mut (ki, vi, kr, vr, R3)
     ret 0, R3
 9:  tcall rt$badmap (mi, mr)
@@ -1829,22 +1947,33 @@ timeout:
 
 .func rt$map_remove(i64 ki, i64 mi, ref kr, ref mr) -> (i64, ref)
     bnisa mr, Map, 9f
-    call rt$map_copy (mr) -> R3
-    mov.r R4, R3->Map.kv
+    call rt$map_find (ki, mr, kr) -> (I3, I4, R4)
+    bz I3, 1f
+    call rt$map_dup (mr) -> R3
+    call rt$map_kv (R3) -> R4
     call rt$map_pos (ki, R4, kr) -> (I2, I3)
-    bz I2, 1f
     shl I4, I3, 2
     ldel R4, I4
     ldel R4, I4
     ldel R4, I4
     ldel R4, I4
-1:  ret 0, R3
+    tcall rt$map_of_kv1 (R4)
+1:  ret mi, mr
 9:  tcall rt$badmap (mi, mr)
+.endf
+
+.func rt$map_of_kv1(ref kv) -> (i64, ref)
+    call rt$map_of_kv (kv) -> R1
+    ret 0, R1
 .endf
 
 .func rt$map_size(i64 mi, ref mr) -> (i64, ref)
     bnisa mr, Map, 9f
-    mov.r R1, mr->Map.kv
+    mov.r R1, mr->Map.tree
+    bz.r R1, 1f
+    mov I1, mr->Map.size
+    ret I1, null
+1:  mov.r R1, mr->Map.kv
     len I1, R1
     sar I1, I1, 2
     ret I1, null
@@ -1853,7 +1982,7 @@ timeout:
 
 ; The keys (what 0), values (1) or {K, V} pairs (2), in order.
 .func rt$map_list(ref m, i64 what) -> (i64, ref)
-    mov.r R1, m->Map.kv
+    call rt$map_kv (m) -> R1
     len I1, R1
     mov.r R2, 0d
 1:  sub I1, 4
@@ -1923,8 +2052,8 @@ timeout:
 .func rt$map_merge(i64 a, i64 b, ref ar, ref br) -> (i64, ref)
     bnisa ar, Map, 8f
     bnisa br, Map, 9f
-    call rt$map_copy (ar) -> R2
-    mov.r R3, br->Map.kv
+    call rt$map_dup (ar) -> R2
+    call rt$map_kv (br) -> R3
     len I1, R3
     mov I2, 0
 1:  bge I2, I1, 2f

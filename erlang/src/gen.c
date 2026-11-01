@@ -569,7 +569,7 @@ static Val const_term(Fn *g, Node *e) {
     Val tv = slot_val(t);
     const char *done = new_label(g);
     emit(g, "mov.r %s, @K%d", tv.r, k);
-    emit(g, "bnz %s, %s", tv.r, done);
+    emit(g, "bnz.r %s, %s", tv.r, done);
     emit(g, "call K$%d -> %s", k, tv.r);
     label(g, done);
     emit(g, "mov %s, 0", tv.i);
@@ -837,7 +837,7 @@ static void match(Fn *g, Node *p, Val v, const char *fail) {
     }
     case N_INT:
         if (!same(v.r, "null"))
-            emit(g, "bnz %s, %s", v.r, fail);
+            emit(g, "bnz.r %s, %s", v.r, fail);
         emit(g, "bne %s, %lld, %s", v.i, (long long)p->i, fail);
         return;
     case N_BIGINT: {
@@ -959,7 +959,7 @@ static void match_list(Fn *g, Node *p, Val v, const char *fail) {
             if (!is_reg(rreg(cur)))
                 emit(g, "mov.r %s, %s", c, rreg(cur));
             emit(g, "bnisa %s, Cons, %s", c, fail);
-            emit(g, "bnz %s->Cons.hr, %s", c, fail);
+            emit(g, "bnz.r %s->Cons.hr, %s", c, fail);
             emit(g, "bne %s->Cons.hi, %u, %s", c, cs[k], fail);
             emit(g, "mov.r %s, %s->Cons.tr", rreg(cur), c);
         }
@@ -1050,11 +1050,24 @@ static void match_bin(Fn *g, Node *p, Val v, const char *fail) {
 
 /* ------------------------------------------------------------------ guards */
 
+static int type_test(const char *name, int arity);
+
 static bool can_raise(Node *e) {
     if (!e)
         return false;
     switch (e->kind) {
-    case N_CALL: case N_OP: case N_UNOP: case N_RECFIELD:
+    case N_OP:
+        /* comparisons and the short-circuit operators raise nothing themselves */
+        if (strcmp(e->s, "==") && strcmp(e->s, "/=") && strcmp(e->s, "=:=") && strcmp(e->s, "=/=")
+            && strcmp(e->s, "<") && strcmp(e->s, "=<") && strcmp(e->s, ">") && strcmp(e->s, ">=")
+            && strcmp(e->s, "andalso") && strcmp(e->s, "orelse"))
+            return true;
+        break;
+    case N_CALL:
+        if (!(e->a->kind == N_ATOM && type_test(e->a->s, e->kids.n) >= 0 && e->kids.n == 1))
+            return true;
+        break;
+    case N_UNOP: case N_RECFIELD:
         return true;
     default:
         break;
@@ -1149,9 +1162,9 @@ static void compare(Fn *g, const char *op, Val a, Val b, const char *fail) {
                     : strcmp(op, ">") == 0 ? "ble" : "blt";
     if (!same(a.r, "null") || !same(b.r, "null")) {
         if (!same(a.r, "null"))
-            emit(g, "bnz %s, %s", a.r, slow);
+            emit(g, "bnz.r %s, %s", a.r, slow);
         if (!same(b.r, "null"))
-            emit(g, "bnz %s, %s", b.r, slow);
+            emit(g, "bnz.r %s, %s", b.r, slow);
     }
     emit(g, "%s %s, %s, %s", neg, a.i, b.i, fail);
     if (!same(a.r, "null") || !same(b.r, "null")) {
@@ -1218,7 +1231,7 @@ static void cond(Fn *g, Node *e, const char *fail) {
         const char *r = args[0].r;
         if (!strcmp(t, "is_integer")) {
             const char *ok = new_label(g);
-            emit(g, "bz %s, %s", r, ok);
+            emit(g, "bz.r %s, %s", r, ok);
             emit(g, "typeof %s, %s", XI0, r);
             emit(g, "bne %s, 8, %s", XI0, fail);
             label(g, ok);
@@ -1226,7 +1239,7 @@ static void cond(Fn *g, Node *e, const char *fail) {
             emit(g, "bne.r %s, 1d, %s", r, fail);
         } else if (!strcmp(t, "is_number")) {
             const char *ok = new_label(g);
-            emit(g, "bz %s, %s", r, ok);
+            emit(g, "bz.r %s, %s", r, ok);
             emit(g, "beq.r %s, 1d, %s", r, ok);
             emit(g, "typeof %s, %s", XI0, r);
             emit(g, "bne %s, 8, %s", XI0, fail);
@@ -1262,7 +1275,7 @@ static void cond(Fn *g, Node *e, const char *fail) {
         } else if (!strcmp(t, "is_function")) {
             const char *b = rbase(g, args[0], XR0);
             emit(g, "bnisa %s, Fun, %s", b, fail);
-            emit(g, "bnz %s, %s", args[1].r, fail);
+            emit(g, "bnz.r %s, %s", args[1].r, fail);
             emit(g, "bne %s->Fun.arity, %s, %s", b, args[1].i, fail);
         } else if (!strcmp(t, "is_record")) {
             /* is_record(X, name) or is_record(X, name, size) */
@@ -1342,9 +1355,9 @@ static Val arith(Fn *g, const char *op, Val a, Val b) {
     if (fast && !(same(a.r, "1d") || same(b.r, "1d") || (is_const(a) && !same(a.r, "null"))
                   || (is_const(b) && !same(b.r, "null")))) {
         if (!same(a.r, "null"))
-            emit(g, "bnz %s, %s", a.r, slow);
+            emit(g, "bnz.r %s, %s", a.r, slow);
         if (!same(b.r, "null"))
-            emit(g, "bnz %s, %s", b.r, slow);
+            emit(g, "bnz.r %s, %s", b.r, slow);
         bool bconst = same(b.r, "null") && !is_reg(b.i) && !is_loc(b.i) && !is_scratch(b.i);
         long long bc = bconst ? atoll(b.i) : 0;
         if (!strcmp(rt, "add") || !strcmp(rt, "sub")) {
@@ -1898,7 +1911,7 @@ static void comp_emit(Fn *g, Node *e, Comp *c) {
         Val v = ev(g, e->a);
         Val cell = make_cons(g, v, vnil());
         const char *first = new_label(g), *done = new_label(g);
-        emit(g, "bz %s, %s", rreg(c->last), first);
+        emit(g, "bz.r %s, %s", rreg(c->last), first);
         emit(g, "mov.r %s, %s", XR0, rreg(c->last));
         emit(g, "mov.r %s->Cons.tr, %s", XR0, cell.r);
         emit(g, "jmp %s", done);
@@ -3072,6 +3085,8 @@ void generate(Module **mods, int nmods, FILE *out, const char *source_name) {
     /* functions the runtime calls */
     const char *rt_roots[][3] = {
         {"erts", "main_error", "2"},
+        {"erts_map", "insert", "3"},
+        {"erts_map", "from_kv", "1"},
         {"erts", "ser", "1"},
         {"erts", "deser", "1"},
         {"erts", "report", "2"},
