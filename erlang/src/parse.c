@@ -894,6 +894,26 @@ static Node *expr_max(Parser *p) {
     case T_CHAR + '#': {
         advance(p);
         if (check(p, T_CHAR + '{')) {
+            /* #{K => V || Qualifiers}: a map comprehension */
+            int save = p->pos;
+            advance(p);
+            if (!check(p, T_CHAR + '}')) {
+                Node *k = expr(p);
+                if (accept(p, T_DARROW)) {
+                    Node *v = expr(p);
+                    if (accept(p, T_BARBAR)) {
+                        n = new_node(N_MC, t->line, t->file);
+                        Node *a = new_node(N_ASSOC, k->line, k->file);
+                        a->a = k;
+                        a->b = v;
+                        n->a = a;
+                        qualifiers(p, &n->kids);
+                        expect(p, T_CHAR + '}');
+                        return n;
+                    }
+                }
+            }
+            p->pos = save;
             n = new_node(N_MAP, t->line, t->file);
             map_fields(p, n);
             return n;

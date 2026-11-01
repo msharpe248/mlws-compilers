@@ -15,7 +15,7 @@
          is_map_key/2, map_get/2, map_size/1, make_tuple/3, phash2/1, phash2/2,
          list_to_pid/1, pid_to_list/1, ref_to_list/1, fun_to_list/1, fun_info/2,
          is_builtin/3, function_exported/3, exit/1, throw/1, error/1,
-         error/2, binary_part/2, split_binary/2, max/1,
+         error/2, binary_part/2, split_binary/2,
          is_atom/1, is_binary/1, is_bitstring/1, is_boolean/1, is_float/1, is_function/1,
          is_function/2, is_integer/1, is_list/1, is_map/1, is_number/1, is_pid/1,
          is_reference/1, is_tuple/1, is_record/2, is_record/3]).
@@ -25,8 +25,6 @@ min(A, _) -> A.
 
 max(A, B) when B > A -> B;
 max(A, _) -> A.
-
-max(L) -> lists:max(L).
 
 %% The process dictionary, a map.
 put(K, V) ->
