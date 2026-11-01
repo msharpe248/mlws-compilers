@@ -1,0 +1,19 @@
+{ok,5} {error,badarith}
+[{caught_throw,my_throw},
+ {caught_error,my_error},
+ {caught_exit,my_exit},
+ {caught_badmatch,2},
+ {returned,fine}]
+hello
+3
+caught badarith
+caught exit
+after runs
+{throw,x}
+inner after
+outer caught inner
+function_clause
+case_clause
+badarg
+badarith
+42

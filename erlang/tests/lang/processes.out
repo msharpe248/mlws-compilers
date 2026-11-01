@@ -1,0 +1,11 @@
+echo: hello
+count: 55
+got b
+got a
+timeout
+down: boom
+down: normal
+down: {bad,thing}
+2870
+registered: 6
+true

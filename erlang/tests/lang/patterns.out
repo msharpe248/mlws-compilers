@@ -1,0 +1,16 @@
+2432902008176640000
+265252859812191058636308480000000
+[negative,zero,positive,atom,pair,list,other]
+3 10
+true false
+{greeting,"world"} {unknown,"bye"}
+12.0 12 25
+1 2 [3,4]
+big 42
+small
+12
+1 [1,2,3]
+odd
+yes
+yes
+yes

@@ -5,6 +5,7 @@ compare the results with the expectations.
     run-tests.py bf  DIR...     brainfuck tests (see bf/tests)
     run-tests.py lox DIR...     Lox tests in the Crafting Interpreters format
     run-tests.py lua DIR...     Lua tests (see lua/tests)
+    run-tests.py erlang DIR...  Erlang tests (see erlang/tests)
 
 brainfuck: NAME.b is the program, NAME.out the expected stdout (exact bytes),
 and optionally NAME.in (stdin), NAME.opts (mlws-vm-bfc options), NAME.err (a string
@@ -24,6 +25,11 @@ stdout, as the reference lua 5.5 prints it (lua/tests/expect.sh makes it);
 NAME.err, if present, is the expected first line of stderr ("mlws-vm-lua:
 ..." where lua says "lua: ..."), with exit status 1. NAME.in is stdin and
 NAME.args the arguments, one per line.
+
+Erlang: NAME.erl, a module with main/0, runs (from its own directory) and
+NAME.out is the expected stdout, as Erlang/OTP prints it
+(erlang/tests/expect.sh makes it). Modules without main/0 are helpers that
+tests call, not tests. NAME.in is stdin.
 
 Options: -v prints the output of failing tests, -j N runs N tests at once,
 and a FILTER argument (substring of the path) after the directories selects
@@ -248,6 +254,48 @@ def lua_test(path, tmp):
     return fails
 
 
+# --------------------------------------------------------------------- Erlang
+
+HELPER = "helper"
+
+def erlang_test(path, tmp):
+    stem = path[:-4]
+    with open(path, "rb") as f:
+        if b"\nmain()" not in f.read():
+            return HELPER
+
+    def opt(ext):
+        p = stem + ext
+        if not os.path.exists(p):
+            return None
+        with open(p, "rb") as f:
+            return f.read()
+
+    want_out = opt(".out")
+    if want_out is None:
+        return ["no " + os.path.basename(stem) + ".out (run erlang/tests/expect.sh)"]
+    driver = os.path.join(ROOT, "erlang", "mlws-vm-erl")
+    code, out, err = run([driver, os.path.basename(path)], opt(".in") or b"",
+                         cwd=os.path.dirname(path) or ".")
+    if code is None:
+        return ["timeout"]
+    fails = []
+    if code != 0:
+        fails.append(f"exit code {code}, expected 0")
+    if out != want_out:
+        got, want = out.decode(errors="replace").split("\n"), want_out.decode(errors="replace").split("\n")
+        for i in range(max(len(got), len(want))):
+            g = got[i] if i < len(got) else "<none>"
+            w = want[i] if i < len(want) else "<none>"
+            if g != w:
+                fails.append(f"stdout line {i + 1}: got {g[:200]!r}, expected {w[:200]!r}")
+                break
+    # stderr is not compared: erl writes crash reports of its own there
+    if err and fails:
+        fails.append("stderr: " + repr(err.decode(errors="replace")[:400]))
+    return fails
+
+
 # ----------------------------------------------------------------------- main
 
 def collect(dirs, ext, filters):
@@ -284,19 +332,22 @@ def main():
         jobs = int(args[i + 1])
         del args[i:i + 2]
     args = [a for a in args if a != "-v"]
-    if not args or args[0] not in ("bf", "lox", "lua"):
+    if not args or args[0] not in ("bf", "lox", "lua", "erlang"):
         print(__doc__)
         sys.exit(2)
     kind = args[0]
     dirs = [a for a in args[1:] if os.path.isdir(a)]
     filters = [a for a in args[1:] if not os.path.isdir(a)]
-    ext, fn = {"bf": (".b", bf_test), "lox": (".lox", lox_test), "lua": (".lua", lua_test)}[kind]
+    ext, fn = {"bf": (".b", bf_test), "lox": (".lox", lox_test), "lua": (".lua", lua_test),
+               "erlang": (".erl", erlang_test)}[kind]
     tests = collect(dirs, ext, filters)
 
     passed = failed = skipped = 0
     with tempfile.TemporaryDirectory() as tmp, \
             concurrent.futures.ThreadPoolExecutor(jobs) as pool:
         for path, fails in zip(tests, pool.map(lambda p: fn(p, tmp), tests)):
+            if fails is HELPER:
+                continue
             if fails is None:
                 skipped += 1
             elif fails:
