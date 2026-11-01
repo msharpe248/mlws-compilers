@@ -1,0 +1,8 @@
+[55,89,144,233,377,610,987,1597,2584,4181,6765,10946,17711,28657,46368,75025]
+[10,5,badarith,2]
+worker 1: 10
+worker 2: 20
+worker 3 crashed
+worker 4: 40
+worker 5: 50
+worker 6 crashed

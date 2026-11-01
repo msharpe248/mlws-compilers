@@ -1,0 +1,2 @@
+-define(SHARED, from_header).
+-record(point, {x = 0, y = 0}).

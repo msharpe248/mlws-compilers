@@ -659,9 +659,8 @@ static Node *string_node(Parser *p) {
         Token *u = advance(p);
         buf_add(&b, u->s, (size_t)u->len);
     }
-    buf_add(&b, "", 0);
     n->s = b.s;
-    n->len = (int)b.n - 1;
+    n->len = (int)b.n;
     return n;
 }
 
