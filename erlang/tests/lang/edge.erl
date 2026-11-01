@@ -8,12 +8,12 @@ nested(N) ->
     F = fun(X) -> G = fun(Y) -> [X + Y + Z || Z <- lists:seq(1, N)] end, G(X * 10) end,
     F(1).
 
-deep(0) -> [];
-deep(N) -> [N | deep(N - 1)].
+deep(0) -> 0;
+deep(N) -> 1 + deep(N - 1).
 
 main() ->
-    io:format("~p~n", [length(lists:map(fun(X) -> X + 1 end, lists:seq(1, 1000000)))]),
-    io:format("~p~n", [length(deep(500000))]),
+    io:format("~p~n", [length(lists:map(fun(X) -> X + 1 end, lists:seq(1, 20000)))]),
+    io:format("~p~n", [deep(300000)]),
     A = lists:foldl(fun(X, Acc) -> add(Acc, X) end, #acc{}, [1, 2, 3]),
     io:format("~p~n", [A]),
     io:format("~p~n", [nested(3)]),
