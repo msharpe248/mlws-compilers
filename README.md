@@ -44,13 +44,14 @@ The compilers are released together as releases of this repository, tagged
 `bf-vX.Y.Z`, `lox-vX.Y.Z`, `lua-vX.Y.Z` and `erlang-vX.Y.Z`. [CHANGELOG.md](CHANGELOG.md)
 says what changed in each.
 
-| Release | bf | Lox | Lua |
-|---|---|---|---|
-| 0.1.0 | 0.1.0 | 0.1.0 | 0.1.0 |
-| 0.2.0 | 0.2.0 | 0.2.0 | 0.2.0 |
-| 0.3.0 | 0.3.0 | 0.3.0 | 0.3.0 |
-| 0.4.1 | 0.4.1 | 0.4.1 | 0.4.1 |
-| 0.4.2 | 0.4.1 | 0.4.1 | 0.4.2 |
+| Release | bf | Lox | Lua | Erlang |
+|---|---|---|---|---|
+| 0.1.0 | 0.1.0 | 0.1.0 | 0.1.0 | |
+| 0.2.0 | 0.2.0 | 0.2.0 | 0.2.0 | |
+| 0.3.0 | 0.3.0 | 0.3.0 | 0.3.0 | |
+| 0.4.1 | 0.4.1 | 0.4.1 | 0.4.1 | |
+| 0.4.2 | 0.4.1 | 0.4.1 | 0.4.2 | |
+| 0.5.0 | 0.4.1 | 0.4.1 | 0.4.2 | 0.1.0 |
 
 ## Naming
 

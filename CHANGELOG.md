@@ -3,7 +3,20 @@
 Each compiler is versioned on its own (its `VERSION` file); a release of
 this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
-## Unreleased
+## Release 0.5.0
+
+Erlang 0.1.0, new; bf 0.4.1, Lox 0.4.1 and Lua 0.4.2 are unchanged. For
+MLWSVM 0.6.0 or later; tested on MLWSVM 0.6.1 and 0.7.0, whose fast forms for
+`bitcast`, `typeof` and list-element compares (made from the Erlang
+compiler's profiles) the Erlang benchmark times in erlang/README.md need.
+
+### Repository
+
+* README: running any compiler's output with MLWSVM's optimizer
+  (`MLWSVM_OPT=3`, or `mlwsvm run --opt 3`), and why not to add the
+  `tailcall` pass.
+* `lua/Makefile`: the Lua library is made again when the VM changes, since
+  its module format may have.
 
 ### Erlang 0.1.0 (new)
 
