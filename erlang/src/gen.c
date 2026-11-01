@@ -20,7 +20,7 @@
 
 #include "erl.h"
 
-#define NR 24           /* slots kept in registers */
+#define NR 29           /* slots kept in registers (the 3 above are scratch) */
 
 /* ------------------------------------------------------------------ program state */
 
@@ -57,6 +57,7 @@ typedef struct {
     const char *name;
     int slot;
     bool bound;
+    bool flt;           /* bound to a value that is likely a float */
 } Var;
 
 typedef struct Fn Fn;
@@ -230,8 +231,6 @@ static int temp(Fn *g) {
 static Val vint(int64_t n) { return (Val){S("%lld", (long long)n), "null"}; }
 static Val vatom(const char *a) { note_atom(a); return (Val){"0", quote(a, (int)strlen(a))}; }
 static Val vnil(void) { return (Val){"0", "0d"}; }
-static Val vtrue(void) { return vatom(intern("true", 4)); }
-static Val vfalse(void) { return vatom(intern("false", 5)); }
 
 static Val vfloat(double f) {
     int64_t bits;
@@ -384,7 +383,7 @@ static void setup_clause(Fn *g, Clause *c, int base) {
     clause_vars(c, &names);
     int next = g->nparams + g->ncaps;
     for (int k = 0; k < names.n; k++) {
-        Var v = {names.v[k], head_slot(c, names.v[k]), false};
+        Var v = {names.v[k], head_slot(c, names.v[k]), false, false};
         if (v.slot < 0)
             v.slot = next++;
         vec_push(g->vars, v);
@@ -1335,7 +1334,66 @@ static Val bool_val(Fn *g, Node *e) {
 
 /* ------------------------------------------------------------------ arithmetic */
 
+/* Two floats: the operation inline, into tv; to fail if either is not a
+ * float or the result is not finite (Erlang's badarith). */
+static void float_op(Fn *g, const char *fop, Val a, Val b, Val tv, const char *fail) {
+    if (!same(a.r, "1d"))
+        emit(g, "bne.r %s, 1d, %s", a.r, fail);
+    if (!same(b.r, "1d"))
+        emit(g, "bne.r %s, 1d, %s", b.r, fail);
+    emit(g, "bitcast.f64.i64 F0, %s", a.i);
+    emit(g, "bitcast.f64.i64 F1, %s", b.i);
+    if (!strcmp(fop, "div"))
+        emit(g, "beq F1, 0.0, %s", fail);
+    emit(g, "%s F2, F0, F1", fop);
+    emit(g, "sub F3, F2, F2");
+    emit(g, "bne F3, 0.0, %s", fail);
+    emit(g, "bitcast.i64.f64 %s, F2", tv.i);
+    emit(g, "mov.r %s, 1d", tv.r);
+}
+
+/* Is e likely to be a float? Then arithmetic tries floats first. */
+static bool likely_float(Fn *g, Node *e) {
+    switch (e->kind) {
+    case N_FLOAT:
+        return true;
+    case N_VAR: {
+        Var *v = find_var(g, e->s);
+        return v && v->flt;
+    }
+    case N_OP:
+        if (!strcmp(e->s, "/"))
+            return true;
+        if (!strcmp(e->s, "+") || !strcmp(e->s, "-") || !strcmp(e->s, "*"))
+            return likely_float(g, e->a) || likely_float(g, e->b);
+        return false;
+    case N_UNOP:
+        return !strcmp(e->s, "-") && likely_float(g, e->a);
+    case N_CALL:
+        if (e->a->kind == N_REMOTE && e->a->a->kind == N_ATOM && !strcmp(e->a->a->s, "math"))
+            return true;
+        return e->a->kind == N_ATOM && !strcmp(e->a->s, "float") && e->kids.n == 1;
+    case N_MATCH:
+        return likely_float(g, e->b);
+    default:
+        return false;
+    }
+}
+
+static Val arith_f(Fn *g, const char *op, Val a, Val b, bool flt);
+
 static Val arith(Fn *g, const char *op, Val a, Val b) {
+    return arith_f(g, op, a, b, false);
+}
+
+static Val arith_f(Fn *g, const char *op, Val a, Val b, bool flt) {
+    /* a constant second, where the order does not matter: the VM's fast form */
+    if (is_const(a) && !is_const(b) && (!strcmp(op, "+") || !strcmp(op, "*") || !strcmp(op, "band")
+                                        || !strcmp(op, "bor") || !strcmp(op, "bxor"))) {
+        Val t = a;
+        a = b;
+        b = t;
+    }
     int t = temp(g);
     Val tv = slot_val(t);
     const char *slow = new_label(g), *done = new_label(g);
@@ -1352,6 +1410,23 @@ static Val arith(Fn *g, const char *op, Val a, Val b) {
     else if (!strcmp(op, "bxor")) rt = "bxor";
     else if (!strcmp(op, "bsl")) rt = "bsl", fast = false;
     else if (!strcmp(op, "bsr")) rt = "bsr";
+    const char *fop = !strcmp(op, "+") ? "add" : !strcmp(op, "-") ? "sub" : !strcmp(op, "*") ? "mul"
+                    : !strcmp(op, "/") ? "div" : NULL;
+    bool fconst = same(a.r, "1d") || same(b.r, "1d");
+    bool nonnum_const = (is_const(a) && !same(a.r, "null") && !same(a.r, "1d"))
+                     || (is_const(b) && !same(b.r, "null") && !same(b.r, "1d"));
+    if (fop && !nonnum_const && (fconst || flt || !strcmp(fop, "div"))
+        && !(same(a.r, "null") && same(b.r, "null"))) {
+        /* a float constant, or /: floats inline, the rest by the runtime */
+        float_op(g, fop, a, b, tv, slow);
+        g->in_cold = true;
+        label(g, slow);
+        emit(g, "call rt$%s (%s, %s, %s, %s) -> (%s, %s)", rt, a.i, b.i, a.r, b.r, tv.i, tv.r);
+        emit(g, "jmp %s", done);
+        g->in_cold = false;
+        label(g, done);
+        return tv;
+    }
     if (fast && !(same(a.r, "1d") || same(b.r, "1d") || (is_const(a) && !same(a.r, "null"))
                   || (is_const(b) && !same(b.r, "null")))) {
         if (!same(a.r, "null"))
@@ -1410,6 +1485,13 @@ static Val arith(Fn *g, const char *op, Val a, Val b) {
         emit(g, "mov.r %s, null", tv.r);
         g->in_cold = true;
         label(g, slow);
+        if (fop && !same(a.r, "null") && !same(b.r, "null")) {
+            /* not two small integers: perhaps two floats */
+            const char *rt_call = new_label(g);
+            float_op(g, fop, a, b, tv, rt_call);
+            emit(g, "jmp %s", done);
+            label(g, rt_call);
+        }
         emit(g, "call rt$%s (%s, %s, %s, %s) -> (%s, %s)", rt, a.i, b.i, a.r, b.r, tv.i, tv.r);
         emit(g, "jmp %s", done);
         g->in_cold = false;
@@ -1995,7 +2077,7 @@ static void comp_quals(Fn *g, Node *e, int qi, const char *next, Comp *c) {
         rest->a->s = intern("$rest", 5);
         rest->s = "binary";
         vec_push(pat->kids, rest);
-        Var rv = {rest->a->s, cur, false};
+        Var rv = {rest->a->s, cur, false, false};
         vec_push(g->vars, rv);
         Names pv = {0};
         collect_vars(q->a, &pv);
@@ -2089,7 +2171,7 @@ static Val comprehension(Fn *g, Node *e, int kind) {
         }
         if (outer && outer->bound && !is_gen_var)
             continue;
-        Var v = {names.v[k], temp(g), false};
+        Var v = {names.v[k], temp(g), false, false};
         vec_push(g->vars, v);
     }
     free(names.v);
@@ -2508,9 +2590,13 @@ static Val ev(Fn *g, Node *e) {
         Val v = ev(g, e->b);
         const char *fail = new_label(g), *ok = new_label(g);
         if (e->a->kind == N_VAR && binds_only(g, e->a)) {
+            bool flt = likely_float(g, e->b);
             match(g, e->a, v, fail);
-            if (strcmp(e->a->s, "_") != 0)
-                v = slot_val(find_var(g, e->a->s)->slot);
+            if (strcmp(e->a->s, "_") != 0) {
+                Var *var = find_var(g, e->a->s);
+                var->flt = flt;
+                v = slot_val(var->slot);
+            }
             label(g, fail);
             return v;
         }
@@ -2585,13 +2671,16 @@ static Val ev(Fn *g, Node *e) {
             Val b = ev(g, e->b);
             return rt2(g, op, a, b);
         }
+        bool flt = likely_float(g, e);
         Val a = ev(g, e->a);
         Val b = ev(g, e->b);
         loc(g, e);
-        return arith(g, op, a, b);
+        return arith_f(g, op, a, b, flt);
     }
     case N_UNOP: {
         Val a = ev(g, e->a);
+        if (!strcmp(e->s, "-") && likely_float(g, e->a))
+            return arith_f(g, "-", vfloat(0.0), a, true);
         if (!strcmp(e->s, "-"))
             return arith(g, "-", vint(0), a);
         if (!strcmp(e->s, "+"))
@@ -2859,14 +2948,14 @@ static void gen_fun_body(Fn *parent, Node *e, const char *mname, Names *caps, co
     g.maxslot = arity + g.ncaps - 1;
     /* the captured variables keep their names, bound, in slots after the arguments */
     for (int k = 0; k < caps->n; k++) {
-        Var v = {caps->v[k], arity + k, true};
+        Var v = {caps->v[k], arity + k, true, false};
         vec_push(g.vars, v);
         emit(&g, "mov %s, UP[%d]", ireg(arity + k), 2 * k);
         emit(&g, "mov.r %s, UP[%d]", rreg(arity + k), 2 * k + 1);
     }
     if (selfname) {
         int s = arity + caps->n;
-        Var v = {selfname, s, true};
+        Var v = {selfname, s, true, false};
         vec_push(g.vars, v);
         emit(&g, "mov.r %s, UP[%d]", XR0, 2 * caps->n);
         emit(&g, "mov.r %s, %s[0]", rreg(s), XR0);
@@ -2898,7 +2987,7 @@ static void gen_fun_body(Fn *parent, Node *e, const char *mname, Names *caps, co
                     inhead = true;
             if (captured && !inhead)
                 continue;
-            Var v = {names.v[q], head_slot(c, names.v[q]), false};
+            Var v = {names.v[q], head_slot(c, names.v[q]), false, false};
             if (v.slot < 0)
                 v.slot = next++;
             vec_push(g.vars, v);
