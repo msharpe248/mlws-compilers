@@ -202,6 +202,7 @@ struct Func {
     VEC(UpRef) uprefs;  /* its references to upvalues */
     VEC(Func *) children;
     char *name;         /* for the assembly label */
+    char *field;        /* function a.b.NAME: NAME, else NULL */
     int line, lastline;
     int id;
     bool uses_vararg;

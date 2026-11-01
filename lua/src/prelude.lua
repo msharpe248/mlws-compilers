@@ -12,8 +12,16 @@ local pfind = P.find
 
 -- ------------------------------------------------------------- arguments
 
+-- The errors name the function as Lua does, by its call site or else
+-- fname (see rt$argwho), and say "no value" for an argument not passed.
+local pargerror, pargtype = P.argerror, P.argtype
+
 local function argerror(n, fname, msg)
-  error("bad argument #" .. n .. " to '" .. fname .. "' (" .. msg .. ")")
+  pargerror(n, fname, msg)
+end
+
+local function argtype(n, fname, expected, v)
+  pargtype(n, fname, expected, v)
 end
 
 local function typename(v)
@@ -25,7 +33,7 @@ local function checkstr(v, n, fname)
   local t = type(v)
   if t == "string" then return v end
   if t == "number" then return tostring(v) end
-  argerror(n, fname, "string expected, got " .. typename(v))
+  argtype(n, fname, "string", v)
 end
 
 local function checkint(v, n, fname)
@@ -39,7 +47,7 @@ local function checkint(v, n, fname)
   elseif mtype(x) == "integer" then
     return x
   end
-  argerror(n, fname, "number expected, got " .. typename(v))
+  argtype(n, fname, "number", v)
 end
 
 local function optint(v, n, fname, def)
@@ -142,14 +150,14 @@ local function add_value(src, caps, level, out, s, e, repl, tr)
 end
 
 function string.gsub(s, pat, repl, max_n)
-  s = checkstr(s, 1, "gsub")
-  pat = checkstr(pat, 2, "gsub")
+  s = checkstr(s, 1, "string.gsub")
+  pat = checkstr(pat, 2, "string.gsub")
   local tr = type(repl)
   if tr == "number" then
     repl = tostring(repl)
     tr = "string"
   elseif not (tr == "string" or tr == "table" or tr == "function") then
-    argerror(3, "gsub", "string/function/table expected, got " .. typename(repl))
+    argtype(3, "string.gsub", "string/function/table", repl)
   end
   local ls = len(s)
   max_n = optint(max_n, 4, "gsub", ls + 1)
@@ -244,7 +252,7 @@ local function quoted(v, argi)
   elseif t == "nil" or t == "boolean" then
     return tostring(v)
   end
-  argerror(argi, "format", "value has no literal form")
+  argerror(argi, "string.format", "value has no literal form")
 end
 
 local function pad(s, width, left, zero)
@@ -328,8 +336,8 @@ end
 
 -- An integer argument of format: one that is given, so nil is "got nil".
 local function fcheckint(v, n)
-  if v == nil then argerror(n, "format", "number expected, got nil") end
-  return checkint(v, n, "format")
+  if v == nil then argtype(n, "string.format", "number", v) end
+  return checkint(v, n, "string.format")
 end
 
 local function format_one(it, arg, argi)
@@ -381,7 +389,7 @@ local function format_one(it, arg, argi)
       local v = arg
       if type(v) ~= "number" then
         v = tonumber(v)
-        if not v then argerror(argi, "format", "number expected, got " .. type(arg)) end
+        if not v then argtype(argi, "string.format", "number", arg) end
       end
       if mtype(v) == "integer" then v = v + 0.0 end
       local conv = char(c)
@@ -411,7 +419,7 @@ local function format_one(it, arg, argi)
       local v = arg
       if type(v) ~= "number" then
         v = tonumber(v)
-        if not v then argerror(argi, "format", "number expected, got " .. type(arg)) end
+        if not v then argtype(argi, "string.format", "number", arg) end
       end
       if mtype(v) == "integer" then v = v + 0.0 end
       s = hexfloat(v, c == 65)
@@ -422,7 +430,7 @@ local function format_one(it, arg, argi)
     elseif c == 115 then
       s = tostring(arg)
       if not it.simple then
-        if pfind(s, "\0", 1) then argerror(argi, "format", "string contains zeros") end
+        if pfind(s, "\0", 1) then argerror(argi, "string.format", "string contains zeros") end
         if prec or len(s) < 100 then
           if prec then s = sub(s, 1, prec) end
           s = pad(s, width, left, false)
@@ -450,7 +458,7 @@ end
 local fcache, fcount = {}, 0
 
 local function format(fs, ...)
-  fs = checkstr(fs, 1, "format")
+  fs = checkstr(fs, 1, "string.format")
   local items = fcache[fs]
   if not items then
     items = parse_format(fs)
@@ -468,7 +476,7 @@ local function format(fs, ...)
     if type(it) == "string" then
       out[k] = it
     else
-      if argi > nargs then argerror(argi + 1, "format", "no value") end
+      if argi > nargs then argerror(argi + 1, "string.format", "no value") end
       local arg = args[argi]
       argi = argi + 1
       local c = it.c
@@ -530,11 +538,11 @@ end
 local function default_lt(a, b) return a < b end
 
 function table.sort(t, comp)
-  if type(t) ~= "table" then argerror(1, "sort", "table expected, got " .. typename(t)) end
+  if type(t) ~= "table" then argtype(1, "table.sort", "table", t) end
   local n = #t
   if n > 1 then
     if comp ~= nil and type(comp) ~= "function" then
-      argerror(2, "sort", "function expected, got " .. typename(comp))
+      argtype(2, "table.sort", "function", comp)
     end
     auxsort(t, 1, n, comp or default_lt)
   end
@@ -542,13 +550,13 @@ end
 
 function table.move(a1, f, e, t, a2)
   if a2 == nil then a2 = a1 end
-  if type(a1) ~= "table" then argerror(1, "move", "table expected, got " .. typename(a1)) end
-  f = checkint(f, 2, "move")
-  e = checkint(e, 3, "move")
-  t = checkint(t, 4, "move")
-  if type(a2) ~= "table" then argerror(5, "move", "table expected, got " .. typename(a2)) end
+  if type(a1) ~= "table" then argtype(1, "table.move", "table", a1) end
+  f = checkint(f, 2, "table.move")
+  e = checkint(e, 3, "table.move")
+  t = checkint(t, 4, "table.move")
+  if type(a2) ~= "table" then argtype(5, "table.move", "table", a2) end
   if e >= f then
-    if not (f > 0 or e < maxinteger + f) then argerror(3, "move", "too many elements to move") end
+    if not (f > 0 or e < maxinteger + f) then argerror(3, "table.move", "too many elements to move") end
     if t > e or t <= f or a1 ~= a2 then
       for i = 0, e - f do a2[t + i] = a1[f + i] end
     else
@@ -588,8 +596,8 @@ function utf8.char(...)
   local n = select("#", ...)
   local out = {}
   for i = 1, n do
-    local c = checkint((select(i, ...)), i, "char")
-    if c < 0 or c > 0x7FFFFFFF then argerror(i, "char", "value out of range") end
+    local c = checkint((select(i, ...)), i, "utf8.char")
+    if c < 0 or c > 0x7FFFFFFF then argerror(i, "utf8.char", "value out of range") end
     out[i] = utf8_encode(c)
   end
   return concat(out)
@@ -621,13 +629,13 @@ local function utf8_decode(s, i, strict)
 end
 
 function utf8.codepoint(s, i, j, lax)
-  s = checkstr(s, 1, "codepoint")
+  s = checkstr(s, 1, "utf8.codepoint")
   local n = len(s)
   i = posrelat(optint(i, 2, "codepoint", 1), n)
   j = optint(j, 3, "codepoint", i)
   if j < 0 then j = n + j + 1 elseif j > n then j = n end
-  if i < 1 then argerror(2, "codepoint", "out of bounds") end
-  if j > n then argerror(3, "codepoint", "out of bounds") end
+  if i < 1 then argerror(2, "utf8.codepoint", "out of bounds") end
+  if j > n then argerror(3, "utf8.codepoint", "out of bounds") end
   if i > j then return end
   local out = {}
   local pos = i
@@ -641,13 +649,13 @@ function utf8.codepoint(s, i, j, lax)
 end
 
 function utf8.len(s, i, j, lax)
-  s = checkstr(s, 1, "len")
+  s = checkstr(s, 1, "utf8.len")
   local n = len(s)
   i = posrelat(optint(i, 2, "len", 1), n)
   j = optint(j, 3, "len", -1)
   if j < 0 then j = n + j + 1 end
-  if i < 1 or i > n + 1 then argerror(2, "len", "initial position out of bounds") end
-  if j > n then argerror(3, "len", "final position out of bounds") end
+  if i < 1 or i > n + 1 then argerror(2, "utf8.len", "initial position out of bounds") end
+  if j > n then argerror(3, "utf8.len", "final position out of bounds") end
   local count = 0
   local pos = i
   while pos <= j do
@@ -665,13 +673,13 @@ local function iscont(s, i)
 end
 
 function utf8.offset(s, n, i)
-  s = checkstr(s, 1, "offset")
-  n = checkint(n, 2, "offset")
+  s = checkstr(s, 1, "utf8.offset")
+  n = checkint(n, 2, "utf8.offset")
   local ls = len(s)
   local defi = (n >= 0) and 1 or ls + 1
   i = optint(i, 3, "offset", defi)
   if i < 0 then i = ls + i + 1 end
-  if i < 1 or i > ls + 1 then argerror(3, "offset", "position out of bounds") end
+  if i < 1 or i > ls + 1 then argerror(3, "utf8.offset", "position out of bounds") end
   local posi = i
   if n == 0 then
     while posi > 1 and iscont(s, posi) do posi = posi - 1 end
@@ -703,7 +711,7 @@ function utf8.offset(s, n, i)
 end
 
 function utf8.codes(s, lax)
-  s = checkstr(s, 1, "codes")
+  s = checkstr(s, 1, "utf8.codes")
   local n = len(s)
   return function(str, pos)
     if pos > 0 then
@@ -735,7 +743,7 @@ FILE.__tostring = function(f)
 end
 
 local function checkfile(f, fname)
-  if getmetatable(f) ~= FILE then argerror(1, fname, "FILE* expected, got " .. typename(f)) end
+  if getmetatable(f) ~= FILE then argtype(1, fname, "FILE*", f) end
   if f.closed then error("attempt to use a closed file") end
   return f
 end
@@ -745,7 +753,7 @@ function FILE.write(f, ...)
   local n = select("#", ...)
   for i = 1, n do
     local v = select(i, ...)
-    local ok, err = P.write(f.h, checkstr(v, i, "write"))
+    local ok, err = P.write(f.h, checkstr(v, i + 1, "write"))
     if not ok then return nil, err end
   end
   return f
@@ -897,11 +905,11 @@ P.setstdout(io.stdout)
 local default_in, default_out = io.stdin, io.stdout
 
 function io.open(path, mode)
-  path = checkstr(path, 1, "open")
+  path = checkstr(path, 1, "io.open")
   mode = mode or "r"
   local m = mode:gsub("b", "")
   if not (m == "r" or m == "w" or m == "a" or m == "r+" or m == "w+" or m == "a+") then
-    argerror(2, "open", "invalid mode '" .. mode .. "'")
+    argerror(2, "io.open", "invalid mode '" .. mode .. "'")
   end
   local h, err, code = P.open(path, m)
   if not h then return nil, err, code end
@@ -960,7 +968,7 @@ end
 
 function os.time(t)
   if t == nil then return P.now() end
-  if type(t) ~= "table" then argerror(1, "time", "table expected, got " .. typename(t)) end
+  if type(t) ~= "table" then argtype(1, "os.time", "table", t) end
   local function field(k, d)
     local v = t[k]
     if v == nil then
@@ -1023,7 +1031,7 @@ function os.date(format, t)
   }
   return (format:gsub("%%(.)", function(c)
     local f = conv[c]
-    if not f then error("bad argument #1 to 'date' (invalid conversion specifier '%" .. c .. "')") end
+    if not f then argerror(1, "os.date", "invalid conversion specifier '%" .. c .. "'") end
     return f()
   end))
 end

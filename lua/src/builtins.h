@@ -81,6 +81,8 @@ static const Builtin builtins[] = {
     {"P", "fmt", "P$fmt", 2},
     {"P", "find", "P$find", 3},
     {"P", "gsub_plain", "P$gsub_plain", 4},
+    {"P", "argerror", "P$argerror", 3},
+    {"P", "argtype", "P$argtype", 4},
     {"P", "std", "P$std", 1},
     {"P", "setstdout", "P$setstdout", 1},
     {"P", "setformat", "P$setformat", 1},

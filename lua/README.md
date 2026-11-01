@@ -120,9 +120,6 @@ them, prefixed `mlws-vm-lua:`, with exit status 1.
   VM's collector is precise but has neither).
 * **To-be-closed variables** are closed when their block exits normally or
   by `break`, `goto` or `return`, but not when an error unwinds it.
-* **Messages from library functions** name the function by its own name
-  (`bad argument #1 to 'rep'`) and say `got nil` for a missing argument,
-  where Lua may say `'string.rep'` or `got no value`.
 * **`#t` for a table with holes** returns a border, as Lua does, but not
   always the same one.
 * **`os.clock`** measures wall time since the program started.
@@ -295,6 +292,15 @@ backtrace: a compiled Lua function's frame shows its Lua line (from
 `.loc`), the library's functions are recognised by name (`B$...`), so that
 an error in one is reported at the line that called it, as in Lua, and
 `error`'s levels count frames the way Lua does.
+
+A library function's argument error names the function as Lua does: by
+the name it was called by (`'rep'` for `s:rep(x)`, whose self is not
+counted; `'r'` for a local `r`), else by its name in the library
+(`'string.rep'`, as under `pcall`), and says `got no value` for an argument
+the call did not pass. The compiler writes a table of the program's call
+sites (the assembly line of each call, the name there, whether it is a
+method call and how many arguments it passes), and the library reads the
+backtrace to find the call site, or the library function that called it.
 
 ## Performance
 

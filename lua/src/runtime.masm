@@ -78,6 +78,11 @@ rt$ipairs_aux: .zero 8
 rt$next_fn: .zero 8
 rt$setmt:   .zero 8     ; the library's setmetatable, for calls made inline
 rt$sqrt_fn: .zero 8     ; the library's math.sqrt, for calls made inline
+rt$sitesfn: .zero 8     ; the program's call sites (p$sites), for rt$argwho
+rt$sites:   .zero 8     ; masm line -> [arguments, method, name], made the first time
+rt$qnames:  .zero 8     ; B$ function -> its name in the library ("string.rep")
+rt$argc:    .i64 -1     ; the number of arguments rt$apply passed last
+rt$argfn:   .zero 8     ; and the function it called
 rt$stdout:  .zero 8     ; io.stdout, set by the prelude
 rt$fmtslow: .zero 8     ; the prelude's string.format, for what B$str_format leaves
 rt$start:   .i64 0
@@ -519,20 +524,169 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     ret
 .endf
 
-; "bad argument #n to 'fname' (msg)"
+; "bad argument #n to 'fname' (msg)", with the function named as Lua names
+; it (see rt$argwho)
 .func rt$argerror(i64 n, ref fname, ref msg)
+    call rt$argwho (I0, R0) -> (I1, R2, I2)
+    call rt$argmsg (I1, R2, R1)
+    ret
+.endf
+
+; "bad argument #n to 'fname' (T expected, got U)": U is "no value" for an
+; argument the call did not pass
+.func rt$argtype(i64 n, ref fname, ref expected, i64, f64, ref)
+    call rt$argwho (I0, R0) -> (I3, R4, I4)
+    beq.r R2, 1n, 1f
+2:  call rt$typename (I1, F0, R2) -> (R3)
+    jmp 3f
+1:  blt I4, 0, 2b
+    ble I0, I4, 2b
+    mov R3, "no value"
+3:  strcat R5, R1, " expected, got ", R3
+    call rt$argmsg (I3, R4, R5)
+    ret
+.endf
+
+.func rt$argmsg(i64 n, ref name, ref msg)
+    bz I0, 1f
     tostr R2, I0
     strcat R3, "bad argument #", R2, " to '", R0, "' (", R1, ")"
     call rt$rterror (R3)
     ret
+1:  strcat R3, "calling '", R0, "' on bad self (", R1, ")"
+    call rt$rterror (R3)
+    ret
 .endf
 
-; "bad argument #n to 'fname' (T expected, got U)"
-.func rt$argtype(i64 n, ref fname, ref expected, i64, f64, ref)
-    call rt$typename (I1, F0, R2) -> (R3)
-    strcat R4, R1, " expected, got ", R3
-    call rt$argerror (I0, R0, R4)
-    ret
+; Who a library function's argument error names, as Lua does. Called from
+; a call site in the program, the name there (with n one less for a method
+; call: 0 is self); else the function's name in the library (fname if it
+; has none). Also the number of arguments the call passed, or -1 if that is
+; not known. The backtrace says which: under the runtime's helpers is the
+; function that failed (a B$ function, or P$argerror for the prelude, the
+; library written in Lua, whose frames follow it), and under that, its
+; caller: compiled Lua code ("chunk:LINE; file.masm:N"), whose call
+; instruction at line N the program's call sites name, or another library
+; function (pcall, which called it through rt$apply).
+.func rt$argwho(i64 n, ref fname) -> (i64, ref, i64)
+    mov I1, 0
+.try 1f
+    div I2, 1, I1
+.endtry
+    ret I0, R0, -1
+1:  catch R2
+    mov R2, R2->Error.trace
+    mov R5, R0              ; the library's name for it
+    mov I12, -1             ; the failed function: -1 not yet seen, 0 prelude, 1 B$
+    len I9, R2
+    mov I1, 0               ; start of the next line
+2:  bge I1, I9, 90f
+    strfind I4, R2, "\n", I1
+    bge I4, 0, 3f
+    mov I4, I9
+3:  sub I5, I4, I1
+    substr R3, R2, I1, I5   ; "  at module.function (position)"
+    add I1, I4, 1
+    strfind I6, R3, " (", 0
+    blt I6, 0, 2b
+    mov I7, 0               ; the function: after the last '.' before " ("
+4:  strfind I8, R3, ".", I7
+    blt I8, 0, 5f
+    bge I8, I6, 5f
+    add I7, I8, 1
+    jmp 4b
+5:  sub I8, I6, I7
+    substr R4, R3, I7, I8
+    strfind I10, R3, ";", I6
+    bge I10, 0, 30f         ; compiled Lua code: the caller
+    strfind I10, R4, "rt$", 0
+    beq I10, 0, 2b          ; a runtime helper
+    strfind I10, R4, "B$", 0
+    beq I10, 0, 10f
+    strfind I10, R4, "P$", 0
+    beq I10, 0, 10f
+    ; the prelude's code: part of the failed function, if that is the prelude's
+    beq I12, 0, 2b
+    bge I12, 1, 80f
+    jmp 2b
+10: blt I12, 0, 13f
+    ; a library function under the failed one: its caller, unless the failed
+    ; one is the prelude's code for it (string.format's, say)
+    bnz I12, 80f
+    strfind I10, R4, "B$", 0
+    bnz I10, 80f
+    mov R6, @rt$qnames
+    bnz R6, 14f
+    call rt$qnames_init -> (R6)
+    mov @rt$qnames, R6
+14: mget.r R7, R6, R4, null
+    bz R7, 80f
+    strcmp I10, R7, R5
+    bnz I10, 80f
+    jmp 2b
+13: strfind I10, R4, "B$", 0
+    bz I10, 11f
+    mov I12, 0
+    jmp 2b
+11: mov I12, 1
+    mov R6, @rt$qnames
+    bnz R6, 12f
+    call rt$qnames_init -> (R6)
+    mov @rt$qnames, R6
+12: mget.r R7, R6, R4, null
+    bz R7, 2b
+    mov R5, R7
+    jmp 2b
+    ; called from compiled code: its call site
+30: blt I12, 0, 90f
+    mov I7, 0               ; N: after the last ':'
+31: strfind I8, R3, ":", I7
+    blt I8, 0, 32f
+    add I7, I8, 1
+    jmp 31b
+32: len I8, R3
+    sub I8, I8, I7
+    sub I8, I8, 1
+    substr R7, R3, I7, I8
+    parse.i64 I10, R7
+    mov R6, @rt$sites
+    bnz R6, 33f
+    mov R8, @rt$sitesfn
+    bz R8, 90f
+    calli R8 () -> (R6)
+    mov @rt$sites, R6
+33: mget.r R7, R6, I10, null
+    bz R7, 90f
+    mov I11, R7[0]
+    mov I13, R7[1]
+    mov R8, R7[2]
+    bge I11, 0, 34f
+    call rt$applied (R5) -> (I11)
+34: sub I0, I0, I13
+    ret I0, R8, I11
+    ; called by another library function
+80: call rt$applied (R5) -> (I11)
+    ret I0, R5, I11
+90: ret I0, R5, -1
+.endf
+
+; The number of arguments rt$apply passed last, if it called the library
+; function named name ("string.rep", "select"); else -1.
+.func rt$applied(ref name) -> i64
+    mov R1, @rt$argfn
+    bz R1, 9f
+    mov R1, R1->Fn.name
+    bz R1, 9f
+    len I1, R0
+    len I2, R1
+    sub I3, I1, I2
+    blt I3, 0, 9f
+    substr R2, R0, I3, I2
+    strcmp I4, R2, R1
+    bnz I4, 9f
+    mov I0, @rt$argc
+    ret I0
+9:  ret -1
 .endf
 
 ; ----------------------------------------------------------------- types

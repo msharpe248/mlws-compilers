@@ -129,6 +129,16 @@ typedef struct FS {
     int nsc;
 } FS;
 
+/* A call site, for a library function's argument errors (rt$argwho): the
+   name Lua gives the function called there (a masm string's contents),
+   whether it is a method call, and the number of arguments (-1: only
+   rt$apply knows). */
+typedef struct {
+    char *name;
+    int nargs;
+    bool method;
+} Site;
+
 typedef struct {
     const char *chunk;
     Buf out;            /* the program's functions */
@@ -140,11 +150,33 @@ typedef struct {
     int nic;            /* inline cache sites */
     int nmc;            /* method cache sites */
     int nctor;          /* table constructors that use a shape */
+    VEC(Site) sites;    /* the program's call sites that have a name */
 } Gen;
 
 static Gen G;
 
 static int line_of(FS *fs) { return fs->f->prelude ? -2 : fs->line; }
+
+static void emit(FS *fs, const char *fmt, ...);
+
+/* Mark the call just emitted as a call site of the program, named by desc
+   (as describe() makes it): " \001K" at the end of its line, which the
+   output takes off, noting the line. */
+static void mark_site(FS *fs, const char *desc, int nargs, bool method) {
+    if (fs->f->prelude || !fs->cur->n)
+        return;
+    const char *a = strchr(desc, '\''), *b = strrchr(desc, '\'');
+    if (!a || b <= a + 1 || (b == a + 2 && a[1] == '?'))
+        return;
+    Line *l = &fs->cur->v[fs->cur->n - 1];
+    size_t n = strlen(l->text);
+    char *t = xmalloc(n + 16);
+    snprintf(t, n + 16, "%s \001%d", l->text, G.sites.n);
+    free(l->text);
+    l->text = t;
+    Site site = {xstrndup(a + 1, (size_t)(b - a - 1)), nargs, method};
+    vec_push(G.sites, site);
+}
 
 static void emit(FS *fs, const char *fmt, ...) {
     char buf[4096];
@@ -2426,6 +2458,7 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
            library function, and errors report its line) */
         emit(fs, "    call rt$apply (%s, %s, %s, %s, %s) -> (I31, %s, %s, %s)", SI(fslot), SF(fslot),
              SR(fslot), SR(l), desc, SI(d), SF(d), SR(d));
+        mark_site(fs, desc, -1, method);
         if (tail)
             emit(fs, "    ret I31, %s, %s, %s", SI(d), SF(d), SR(d));
         if (tail)
@@ -2605,6 +2638,7 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
             emit(fs, "    tcalli R30 (%s)", argl);
         else
             emit(fs, "    calli R30 (%s) -> %s", argl, res);
+        mark_site(fs, desc, n, method);
     } else {
         int slow = new_label(fs), cont = new_label(fs);
         if (ty_get(fs, fslot) != TY_FN) {
@@ -2624,12 +2658,14 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
             fs->dead = true;
         } else {
             emit(fs, "    calli R30 (%s) -> %s", argl, res);
+            mark_site(fs, desc, n, method);
         }
         ty_set(fs, d, TY_ANY);
         cold_begin(fs);
         if (tail) {
             place(fs, builtin);
             emit(fs, "    calli R30 (%s) -> %s", argl, res);
+            mark_site(fs, desc, n, method);
             emit(fs, "    ret I31, %s, %s, %s", SI(d), SF(d), SR(d));
             fs->dead = true;
         }
@@ -2639,6 +2675,7 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
         branch(fs, slow, "bne I30, %d", 300 + n);
         emit(fs, "    mov R30, %s->Fn.clo", RB(fs, fslot, "R28"));
         emit(fs, "    calli R30 (%d%s%s) -> %s", n, n ? ", " : "", argl, res);
+        mark_site(fs, desc, n, method);
         ty_set(fs, d, TY_ANY);
         if (tail) {
             emit(fs, "    ret I31, %s, %s, %s", SI(d), SF(d), SR(d));
@@ -2649,6 +2686,7 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
         place(fs, slow);
         emit(fs, "    call rt$call%d (%s, %s, %s, %s%s%s) -> %s", n, desc, SHI(fs, fslot), SHF(fs, fslot), SHR(fs, fslot),
              n ? ", " : "", argl, res);
+        mark_site(fs, desc, n, method);
         ty_set(fs, d, TY_ANY);
         if (tail) {
             emit(fs, "    ret I31, %s, %s, %s", SI(d), SF(d), SR(d));
@@ -2688,6 +2726,7 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
         }
         emit(fs, "    call rt$apply (%s, %s, %s, %s, %s) -> (I31, %s, %s, %s)", SI(fslot), SF(fslot),
              SR(fslot), SR(l), desc, SI(d), SF(d), SR(d));
+        mark_site(fs, desc, -1, method);
         jump(fs, done);
         cold_end(fs);
         place(fs, done);
@@ -2966,6 +3005,11 @@ static void gen_closure(FS *fs, Func *f, int d, bool self_first) {
     emit(fs, "    mov R30, %s", SR(d));
     emit(fs, "    mov R30->Fn.clo, R29");
     emit(fs, "    mov R30->Fn.sig, %d", func_sig(f));
+    /* the prelude's library functions (function string.gsub ...) have a
+       name, as the assembly's do: a tail call calls them normally, and
+       rt$applied knows them */
+    if (fs->f->prelude && f->field)
+        emit(fs, "    mov R30->Fn.name, \"%s\"", f->field);
 }
 
 /* ----------------------------------------------------------- expressions */
@@ -4556,11 +4600,13 @@ static void emit_call(FS *fs, int fslot, Val *vals, int n, int d, const char *de
     branch(fs, slow, "bne I30, %d", n);
     emit(fs, "    mov R30, %s->Fn.clo", RB(fs, fslot, "R28"));
     emit(fs, "    calli R30 (%s) -> %s", argl, res);
+    mark_site(fs, desc, n, false);
     ty_set(fs, d, TY_ANY);
     cold_begin(fs);
     place(fs, slow);
     emit(fs, "    call rt$call%d (%s, %s, %s, %s%s%s) -> %s", n, desc, SHI(fs, fslot), SHF(fs, fslot), SHR(fs, fslot),
          n ? ", " : "", argl, res);
+    mark_site(fs, desc, n, false);
     ty_set(fs, d, TY_ANY);
     jump(fs, cont);
     cold_end(fs);
@@ -5092,6 +5138,9 @@ typedef VEC(Func *) FuncVec;
 
 static void collect_funcs(Func *f, FuncVec *all) {
     vec_push(*all, f);
+    const char *dot = strrchr(f->name, '.');
+    if (dot && !f->field)
+        f->field = xstrdup(dot + 1);
     sanitize(f->name);
     for (int i = 0; i < f->children.n; i++)
         collect_funcs(f->children.v[i], all);
@@ -5565,6 +5614,8 @@ static void gen_helpers(Buf *b) {
     L("    mov R20, R0->Fn.clo");
     L("    len I23, R1");
     L("    div I23, 2");
+    L("    mov @rt$argc, I23");
+    L("    mov @rt$argfn, R0");
     L("    blt I21, 100, 10f");
     L("    blt I21, 200, 20f");
     L("    beq I21, 200, 30f");
@@ -5823,6 +5874,24 @@ static void add_library(Buf *b, GenInput *in, int npins, int nic, int nmc, int n
     bufl(b, "    ret");
     bufl(b, ".endf");
     bufl(b, "%s", "");
+    bufl(b, "; The library's functions written in assembly, by the names Lua's");
+    bufl(b, "; messages give them (see rt$argwho).");
+    bufl(b, ".func rt$qnames_init -> ref");
+    bufl(b, "    mnew R0");
+    for (size_t i = 0; i < sizeof builtins / sizeof *builtins; i++) {
+        const Builtin *bi = &builtins[i];
+        if (bi->lib && strcmp(bi->lib, "P") == 0)
+            continue;
+        bool seen = false;
+        for (size_t j = 0; j < i; j++)
+            if (strcmp(builtins[j].fn, bi->fn) == 0)
+                seen = true;
+        if (!seen)
+            bufl(b, "    mset R0, \"%s\", \"%s%s%s\"", bi->fn, bi->lib ? bi->lib : "", bi->lib ? "." : "", bi->name);
+    }
+    bufl(b, "    ret R0");
+    bufl(b, ".endf");
+    bufl(b, "%s", "");
     add_init_ic(b, "rt$init_ic", 0, nic);
     bufl(b, "; Start-up, up to the program's own globals: the chunk name, the number");
     bufl(b, "; of globals and of table constructors the program expects the library");
@@ -5844,6 +5913,52 @@ static void add_library(Buf *b, GenInput *in, int npins, int nic, int nmc, int n
     gen_helpers(b);
     buf_cat(b, &G.libout);
     add_data(b, 0, nic, 0, nmc, 0, nctor);
+}
+
+/* Writing the output: the lines so far, and where the call sites went. */
+typedef struct {
+    FILE *f;
+    int line;
+    int *site_line;
+} Out;
+
+/* A line of the program, qualified for a shared library if syms: a call
+   site's mark (" \001K") comes off, and its line is noted. */
+static void put_line(Out *o, const char *text, SymSet *syms) {
+    o->line++;
+    const char *m = strstr(text, " \001");
+    int len = m ? (int)(m - text) : (int)strlen(text);
+    if (m)
+        o->site_line[atoi(m + 2)] = o->line;
+    if (syms) {
+        char *t = xstrndup(text, (size_t)len);
+        SB q = {0};
+        qualify(&q, t, syms);
+        fprintf(o->f, "%s\n", sb_str(&q));
+        free(q.s);
+        free(t);
+    } else {
+        fprintf(o->f, "%.*s\n", len, text);
+    }
+}
+
+/* Lines of the output's own (with \n between them). */
+static void put_lines(Out *o, const char *fmt, ...) {
+    char buf[4096];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+    for (char *p = buf;;) {
+        char *e = strchr(p, '\n');
+        if (e)
+            *e = 0;
+        o->line++;
+        fprintf(o->f, "%s\n", p);
+        if (!e)
+            break;
+        p = e + 1;
+    }
 }
 
 void generate(GenInput *in, FILE *f) {
@@ -5908,6 +6023,8 @@ void generate(GenInput *in, FILE *f) {
     bufl(&prog, "    call p$init_ic");
     bufl(&prog, "    call p$init_globals");
     bufl(&prog, "    call rt$init_lib");
+    bufl(&prog, "    closure p$sites -> (R1)");
+    bufl(&prog, "    mov @rt$sitesfn, R1");
     bufl(&prog, "    call rt$init_done");
     bufl(&prog, ".try 8f");
     bufl(&prog, "    lnew R1");
@@ -5938,27 +6055,37 @@ void generate(GenInput *in, FILE *f) {
     }
     add_data(&prog, lib_nic, G.nic, lib_nmc, G.nmc, lib_nctor, G.nctor);
 
-    fprintf(f, "; Generated by mlws-vm-luac %s from %s\n\n", VERSION, chunk);
+    /* the output, counting lines for the call sites' table */
+    int *site_line = xmalloc(((size_t)G.sites.n + 1) * sizeof *site_line);
+    for (int i = 0; i < G.sites.n; i++)
+        site_line[i] = -1;
+    Out o = {f, 0, site_line};
+    put_lines(&o, "; Generated by mlws-vm-luac %s from %s\n", VERSION, chunk);
+    SymSet syms = {0};
     if (in->mode == GEN_SHARED) {
         /* the library's names in the program are lua.name */
-        SymSet syms = {0};
         int state = 0;
         for (int i = 0; i < lib.n; i++)
             collect_symbols(&syms, lib.v[i].text, &state);
         if (in->module)
-            fprintf(f, ".module %s\n", in->module);
-        fprintf(f, ".import lua\n.requires lua, \"=%s\"\n\n", VERSION);
-        for (int i = 0; i < prog.n; i++) {
-            SB o = {0};
-            qualify(&o, prog.v[i].text, &syms);
-            fprintf(f, "%s\n", sb_str(&o));
-            free(o.s);
-        }
+            put_lines(&o, ".module %s", in->module);
+        put_lines(&o, ".import lua\n.requires lua, \"=%s\"\n", VERSION);
     } else {
         for (int i = 0; i < lib.n; i++)
-            fprintf(f, "%s\n", lib.v[i].text);
-        for (int i = 0; i < prog.n; i++)
-            fprintf(f, "%s\n", prog.v[i].text);
+            put_line(&o, lib.v[i].text, NULL);
     }
+    for (int i = 0; i < prog.n; i++)
+        put_line(&o, prog.v[i].text, in->mode == GEN_SHARED ? &syms : NULL);
+    /* the call sites: masm line -> [arguments, method, name] */
+    put_lines(&o, ".func p$sites -> ref\n    mnew R0");
+    for (int i = 0; i < G.sites.n; i++) {
+        if (site_line[i] < 0)
+            continue;
+        Site *st = &G.sites.v[i];
+        put_lines(&o, "    lnew R1, 3\n    lpush R1, %d, %d, \"%s\"\n    mset R0, %d, R1", st->nargs, st->method ? 1 : 0,
+                  st->name, site_line[i]);
+    }
+    put_lines(&o, "    ret R0\n.endf");
+    free(site_line);
     free(chunk);
 }

@@ -191,7 +191,7 @@
 ; ipairs(t): the iterator, t, 0
 .func B$ipairs(i64 nargs, i64, f64, ref) -> (i64, i64, f64, ref)
     bnz I0, 1f
-    call rt$argtype (1, "ipairs", "table", I1, F0, R0)
+    call rt$argerror (1, "ipairs", "value expected")
 1:  mov R1, @rt$mv
     STOREV R1, 0, I2, I1, F0, R0
     mov.r R1[2], null
@@ -328,7 +328,7 @@
     bne I1, 1, 2f
     len I2, R0
     ret 1, I2, 0.0, null
-2:  call rt$argerror (1, "rawlen", "table or string expected")
+2:  call rt$argtype (1, "rawlen", "table or string", I0, F0, R0)
     ret 0, 0, 0.0, 1n
 .endf
 
@@ -869,7 +869,10 @@
 .endf
 
 .func B$tab_unpack(i64, f64, ref, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
-    call rt$optint (2, "unpack", I1, F1, R1, 1) -> (I3)
+    isa I9, R0, Tab
+    bnz I9, 3f
+    call rt$argtype (1, "unpack", "table", I0, F0, R0)
+3:    call rt$optint (2, "unpack", I1, F1, R1, 1) -> (I3)
     beq.r R2, 1n, 1f
     call rt$checkint (3, "unpack", I2, F2, R2) -> (I4)
     jmp 2f
@@ -1099,7 +1102,7 @@ MATHF1 exp, ncall "math.exp" (F0) -> (F0)
 2:  ble I3, I4, 3f
     sub I5, I0, 1
     add I5, 1
-    call rt$argerror (I0, "random", "interval is empty")
+    call rt$argerror (1, "random", "interval is empty")
 3:  ncall "random.int" (I3, I4) -> (I6)
     ret 1, I6, 0.0, null
 8:  call rt$rterror ("wrong number of arguments")
@@ -1273,7 +1276,7 @@ MATHF1 exp, ncall "math.exp" (F0) -> (F0)
 .func B$co_resume(i64, f64, ref, ref) -> (i64, i64, f64, ref)
     isa I1, R0, Thread
     bnz I1, 1f
-    call rt$argtype (1, "resume", "coroutine", I0, F0, R0)
+    call rt$argtype (1, "resume", "thread", I0, F0, R0)
 1:  call rt$resume (R0, R1) -> (I2, I3, F3, R3)
     bz I2, 5f
     lnew R4
@@ -1312,7 +1315,7 @@ MATHF1 exp, ncall "math.exp" (F0) -> (F0)
 .func B$co_status(i64, f64, ref) -> (i64, i64, f64, ref)
     isa I1, R0, Thread
     bnz I1, 1f
-    call rt$argtype (1, "status", "coroutine", I0, F0, R0)
+    call rt$argtype (1, "status", "thread", I0, F0, R0)
 1:  call rt$costatus (R0) -> (R1)
     ret 1, 0, 0.0, R1
 .endf
@@ -1412,6 +1415,18 @@ MATHF1 exp, ncall "math.exp" (F0) -> (F0)
     inc I5
     ret 1, I5, 0.0, null
 9:  ret 1, 0, 0.0, 1n
+.endf
+
+; P.argerror(n, fname, msg) and P.argtype(n, fname, expected, v): the
+; prelude's argument errors, made as the assembly's are (rt$argwho).
+.func P$argerror(i64, f64, ref, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$argerror (I0, R1, R2)
+    ret 0, 0, 0.0, 1n
+.endf
+
+.func P$argtype(i64, f64, ref, i64, f64, ref, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
+    call rt$argtype (I0, R1, R2, I3, F3, R3)
+    ret 0, 0, 0.0, 1n
 .endf
 
 ; P.std(n): the standard stream n (0 in, 1 out, 2 err).
