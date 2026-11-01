@@ -20,6 +20,14 @@
     id: i64
 .ends
 
+; A process's messages received but not yet taken (fields, not globals, as
+; the VM's fast forms store to fields)
+.struct Mbox
+    saved: ref      ; a list, R and I each
+    scan: i64       ; the next saved message a receive looks at
+    pend: ref       ; the new message rt$recv_next returned last, not yet saved
+.ends
+
 .struct Ref
     a: i64
     b: i64
@@ -51,8 +59,7 @@
 .ends
 
 ; Each process has its own copy of these.
-g$saved:    .zero 8      ; messages received but not yet taken: a list, R and I each
-g$scan:     .i64 0       ; the next saved message a receive looks at
+g$mbox:     .zero 8      ; an Mbox, made by the first receive
 g$self:     .zero 8      ; this process's Pid
 g$monitors: .zero 8      ; a map: pid -> the Ref of our monitor of it
 g$links:    .zero 8      ; a map: pid -> 1, links made while trapping exits
@@ -1221,8 +1228,25 @@ bad:
 .endf
 
 .func rt$recv_reset
-    mov @g$scan, 0
-    ret
+    mov.r R0, @g$mbox
+    bz R0, 1f
+    mov R0->Mbox.scan, 0
+    mov.r R1, R0->Mbox.pend
+    bz R1, 1f
+    mov.r R3, R0->Mbox.saved
+    mov.r R2, R1[0]
+    mov I2, R1[1]
+    lpush R3, R2, I2
+    mov.r R0->Mbox.pend, null
+1:  ret
+.endf
+
+.func rt$mbox_new -> ref
+    new R0, Mbox
+    lnew R1
+    mov.r R0->Mbox.saved, R1
+    mov.r @g$mbox, R0
+    ret R0
 .endf
 
 ; A receive's timeout: the time (ms, monotonic) it ends, or -1 for infinity.
@@ -1242,20 +1266,32 @@ bad:
 .endf
 
 ; The next message a receive should look at: those saved first, then new
-; ones. (0, ...) when the deadline passes.
+; ones. (0, ...) when the deadline passes. A new message is saved only if
+; the receive does not take it: it is kept in Mbox.pend until this is called
+; again or rt$recv_accept takes it.
 .func rt$recv_next(i64 deadline) -> (i64, i64, ref)
-    mov.r R0, @g$saved
+    mov.r R0, @g$mbox
     bnz R0, 1f
-    lnew R0
-    mov.r @g$saved, R0
-1:  len I1, R0
-    mov I2, @g$scan
+    call rt$mbox_new () -> R0
+1:  mov.r R6, R0->Mbox.saved
+    mov.r R2, R0->Mbox.pend
+    bz R2, 3f
+    mov.r R1, R2[0]
+    mov I5, R2[1]
+    lpush R6, R1, I5
+    mov.r R0->Mbox.pend, null
+    mov I2, R0->Mbox.scan
+    inc I2
+    mov R0->Mbox.scan, I2
+3:  len I1, R6
+    mov I2, R0->Mbox.scan
     shl I3, I2, 1
     bge I3, I1, wait
-    mov.r R1, R0[I3]
+    mov.r R1, R6[I3]
     add I4, I3, 1
-    mov I5, R0[I4]
-    inc @g$scan
+    mov I5, R6[I4]
+    inc I2
+    mov R0->Mbox.scan, I2
     ret 1, I5, R1
 wait:
     beq deadline, -1, inf
@@ -1270,28 +1306,35 @@ inf:
     recv R2
 got:
     bisa R2, Down, down
+    mov.r R0->Mbox.pend, R2
     mov.r R1, R2[0]
     mov I5, R2[1]
-push:
-    lpush R0, R1, I5
-    inc @g$scan
     ret 1, I5, R1
 down:
     call rt$down_msg (R2) -> (I8, I5, R1)
     bz I8, wait
-    jmp push
+    lpush R6, R1, I5
+    mov I2, R0->Mbox.scan
+    inc I2
+    mov R0->Mbox.scan, I2
+    ret 1, I5, R1
 timeout:
     ret 0, 0, null
 .endf
 
-; Take the message the receive matched out of the saved ones.
+; Take the message the receive matched: the pending one, or out of the saved.
 .func rt$recv_accept
-    mov.r R0, @g$saved
-    mov I0, @g$scan
+    mov.r R0, @g$mbox
+    mov.r R1, R0->Mbox.pend
+    bz R1, 1f
+    mov.r R0->Mbox.pend, null
+    ret
+1:  mov.r R2, R0->Mbox.saved
+    mov I0, R0->Mbox.scan
     dec I0
     shl I0, I0, 1
-    ldel R0, I0
-    ldel R0, I0
+    ldel R2, I0
+    ldel R2, I0
     ret
 .endf
 
@@ -1515,8 +1558,9 @@ timeout:
 ; demonitor(Ref, [flush]): also drop its 'DOWN' if it came
 .func rt$demonitor2(i64 a, i64 o, ref r, ref opts) -> (i64, ref)
     call rt$demonitor (a, r) -> (I2, R2)
-    mov.r R0, @g$saved
+    mov.r R0, @g$mbox
     bz R0, 9f
+    mov.r R0, R0->Mbox.saved
     len I1, R0
     mov I2, 0
 1:  bge I2, I1, 9f
