@@ -150,7 +150,7 @@ an Apple M-series machine:
 | nbody (100,000 steps, floats in tuples) | 0.78 | 0.14 |
 | sorting (200,000 integers, maps) | 0.75 | 0.11 |
 
-These need MLWSVM 0.7.0, whose fast forms for `bitcast`,
+These need MLWSVM 0.7.0 or later, whose fast forms for `bitcast`,
 `typeof` and comparisons of list elements came from these programs'
 profiles. BEAM compiles to machine code; MLWSVM interprets. Calls and
 integer arithmetic are as fast as BEAM's; tuples and allocation are where
