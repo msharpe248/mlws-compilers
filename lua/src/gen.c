@@ -1078,6 +1078,7 @@ static Val gen_index_val(FS *fs, Val t, Val k, int dst, const char *desc) {
     if (d < 0 || d == ts || (k.k == V_SLOT && d == k.slot))
         d = alloc_slot(fs);
     int slow = new_label(fs), cont = new_label(fs);
+    int miss = -1;      /* an integer key not in the array part */
     bool inl = false;
     char arr[16] = "R31";
     if (((kt == TY_INT || (kt == TY_ANY && k.k == V_SLOT)) && (k.k != V_INT || (k.i >= 1 && k.i < (1ll << 40)))) || (k.k == V_STR && !(k.s.len >= 2 && k.s.s[0] == '_' && k.s.s[1] == '_'))) {
@@ -1097,7 +1098,8 @@ static Val gen_index_val(FS *fs, Val t, Val k, int dst, const char *desc) {
             else
                 emit(fs, "    sub I31, %s, 1", VI(&k));
             /* 0 <= k - 1 < n, as one unsigned compare */
-            branch(fs, slow, "bge.u64 I31, %s", c < 0 ? "I30" : SI(c));
+            miss = new_label(fs);
+            branch(fs, miss, "bge.u64 I31, %s", c < 0 ? "I30" : SI(c));
             emit(fs, "    add I31, I31");
             snprintf(arr, sizeof arr, "%s", c < 0 ? "R31" : SR(c));
             if (c < 0)
@@ -1108,8 +1110,19 @@ static Val gen_index_val(FS *fs, Val t, Val k, int dst, const char *desc) {
         emit(fs, "    mov %s, %s[I31]", SR(d), arr);
         emit(fs, "    ldv %s, %s, %s[I31+1]", SI(d), SF(d), arr);
         ty_set(fs, d, TY_ANY);
-        branch(fs, slow, "beq.r %s, " NIL, SR(d));
+        branch(fs, miss >= 0 ? miss : slow, "beq.r %s, " NIL, SR(d));
         cold_begin(fs);
+        if (miss >= 0) {
+            /* nil, from a table with no hash part and no metatable */
+            place(fs, miss);
+            const char *tr = RB(fs, ts, "R28");
+            emit(fs, "    mov R31, %s->Tab.hm", tr);
+            branch(fs, slow, "bnz R31");
+            emit(fs, "    mov R31, %s->Tab.meta", tr);
+            branch(fs, slow, "bnz R31");
+            emit(fs, "    mov.r %s, " NIL, SR(d));
+            jump(fs, cont);
+        }
         place(fs, slow);
     }
     const char *kr = HR(fs, &k);
