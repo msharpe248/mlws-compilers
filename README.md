@@ -103,6 +103,40 @@ add the `tailcall` pass (`--opt 3,tailcall`, or `all`): it removes the frames
 Lua counts to find an error's position. See the VM's
 [OPTIMIZER.md](../mlws-vm/docs/OPTIMIZER.md).
 
+## Performance
+
+The Lua and Erlang benchmarks (`make -C lua bench`, `make -C erlang bench`),
+in seconds, the best of three runs, on an Apple M5 Pro. MLWSVM is run
+interpreting, and with its JIT (`mlwsvm run --jit on`, or `MLWSVM_JIT=on` in the
+environment, which works with the driver scripts and `make test` too). The JIT is on MLWSVM's main
+branch (M43) and is not in a release yet. The references are the
+interpreter `lua` 5.5.1, and Erlang/OTP 29.1.2, whose BEAM compiles to
+machine code (its times include starting it, about 0.07 s):
+
+| Lua | MLWSVM | MLWSVM JIT | lua 5.5 |
+|---|---|---|---|
+| fib (32) | 0.05 | 0.03 | 0.05 |
+| loop (30,000,000 iterations) | 0.18 | 0.06 | 0.20 |
+| methods (2M method calls and objects) | 0.55 | 0.37 | 0.32 |
+| strings (format, gmatch, gsub) | 0.34 | 0.33 | 0.12 |
+| iterate (pairs, ipairs) | 0.09 | 0.04 | 0.05 |
+| binarytrees (15) | 0.55 | 0.35 | 0.36 |
+| nbody (500,000) | 0.96 | 0.50 | 0.37 |
+| spectralnorm (500) | 0.21 | 0.10 | 0.17 |
+| fannkuch (10) | 1.91 | 0.72 | 0.76 |
+
+| Erlang | MLWSVM | MLWSVM JIT | erl (JIT) |
+|---|---|---|---|
+| fib (30) | 0.04 | 0.02 | 0.08 |
+| ring (1,000 processes, 1,000,000 messages) | 0.32 | 0.32 | 0.24 |
+| binarytrees (16) | 0.64 | 0.31 | 0.12 |
+| nbody (100,000 steps) | 0.78 | 0.57 | 0.15 |
+| sorting (200,000 integers, maps) | 0.74 | 0.46 | 0.10 |
+
+Every test suite passes with the JIT, and prints the same as without it.
+The JIT does least for code that spends its time in the runtime: string
+operations, and sending and receiving messages.
+
 ## Layout
 
 ```
