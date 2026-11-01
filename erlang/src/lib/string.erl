@@ -7,7 +7,7 @@
          left/2, left/3, right/2, right/3, centre/2, centre/3, split/2, split/3,
          trim/1, trim/2, trim/3, find/2, find/3, lexemes/2, slice/2, slice/3, reverse/1,
          is_empty/1, equal/2, prefix/2, replace/3, replace/4, pad/2, pad/3, pad/4,
-         to_integer/1, to_float/1, chomp/1, list_to_integer/1, sub_word/2, sub_word/3,
+         to_integer/1, to_float/1, chomp/1, sub_word/2, sub_word/3,
          span/2, cspan/2, casefold/1, titlecase/1, next_grapheme/1]).
 
 chars(B) when is_binary(B) -> unicode_list(B);
@@ -282,8 +282,6 @@ to_integer(S0) ->
         [_] when hd(Ds) =:= $-; hd(Ds) =:= $+ -> {error, no_integer};
         _ -> {list_to_integer(Ds), like(S0, Rest)}
     end.
-
-list_to_integer(S) -> to_integer(S).
 
 to_float(S0) ->
     S = chars(S0),

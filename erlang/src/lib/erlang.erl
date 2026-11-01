@@ -15,7 +15,10 @@
          is_map_key/2, map_get/2, map_size/1, make_tuple/3, phash2/1, phash2/2,
          list_to_pid/1, pid_to_list/1, ref_to_list/1, fun_to_list/1, fun_info/2,
          is_builtin/3, function_exported/3, exit/1, throw/1, error/1,
-         error/2, binary_part/2, split_binary/2, max/1]).
+         error/2, binary_part/2, split_binary/2, max/1,
+         is_atom/1, is_binary/1, is_bitstring/1, is_boolean/1, is_float/1, is_function/1,
+         is_function/2, is_integer/1, is_list/1, is_map/1, is_number/1, is_pid/1,
+         is_reference/1, is_tuple/1, is_record/2, is_record/3]).
 
 min(A, B) when B < A -> B;
 min(A, _) -> A.
@@ -271,3 +274,21 @@ function_exported(_, _, _) -> false.
 
 binary_part(B, {S, L}) -> binary_part(B, S, L).
 split_binary(B, N) -> {binary_part(B, 0, N), binary_part(B, N, byte_size(B) - N)}.
+
+%% The type tests, for fun is_integer/1 and apply (the compiler does them inline).
+is_atom(X) -> erlang:is_atom(X).
+is_binary(X) -> erlang:is_binary(X).
+is_bitstring(X) -> erlang:is_bitstring(X).
+is_boolean(X) -> erlang:is_boolean(X).
+is_float(X) -> erlang:is_float(X).
+is_function(X) -> erlang:is_function(X).
+is_function(X, N) -> erlang:is_function(X, N).
+is_integer(X) -> erlang:is_integer(X).
+is_list(X) -> erlang:is_list(X).
+is_map(X) -> erlang:is_map(X).
+is_number(X) -> erlang:is_number(X).
+is_pid(X) -> erlang:is_pid(X).
+is_reference(X) -> erlang:is_reference(X).
+is_tuple(X) -> erlang:is_tuple(X).
+is_record(X, Tag) -> is_tuple(X) andalso tuple_size(X) > 0 andalso element(1, X) =:= Tag.
+is_record(X, Tag, Size) -> is_tuple(X) andalso tuple_size(X) =:= Size andalso element(1, X) =:= Tag.

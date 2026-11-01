@@ -1,0 +1,23 @@
+["a","b","c"]
+"x-y-z"
+"HELLO"
+"hello"
+"pad"
+"world"
+7
+["a","b=c"]
+["a","b","c"]
+"both"
+["one","two","three"]
+4
+"llo"
+["a","/","b","/","c"]
+"a/b/c"
+{42,"abc"}
+"ababab"
+"ab..."
+"   ab"
+3
+"desserts"
+"abcdef"
+deep, list

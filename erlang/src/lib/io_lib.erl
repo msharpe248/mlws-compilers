@@ -98,10 +98,8 @@ control($P, F, _Adj, P, _Pad, [A, _D | Args], Col) ->
 control($s, F, Adj, P, Pad, [A | Args], _Col) ->
     {string(chars_of(A), F, Adj, P, Pad), Args};
 control($c, F, Adj, P, Pad, [A | Args], _Col) when is_integer(A) ->
-    N = case P of none -> 1; _ -> P end,
+    N = case {P, F} of {none, none} -> 1; {none, _} -> F; _ -> P end,
     {adjust(lists:duplicate(N, A), F, Adj, Pad), Args};
-control($d, F, Adj, P, Pad, [A | Args], _Col) when is_integer(A) ->
-    {term(integer_to_list(A), F, Adj, P, Pad), Args};
 control($b, F, Adj, P, Pad, [A | Args], _Col) when is_integer(A) ->
     {term(lower(integer_to_list(A, base(P))), F, Adj, none, Pad), Args};
 control($B, F, Adj, P, Pad, [A | Args], _Col) when is_integer(A) ->

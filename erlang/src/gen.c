@@ -352,6 +352,30 @@ static void clause_vars(Clause *c, Names *out) {
         collect_vars(c->body.v[j], out);
 }
 
+static bool mentions(Node *e, const char *name) {
+    Names vs = {0};
+    collect_vars(e, &vs);
+    bool r = false;
+    for (int k = 0; k < vs.n; k++)
+        if (vs.v[k] == name)
+            r = true;
+    free(vs.v);
+    return r;
+}
+
+/* The argument slot a variable can use: the first head pattern that is
+ * just that variable, unless an earlier pattern binds it. -1 for none. */
+static int head_slot(Clause *c, const char *name) {
+    for (int j = 0; j < c->pats.n; j++) {
+        Node *p = c->pats.v[j];
+        if (p && p->kind == N_VAR && p->s == name)
+            return j;
+        if (p && mentions(p, name))
+            return -1;
+    }
+    return -1;
+}
+
 /* Give each variable of a function or fun clause its slot. A head
  * pattern that is just a new variable uses the argument's own slot. */
 static void setup_clause(Fn *g, Clause *c, int base) {
@@ -360,12 +384,7 @@ static void setup_clause(Fn *g, Clause *c, int base) {
     clause_vars(c, &names);
     int next = g->nparams + g->ncaps;
     for (int k = 0; k < names.n; k++) {
-        Var v = {names.v[k], -1, false};
-        for (int j = 0; j < c->pats.n; j++)
-            if (c->pats.v[j] && c->pats.v[j]->kind == N_VAR && c->pats.v[j]->s == names.v[k]) {
-                v.slot = j;
-                break;
-            }
+        Var v = {names.v[k], head_slot(c, names.v[k]), false};
         if (v.slot < 0)
             v.slot = next++;
         vec_push(g->vars, v);
@@ -1185,12 +1204,17 @@ static void cond(Fn *g, Node *e, const char *fail) {
         g->top = mark;
         return;
     }
-    if (e->kind == N_CALL && e->a->kind == N_ATOM && type_test(e->a->s, e->kids.n) >= 0
-        && !find_function(g->mod, e->a->s, e->kids.n)) {
+    const char *tt = NULL;
+    if (e->kind == N_CALL && e->a->kind == N_ATOM && !find_function(g->mod, e->a->s, e->kids.n))
+        tt = e->a->s;
+    if (e->kind == N_CALL && e->a->kind == N_REMOTE && e->a->a->kind == N_ATOM
+        && e->a->b->kind == N_ATOM && !strcmp(e->a->a->s, "erlang"))
+        tt = e->a->b->s;
+    if (tt && type_test(tt, e->kids.n) >= 0) {
         Val args[3];
         for (int k = 0; k < e->kids.n && k < 3; k++)
             args[k] = ev(g, e->kids.v[k]);
-        const char *t = e->a->s;
+        const char *t = tt;
         const char *r = args[0].r;
         if (!strcmp(t, "is_integer")) {
             const char *ok = new_label(g);
@@ -1389,14 +1413,7 @@ static Val arith(Fn *g, const char *op, Val a, Val b) {
 static bool inline_bif(Fn *g, Node *e, const char *name, int n, Val *out) {
     Node **k = e->kids.v;
     if (type_test(name, n) >= 0) {
-        Node *c = e;
-        if (e->a->kind == N_REMOTE) {
-            c = new_node(N_CALL, e->line, e->file);
-            c->a = new_node(N_ATOM, e->line, e->file);
-            c->a->s = name;
-            c->kids = e->kids;
-        }
-        *out = bool_val(g, c);
+        *out = bool_val(g, e);
         return true;
     }
     if (!strcmp(name, "hd") && n == 1) {
@@ -2868,12 +2885,7 @@ static void gen_fun_body(Fn *parent, Node *e, const char *mname, Names *caps, co
                     inhead = true;
             if (captured && !inhead)
                 continue;
-            Var v = {names.v[q], -1, false};
-            for (int j = 0; j < c->pats.n; j++)
-                if (c->pats.v[j]->kind == N_VAR && c->pats.v[j]->s == names.v[q]) {
-                    v.slot = j;
-                    break;
-                }
+            Var v = {names.v[q], head_slot(c, names.v[q]), false};
             if (v.slot < 0)
                 v.slot = next++;
             vec_push(g.vars, v);

@@ -1,0 +1,33 @@
+-module(format).
+-export([main/0]).
+
+main() ->
+    io:format("~w ~p~n", [<<"abc">>, <<"abc">>]),
+    io:format("~p~n", [lists:seq(1, 40)]),
+    io:format("~p~n", [[{a,1},{b,2},{c,3},{d,4},{e,5},{f,6},{g,7},{h,8},{i,9},{j,10},{k,11},{l,12}]]),
+    io:format("~p~n", [{aaaaaaaaaaaaaaaa,bbbbbbbbbbbbbbbbbbbbbb,cccccccccccccccccccccc,dddddddddddddddddddddd}]),
+    io:format("~10s|~-10s|~5w|~.2f|~e|~g~n", ["abc", "abc", 42, 3.14159, 2.5, 2.5]),
+    io:format("~b ~.16B ~.16b ~8.2.0B ~c~5c|~n", [10, 255, 255, 5, $a, $b]),
+    io:format("~s ~s ~p~n", [abc, <<"bin">>, [1.5, -0.0, 2.0e-10]]),
+    io:format("~p~n", [[1, 2, 3 | tail]]),
+    io:format("~p ~p ~p ~p~n", [hello, 'Hello', 'a b', 'end']),
+    io:format("~p~n", ["a\nb\"c"]),
+    io:format("~8.3f|~-8.3f|~3B|~n", [3.14159, 2.5, 7]),
+    io:format("~2B~n", [123]),
+    io:format("~x ~X~n", [255, "0x", 255, "0x"]),
+    io:format("~.3e ~.10g~n", [1234.5, 1234.5]),
+    io:format("[~*s]~n", [6, "ab"]),
+    io:format("~p~n", [[[1,2,3],[4,5,6],[7,8,9],[10,11,12],[13,14,15],[16,17,18],[19,20,21]]]),
+    io:format("~p~n", [{person, "Ada Lovelace", 36, [{languages, [english, french]}, {field, mathematics}]}]),
+    io:format("~p~n", [lists:duplicate(5, {key, "a fairly long string value", 12345})]),
+    S = io_lib:format("~p-~p", [1, 2]),
+    io:format("~s ~p~n", [S, lists:flatten(S)]),
+    io:format("~w~n", [[1.0, 2.5e10, 123456789.0, 0.001, 1.0e-4]]),
+    io:format("~p~n", [1.0e15]),
+    io:format("~p ~p~n", [3.0, -1.5]),
+    io:format("~p~n", [math:pi()]),
+    io:format("~p~n", [math:sqrt(2)]),
+    io:format("~p~n", [2 / 3]),
+    io:format("~ts~n", ["unicode"]),
+    io:format("~~ done~n"),
+    ok.

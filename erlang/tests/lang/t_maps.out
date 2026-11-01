@@ -1,0 +1,16 @@
+1 none
+[{a,10},{b,2},{c,3}]
+3 true
+10 3
+error
+[a,c]
+[{x,3},{y,2},{z,1}]
+300
+6
+true
+#{a => 2}
+badkey
+100 2500
+#{k => [1,2]}
+matched b
+x no_a
