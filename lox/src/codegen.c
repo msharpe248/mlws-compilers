@@ -504,7 +504,15 @@ static Val read_var(FS *fs, Var *v, int up, Token *name, int dst) {
         g.slot = -1;
         g.nfact = F_NUM(global_index(name));
         g.num = fact(fs, g.nfact);
-        return g;
+        /* into a slot: instructions with a global operand are the VM's
+         * general forms (and its JIT steps them), moves from one are fast */
+        int d = dst >= 0 ? dst : alloc_slot(fs);
+        put(fs, d, g);
+        Val dv = slot_val(d);
+        dv.num = g.num;
+        dv.nfact = g.nfact;  /* a number check of the copy is one of the global */
+        dv.mut = true;       /* so protect() copies it before code that could assign it */
+        return dv;
     }
     if (up < 0) {
         if (!var_boxed(v)) {

@@ -1,0 +1,18 @@
+// A global read as an operand is copied into a register; the copy must be
+// the value before anything later in the expression assigns the global.
+var a = 1;
+fun f() { a = "s"; return 2; }
+print a + f(); // expect: 3
+print a; // expect: s
+var b = 1;
+fun g() { b = "s"; return 2; }
+print b < g(); // expect: true
+var c = 3;
+print c + (c = 4) + c; // expect: 11
+var d = 1;
+fun h() { d = "x"; return 1; }
+print d + h() == 3; // expect: false
+print d + "!"; // expect: x!
+var i = 0;
+while (i < 3) i = i + 1;
+print i; // expect: 3
