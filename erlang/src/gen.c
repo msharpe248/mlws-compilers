@@ -375,19 +375,231 @@ static int head_slot(Clause *c, const char *name) {
     return -1;
 }
 
+/* ---- live ranges: where in evaluation order each variable is first and
+ * last mentioned. A pattern is one position (its parts are matched in an
+ * order of their own); a fun or a comprehension is one position (the
+ * variables it uses must live through all of it); a variable mentioned
+ * inside a receive lives to its end (a receive loops). */
+
+typedef struct {
+    Names names;
+    VEC(int) first, last;
+    int pos;
+    int body;           /* where the clause's body starts (-1 until known) */
+} Live;
+
+static void live_note(Live *lv, const char *name, int pos) {
+    for (int k = 0; k < lv->names.n; k++)
+        if (lv->names.v[k] == name) {
+            if (pos < lv->first.v[k])
+                lv->first.v[k] = pos;
+            if (pos > lv->last.v[k])
+                lv->last.v[k] = pos;
+            return;
+        }
+}
+
+/* Every variable in e, as mentioned at one position. */
+static void live_flat(Live *lv, Node *e, int pos) {
+    if (!e)
+        return;
+    if (e->kind == N_VAR) {
+        live_note(lv, e->s, pos);
+        return;
+    }
+    live_flat(lv, e->a, pos);
+    live_flat(lv, e->b, pos);
+    live_flat(lv, e->c, pos);
+    for (int k = 0; k < e->kids.n; k++)
+        live_flat(lv, e->kids.v[k], pos);
+    for (int pass = 0; pass < 2; pass++) {
+        Clauses *cs = pass ? &e->cclauses : &e->clauses;
+        for (int k = 0; k < cs->n; k++) {
+            Clause *c = cs->v[k];
+            for (int j = 0; j < c->pats.n; j++)
+                live_flat(lv, c->pats.v[j], pos);
+            for (int j = 0; j < c->guards.n; j++)
+                for (int q = 0; q < c->guards.v[j].n; q++)
+                    live_flat(lv, c->guards.v[j].v[q], pos);
+            for (int j = 0; j < c->body.n; j++)
+                live_flat(lv, c->body.v[j], pos);
+        }
+    }
+}
+
+static void live_walk(Live *lv, Node *e);
+
+/* A sequence of expressions (a body, a guard): a variable mentioned in one
+ * lives to its end, since an operand may be the variable's own slot, read
+ * after later parts of the expression have bound other variables. */
+static void live_seq(Live *lv, Nodes *body) {
+    for (int j = 0; j < body->n; j++) {
+        int start = lv->pos + 1;
+        live_walk(lv, body->v[j]);
+        int end = ++lv->pos;
+        for (int k = 0; k < lv->names.n; k++)
+            if (lv->last.v[k] >= start && lv->last.v[k] < end)
+                lv->last.v[k] = end;
+    }
+}
+
+static void live_clause(Live *lv, Clause *c) {
+    lv->pos++;
+    for (int j = 0; j < c->pats.n; j++)
+        live_flat(lv, c->pats.v[j], lv->pos);
+    for (int j = 0; j < c->guards.n; j++)
+        live_seq(lv, &c->guards.v[j]);
+    if (lv->body < 0)
+        lv->body = lv->pos + 1;
+    live_seq(lv, &c->body);
+}
+
+static void live_walk(Live *lv, Node *e) {
+    if (!e)
+        return;
+    switch (e->kind) {
+    case N_VAR:
+        live_note(lv, e->s, ++lv->pos);
+        return;
+    case N_FUN: case N_LC: case N_BC: case N_MC:
+        live_flat(lv, e, ++lv->pos);
+        return;
+    case N_MATCH:
+        live_walk(lv, e->b);
+        live_flat(lv, e->a, ++lv->pos);
+        return;
+    case N_BLOCK:
+        live_seq(lv, &e->kids);
+        return;
+    case N_TRY:
+        live_seq(lv, &e->kids);
+        for (int k = 0; k < e->clauses.n; k++)
+            live_clause(lv, e->clauses.v[k]);
+        for (int k = 0; k < e->cclauses.n; k++)
+            live_clause(lv, e->cclauses.v[k]);
+        if (e->b)
+            live_seq(lv, &e->b->kids);
+        return;
+    case N_RECEIVE: {
+        int start = lv->pos + 1;
+        live_walk(lv, e->a);
+        for (int k = 0; k < e->clauses.n; k++)
+            live_clause(lv, e->clauses.v[k]);
+        live_seq(lv, &e->kids);
+        int end = ++lv->pos;
+        for (int k = 0; k < lv->names.n; k++)
+            if (lv->last.v[k] >= start && lv->last.v[k] < end)
+                lv->last.v[k] = end;
+        return;
+    }
+    default:
+        break;
+    }
+    live_walk(lv, e->a);
+    live_walk(lv, e->b);
+    live_walk(lv, e->c);
+    for (int k = 0; k < e->kids.n; k++)
+        live_walk(lv, e->kids.v[k]);
+    for (int k = 0; k < e->clauses.n; k++)
+        live_clause(lv, e->clauses.v[k]);
+    for (int k = 0; k < e->cclauses.n; k++)
+        live_clause(lv, e->cclauses.v[k]);
+}
+
+/* Slots for a clause's variables: slots[k] >= 0 is fixed (an argument's
+ * slot); the others share slots from next up where their live ranges do
+ * not overlap. Returns one past the highest slot used. */
+static int assign_slots(Clause *c, Names *names, int *slots, int next) {
+    Live lv = {0};
+    lv.body = -1;
+    for (int k = 0; k < names->n; k++) {
+        vec_push(lv.names, names->v[k]);
+        vec_push(lv.first, 1 << 30);
+        vec_push(lv.last, -1);
+    }
+    live_clause(&lv, c);
+    /* by first mention; each takes the lowest slot free by then */
+    int n = names->n;
+    int *order = xmalloc(((size_t)n + 1) * sizeof *order);
+    for (int k = 0; k < n; k++)
+        order[k] = k;
+    for (int k = 1; k < n; k++)
+        for (int j = k; j > 0 && lv.first.v[order[j]] < lv.first.v[order[j - 1]]; j--) {
+            int t = order[j];
+            order[j] = order[j - 1];
+            order[j - 1] = t;
+        }
+    /* argument slots whose pattern is not a plain variable are free once
+     * the body starts (the clause can no longer fail to match) */
+    VEC(int) argslot = {0}, argbusy = {0};
+    for (int j = 0; j < c->pats.n; j++) {
+        bool used = false;
+        for (int k = 0; k < n; k++)
+            if (slots[k] == j)
+                used = true;
+        if (!used) {
+            vec_push(argslot, j);
+            vec_push(argbusy, -1);
+        }
+    }
+    VEC(int) busy = {0};        /* per slot from next: the last position of its variable */
+    int top = next;
+    for (int q = 0; q < n; q++) {
+        int k = order[q];
+        if (slots[k] >= 0)
+            continue;
+        int f = lv.first.v[k], l = lv.last.v[k] < f ? f : lv.last.v[k];
+        if (lv.body >= 0 && f >= lv.body) {
+            int j = 0;
+            while (j < argslot.n && argbusy.v[j] >= f)
+                j++;
+            if (j < argslot.n) {
+                slots[k] = argslot.v[j];
+                argbusy.v[j] = l;
+                continue;
+            }
+        }
+        int s = -1;
+        for (int j = 0; j < busy.n; j++)
+            if (busy.v[j] < f) {
+                s = j;
+                break;
+            }
+        if (s < 0) {
+            vec_push(busy, l);
+            s = busy.n - 1;
+        } else {
+            busy.v[s] = l;
+        }
+        slots[k] = next + s;
+        if (next + s + 1 > top)
+            top = next + s + 1;
+    }
+    free(argslot.v);
+    free(argbusy.v);
+    free(order);
+    free(busy.v);
+    free(lv.names.v);
+    free(lv.first.v);
+    free(lv.last.v);
+    return top;
+}
+
 /* Give each variable of a function or fun clause its slot. A head
  * pattern that is just a new variable uses the argument's own slot. */
 static void setup_clause(Fn *g, Clause *c, int base) {
     g->vars.n = base;
     Names names = {0};
     clause_vars(c, &names);
-    int next = g->nparams + g->ncaps;
+    int *slots = xmalloc(((size_t)names.n + 1) * sizeof *slots);
+    for (int k = 0; k < names.n; k++)
+        slots[k] = head_slot(c, names.v[k]);
+    int next = assign_slots(c, &names, slots, g->nparams + g->ncaps);
     for (int k = 0; k < names.n; k++) {
-        Var v = {names.v[k], head_slot(c, names.v[k]), false, false};
-        if (v.slot < 0)
-            v.slot = next++;
+        Var v = {names.v[k], slots[k], false, false};
         vec_push(g->vars, v);
     }
+    free(slots);
     free(names.v);
     g->top = next;
     if (next - 1 > g->maxslot)
@@ -767,8 +979,9 @@ static int match_load(Fn *g, Node *p, const char *mi, const char *mr, const char
         return -1;
     }
     if (p->kind == N_INT) {
-        emit(g, "bnz.r %s, %s", mr, fail);
-        emit(g, "bne.i64 %s, %lld, %s", mi, (long long)p->i, fail);
+        emit(g, "bne.r %s, null, %s", mr, fail);
+        emit(g, "mov %s, %s", XI0, mi);
+        emit(g, "bne %s, %lld, %s", XI0, (long long)p->i, fail);
         return -1;
     }
     int t = temp(g);
@@ -958,8 +1171,10 @@ static void match_list(Fn *g, Node *p, Val v, const char *fail) {
             if (!is_reg(rreg(cur)))
                 emit(g, "mov.r %s, %s", c, rreg(cur));
             emit(g, "bnisa %s, Cons, %s", c, fail);
-            emit(g, "bnz.r %s->Cons.hr, %s", c, fail);
-            emit(g, "bne %s->Cons.hi, %u, %s", c, cs[k], fail);
+            emit(g, "mov.r %s, %s->Cons.hr", XR0, c);
+            emit(g, "bnz.r %s, %s", XR0, fail);
+            emit(g, "mov %s, %s->Cons.hi", XI0, c);
+            emit(g, "bne %s, %u, %s", XI0, cs[k], fail);
             emit(g, "mov.r %s, %s->Cons.tr", rreg(cur), c);
         }
         emit(g, "bne.r %s, 0d, %s", rreg(cur), fail);
@@ -1275,7 +1490,8 @@ static void cond(Fn *g, Node *e, const char *fail) {
             const char *b = rbase(g, args[0], XR0);
             emit(g, "bnisa %s, Fun, %s", b, fail);
             emit(g, "bnz.r %s, %s", args[1].r, fail);
-            emit(g, "bne %s->Fun.arity, %s, %s", b, args[1].i, fail);
+            emit(g, "mov %s, %s->Fun.arity", XI0, b);
+            emit(g, "bne %s, %s, %s", XI0, args[1].i, fail);
         } else if (!strcmp(t, "is_record")) {
             /* is_record(X, name) or is_record(X, name, size) */
             const char *b = rbase(g, args[0], XR0);
@@ -1803,7 +2019,8 @@ static Val call_fun_value(Fn *g, Val f, Val *args, int n, bool tailpos) {
     const char *r = rbase(g, f, XR0);
     const char *bad = new_label(g);
     emit(g, "bnisa %s, Fun, %s", r, bad);
-    emit(g, "bne %s->Fun.arity, %d, %s", r, n, bad);
+    emit(g, "mov %s, %s->Fun.arity", XI0, r);
+    emit(g, "bne %s, %d, %s", XI0, n, bad);
     emit(g, "mov.r %s, %s->Fun.clo", XR1, r);
     Val res = {0};
     if (tailpos) {
@@ -2977,6 +3194,7 @@ static void gen_fun_body(Fn *parent, Node *e, const char *mname, Names *caps, co
         Names headv = {0};
         for (int j = 0; j < c->pats.n; j++)
             collect_vars(c->pats.v[j], &headv);
+        Names own = {0};
         for (int q = 0; q < names.n; q++) {
             bool captured = false, inhead = false;
             for (int j = 0; j < base; j++)
@@ -2987,11 +3205,18 @@ static void gen_fun_body(Fn *parent, Node *e, const char *mname, Names *caps, co
                     inhead = true;
             if (captured && !inhead)
                 continue;
-            Var v = {names.v[q], head_slot(c, names.v[q]), false, false};
-            if (v.slot < 0)
-                v.slot = next++;
+            vec_push(own, names.v[q]);
+        }
+        int *slots = xmalloc(((size_t)own.n + 1) * sizeof *slots);
+        for (int q = 0; q < own.n; q++)
+            slots[q] = head_slot(c, own.v[q]);
+        next = assign_slots(c, &own, slots, next);
+        for (int q = 0; q < own.n; q++) {
+            Var v = {own.v[q], slots[q], false, false};
             vec_push(g.vars, v);
         }
+        free(slots);
+        free(own.v);
         free(names.v);
         free(headv.v);
         g.top = next;

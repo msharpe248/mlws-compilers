@@ -116,7 +116,11 @@ length, so matching `<<X, Rest/binary>>` shares the bytes.
 `m:f/N` is `.func E$m$f$N(i64 x N, ref x N) -> (i64, ref)`. The arguments
 are the first slots (pairs of registers); a clause's variables get the
 next ones (a head pattern that is a new variable uses its argument's own
-slot), then temporaries. Slots past 29 live on the data stack. Calls in
+slot), then temporaries. Variables whose live ranges do not overlap share
+a slot (a variable lives at least to the end of the expression that
+mentions it, and through a whole `receive`), and once a clause's body
+starts, its arguments' slots are free for the body's variables. Slots
+past 29 live on the data stack. Calls in
 tail position are `tcall`s, so loops and server processes run in constant
 space; other calls recurse on the VM's frame stack, which the driver
 allows to grow to 50 million frames. A fun is a `Fun` struct holding its
@@ -141,14 +145,16 @@ an Apple M-series machine:
 | Benchmark | MLWSVM | erl |
 |---|---|---|
 | fib (fib(30)) | 0.05 | 0.08 |
-| ring (1,000 processes, 1,000,000 messages) | 0.35 | 0.26 |
-| binarytrees (depth 16) | 0.94 | 0.12 |
-| nbody (100,000 steps, floats in tuples) | 2.00 | 0.14 |
-| sorting (200,000 integers, maps) | 0.95 | 0.11 |
+| ring (1,000 processes, 1,000,000 messages) | 0.33 | 0.26 |
+| binarytrees (depth 16) | 0.66 | 0.12 |
+| nbody (100,000 steps, floats in tuples) | 0.78 | 0.14 |
+| sorting (200,000 integers, maps) | 0.75 | 0.11 |
 
-BEAM compiles to machine code; MLWSVM interprets. Calls and integer
-arithmetic are as fast as BEAM's; floats (three `bitcast`s per operation),
-tuples and allocation are where the time goes.
+These need MLWSVM after 0.6.1 (M42), whose fast forms for `bitcast`,
+`typeof` and comparisons of list elements came from these programs'
+profiles. BEAM compiles to machine code; MLWSVM interprets. Calls and
+integer arithmetic are as fast as BEAM's; tuples and allocation are where
+the time goes.
 
 ## Tests
 

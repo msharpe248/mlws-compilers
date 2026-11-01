@@ -757,15 +757,19 @@ gt: ret 1
     beq.r ar, 0d, 9f
     bnisa ar, Cons, 8f
     new R2, Cons
-    mov R2->Cons.hi, ar->Cons.hi
-    mov.r R2->Cons.hr, ar->Cons.hr
+    mov I6, ar->Cons.hi
+    mov.r R6, ar->Cons.hr
+    mov R2->Cons.hi, I6
+    mov.r R2->Cons.hr, R6
     mov.r R3, R2
     mov.r R4, ar->Cons.tr
 1:  beq.r R4, 0d, 2f
     bnisa R4, Cons, 8f
     new R5, Cons
-    mov R5->Cons.hi, R4->Cons.hi
-    mov.r R5->Cons.hr, R4->Cons.hr
+    mov I6, R4->Cons.hi
+    mov.r R6, R4->Cons.hr
+    mov R5->Cons.hi, I6
+    mov.r R5->Cons.hr, R6
     mov.r R3->Cons.tr, R5
     mov.r R3, R5
     mov.r R4, R4->Cons.tr
@@ -793,8 +797,10 @@ gt: ret 1
 1:  beq.r l, 0d, 2f
     bnisa l, Cons, 9f
     new R2, Cons
-    mov R2->Cons.hi, l->Cons.hi
-    mov.r R2->Cons.hr, l->Cons.hr
+    mov I3, l->Cons.hi
+    mov.r R3, l->Cons.hr
+    mov R2->Cons.hi, I3
+    mov.r R2->Cons.hr, R3
     mov R2->Cons.ti, t
     mov.r R2->Cons.tr, tr
     mov t, 0
