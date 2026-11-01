@@ -115,23 +115,27 @@ machine code (its times include starting it, about 0.07 s):
 
 | Lua | MLWSVM | MLWSVM JIT | lua 5.5 |
 |---|---|---|---|
-| fib (32) | 0.05 | 0.03 | 0.05 |
-| loop (30,000,000 iterations) | 0.18 | 0.06 | 0.20 |
-| methods (2M method calls and objects) | 0.55 | 0.37 | 0.32 |
-| strings (format, gmatch, gsub) | 0.34 | 0.33 | 0.12 |
-| iterate (pairs, ipairs) | 0.09 | 0.04 | 0.05 |
-| binarytrees (15) | 0.55 | 0.35 | 0.36 |
-| nbody (500,000) | 0.96 | 0.50 | 0.37 |
-| spectralnorm (500) | 0.21 | 0.10 | 0.17 |
-| fannkuch (10) | 1.91 | 0.72 | 0.76 |
+| fib (32) | 0.06 | 0.03 | 0.05 |
+| loop (30,000,000 iterations) | 0.19 | 0.07 | 0.21 |
+| methods (2M method calls and objects) | 0.58 | 0.39 | 0.35 |
+| strings (format, gmatch, gsub) | 0.36 | 0.35 | 0.13 |
+| iterate (pairs, ipairs) | 0.07 | 0.03 | 0.05 |
+| binarytrees (15) | 0.47 | 0.33 | 0.37 |
+| nbody (500,000) | 0.85 | 0.41 | 0.40 |
+| spectralnorm (500) | 0.22 | 0.10 | 0.18 |
+| fannkuch (10) | 1.99 | 0.75 | 0.82 |
 
 | Erlang | MLWSVM | MLWSVM JIT | erl (JIT) |
 |---|---|---|---|
 | fib (30) | 0.04 | 0.02 | 0.08 |
-| ring (1,000 processes, 1,000,000 messages) | 0.29 | 0.27 | 0.25 |
-| binarytrees (16) | 0.66 | 0.31 | 0.12 |
-| nbody (100,000 steps) | 0.49 | 0.23 | 0.16 |
-| sorting (200,000 integers, maps) | 0.76 | 0.45 | 0.10 |
+| ring (1,000 processes, 1,000,000 messages) | 0.30 | 0.27 | 0.26 |
+| binarytrees (16) | 0.64 | 0.32 | 0.12 |
+| nbody (100,000 steps) | 0.50 | 0.23 | 0.16 |
+| sorting (200,000 integers, maps) | 0.77 | 0.46 | 0.11 |
+
+The Lox benchmarks, with and without the JIT, are in
+[lox/README.md](lox/README.md#performance); there is no reference Lox
+to compare with.
 
 Every test suite passes with the JIT (tested on MLWSVM 0.8.0), and prints the
 same as without it.

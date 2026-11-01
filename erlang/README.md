@@ -150,10 +150,10 @@ and later (`MLWSVM_JIT=on`):
 | Benchmark | MLWSVM | MLWSVM JIT | erl |
 |---|---|---|---|
 | fib (fib(30)) | 0.04 | 0.02 | 0.08 |
-| ring (1,000 processes, 1,000,000 messages) | 0.29 | 0.27 | 0.25 |
-| binarytrees (depth 16) | 0.66 | 0.31 | 0.12 |
-| nbody (100,000 steps, floats in tuples) | 0.49 | 0.23 | 0.16 |
-| sorting (200,000 integers, maps) | 0.76 | 0.45 | 0.10 |
+| ring (1,000 processes, 1,000,000 messages) | 0.30 | 0.27 | 0.26 |
+| binarytrees (depth 16) | 0.64 | 0.32 | 0.12 |
+| nbody (100,000 steps, floats in tuples) | 0.50 | 0.23 | 0.16 |
+| sorting (200,000 integers, maps) | 0.77 | 0.46 | 0.11 |
 
 These need MLWSVM 0.7.0 or later, whose fast forms for `bitcast`,
 `typeof` and comparisons of list elements came from these programs'
