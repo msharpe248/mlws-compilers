@@ -1028,8 +1028,7 @@ static Val gen_call(FS *fs, Expr *e, int dst) {
         cold_back(fs, found, -1);
         cold_end(fs);
         const char *rs = rreg(fs, s.r, "R25");
-        emit(fs, "mov.r R26, @spc$%d", sc);
-        emit(fs, "bne.r %s, R26, L%d", rs, miss);
+        emit(fs, "bne.r %s, @spc$%d, L%d", rs, sc, miss);
         emit(fs, "mov.r %s, @spf$%d", mv.r, sc);
         place(fs, found);
         fix_f(fs, m);
@@ -1171,8 +1170,7 @@ static Val gen_get(FS *fs, Expr *e, int dst) {
     int hit = new_label(fs);
     int miss = cold_begin(fs);
     int miss2 = new_label(fs);
-    emit(fs, "mov.r R26, @fs$%d_1", fc);
-    emit(fs, "bne.r R25, R26, L%d", miss2);
+    emit(fs, "bne.r R25, @fs$%d_1, L%d", fc, miss2);
     emit(fs, "mov I1, @fw$%d_1", fc);
     emit(fs, "jmp L%d", hit);
     place(fs, miss2);
@@ -1188,8 +1186,7 @@ static Val gen_get(FS *fs, Expr *e, int dst) {
     cold_back(fs, hit, -1);
     cold_end(fs);
     emit(fs, "mov.r R25, %s->Inst.shape", ro);
-    emit(fs, "mov.r R26, @fs$%d", fc);
-    emit(fs, "bne.r R25, R26, L%d", miss);
+    emit(fs, "bne.r R25, @fs$%d, L%d", fc, miss);
     emit(fs, "mov I1, @fw$%d", fc);
     place(fs, hit);
     emit(fs, "mov.r R25, %s->Inst.slots", ro);
@@ -1224,8 +1221,7 @@ static Val gen_set(FS *fs, Expr *e, int dst) {
     int back = new_label(fs), have = new_label(fs);
     int miss = cold_begin(fs);
     int miss2 = new_label(fs);
-    emit(fs, "mov.r R26, @ss$%d_1", sc);
-    emit(fs, "bne.r R25, R26, L%d", miss2);
+    emit(fs, "bne.r R25, @ss$%d_1, L%d", sc, miss2);
     emit(fs, "mov.r R26, @sn$%d_1", sc);
     emit(fs, "mov I1, @sw$%d_1", sc);
     emit(fs, "jmp L%d", have);
@@ -1254,8 +1250,7 @@ static Val gen_set(FS *fs, Expr *e, int dst) {
     cold_back(fs, back, -1);
     cold_end(fs);
     emit(fs, "mov.r R25, %s->Inst.shape", ro);
-    emit(fs, "mov.r R26, @ss$%d", sc);
-    emit(fs, "bne.r R25, R26, L%d", miss);
+    emit(fs, "bne.r R25, @ss$%d, L%d", sc, miss);
     emit(fs, "mov.r R26, @sn$%d", sc);
     emit(fs, "mov I1, @sw$%d", sc);
     place(fs, have);
