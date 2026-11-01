@@ -4279,8 +4279,33 @@ static void genfor_body(FS *fs, void *c, int head) {
     if (ty_get(fs, x->st) != TY_TAB) {
         branch(fs, generic, "bnisa %s, Tab", SR(x->st));
     }
+    /* the next live slot of the hash part inline: the position is
+     * 2^40 + the word of the slot (in the array part, the index) */
+    int step = new_label(fs);
+    emit(fs, "    sub I31, %s, 1099511627776", SI(x->pos));
+    branch(fs, step, "blt I31, 0");
+    const char *tr = RB(fs, x->st, "R28");
+    emit(fs, "    mov R31, %s->Tab.hs", tr);
+    branch(fs, step, "bz R31");
+    emit(fs, "    mov I30, %s->Tab.hw", tr);
+    branch(fs, step, "bge I31, I30");
+    emit(fs, "    add I30, I31, 2");
+    emit(fs, "    mov %s, R31[I30]", v >= 0 ? SR(v) : "R30");
+    branch(fs, step, "beq.r %s, " NIL, v >= 0 ? SR(v) : "R30");
+    if (v >= 0)
+        emit(fs, "    ldv %s, %s, R31[I30+1]", SI(v), SF(v));
+    emit(fs, "    mov %s, R31[I31]", SR(k));
+    emit(fs, "    ldv %s, %s, R31[I31+1]", SI(k), SF(k));
+    emit(fs, "    add %s, %s, 4", SI(x->pos), SI(x->pos));
+    int stepped = new_label(fs);
+    jump(fs, stepped);
+    cold_begin(fs);
+    place(fs, step);
     emit(fs, "    call rt$nextpos (%s, %s) -> (%s, %s, %s, %s, %s, %s, %s)", SR(x->st), SI(x->pos), SI(x->pos),
          SI(k), SF(k), SR(k), v >= 0 ? SI(v) : "I30", v >= 0 ? SF(v) : "F30", v >= 0 ? SR(v) : "R30");
+    jump(fs, stepped);
+    cold_end(fs);
+    place(fs, stepped);
     ty_set(fs, k, TY_ANY);
     if (v >= 0)
         ty_set(fs, v, TY_ANY);

@@ -1305,8 +1305,9 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 .endf
 
 ; for k, v in pairs(t) (next, without looking keys up): the entry at or
-; after position pos (array slots are 0.., hash slots 2^40 + j), and the
-; position after it; k is nil at the end.
+; after position pos (array slots are 0.., hash slots 2^40 + 4j, the word of
+; slot j in Tab.hs), and the position after it; k is nil at the end. The
+; compiler steps through the hash part inline, with the same positions.
 .func rt$nextpos(ref t, i64 pos) -> (i64, i64, f64, ref, i64, f64, ref)
     mov I1, 1099511627776
     bge I0, I1, 20f
@@ -1319,18 +1320,18 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     beq.r R5, 1n, 1b
     ret I0, I0, 0.0, null, I5, F5, R5
 19: mov I0, I1
-20: sub I6, I0, I1
+20: sub I8, I0, I1
     mov R2, R0->Tab.hs
     bz R2, 29f
     mov I7, R0->Tab.hw
-21: shl I8, I6, 2
-    bge I8, I7, 29f
+21: bge I8, I7, 29f
     add I9, I8, 2
     LOADV R2, I9, I4, I5, F5, R5
-    inc I6
+    add I8, 4
     beq.r R5, 1n, 21b
-    LOADV R2, I8, I4, I10, F10, R10
-    add I0, I6, I1
+    sub I11, I8, 4
+    LOADV R2, I11, I4, I10, F10, R10
+    add I0, I8, I1
     ret I0, I10, F10, R10, I5, F5, R5
 29: ret I0, 0, 0.0, 1n, 0, 0.0, 1n
 .endf
