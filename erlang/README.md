@@ -119,7 +119,9 @@ next ones (a head pattern that is a new variable uses its argument's own
 slot), then temporaries. Variables whose live ranges do not overlap share
 a slot (a variable lives at least to the end of the expression that
 mentions it, and through a whole `receive`), and once a clause's body
-starts, its arguments' slots are free for the body's variables. Slots
+starts, its arguments' slots are free for the body's variables. An
+operation, tuple or call takes its result's slot before its operands are
+evaluated, so their temporaries are free again once it is done. Slots
 past 29 live on the data stack. Calls in
 tail position are `tcall`s, so loops and server processes run in constant
 space; other calls recurse on the VM's frame stack, which the driver
@@ -131,7 +133,8 @@ arity and a closure whose captures are the variables it uses.
 A message travels as a two-element list (its `R` and `I`). `receive`
 looks first at the messages an earlier `receive` left (each process keeps
 them in a list), then waits with `recv` or `recvt` until a message
-matches or the timeout passes. A process runs its fun inside a handler;
+matches or the timeout passes. A new message joins that list only if the
+`receive` does not take it. A process runs its fun inside a handler;
 if the fun fails, the process ends with an `Error` whose message is the
 exit reason written as a term, which the VM hands to the monitors in its
 `Down`, where the runtime reads it back.

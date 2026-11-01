@@ -70,6 +70,7 @@ struct Fn {
     int nparams;
     VEC(Var) vars;
     int top, maxslot;
+    int want;               /* if > 0, the next temp() is slot want - 1 */
     int label;
     int nfuns;              /* funs made so far in this function (for names) */
     int *funcount;          /* shared by the funs of one Erlang function */
@@ -214,6 +215,11 @@ static Val slot_val(int slot) {
 }
 
 static int temp(Fn *g) {
+    if (g->want > 0) {
+        int s = g->want - 1;
+        g->want = 0;
+        return s;
+    }
     int s = g->top++;
     if (s > g->maxslot)
         g->maxslot = s;
@@ -1555,13 +1561,15 @@ static Val bool_val(Fn *g, Node *e) {
 static void float_op(Fn *g, const char *fop, Val a, Val b, Val tv, const char *fail) {
     if (!same(a.r, "1d"))
         emit(g, "bne.r %s, 1d, %s", a.r, fail);
-    if (!same(b.r, "1d"))
+    bool one = same(a.i, b.i) && same(a.r, b.r);   /* X * X */
+    if (!same(b.r, "1d") && !one)
         emit(g, "bne.r %s, 1d, %s", b.r, fail);
     emit(g, "bitcast.f64.i64 F0, %s", a.i);
-    emit(g, "bitcast.f64.i64 F1, %s", b.i);
+    if (!one)
+        emit(g, "bitcast.f64.i64 F1, %s", b.i);
     if (!strcmp(fop, "div"))
-        emit(g, "beq F1, 0.0, %s", fail);
-    emit(g, "%s F2, F0, F1", fop);
+        emit(g, "beq %s, 0.0, %s", one ? "F0" : "F1", fail);
+    emit(g, "%s F2, F0, %s", fop, one ? "F0" : "F1");
     emit(g, "sub F3, F2, F2");
     emit(g, "bne F3, 0.0, %s", fail);
     emit(g, "bitcast.i64.f64 %s, F2", tv.i);
@@ -1647,7 +1655,8 @@ static Val arith_f(Fn *g, const char *op, Val a, Val b, bool flt) {
                   || (is_const(b) && !same(b.r, "null")))) {
         if (!same(a.r, "null"))
             emit(g, "bnz.r %s, %s", a.r, slow);
-        if (!same(b.r, "null"))
+        bool one = same(a.i, b.i) && same(a.r, b.r);   /* X * X */
+        if (!same(b.r, "null") && !one)
             emit(g, "bnz.r %s, %s", b.r, slow);
         bool bconst = same(b.r, "null") && !is_reg(b.i) && !is_loc(b.i) && !is_scratch(b.i);
         long long bc = bconst ? atoll(b.i) : 0;
@@ -1677,7 +1686,7 @@ static Val arith_f(Fn *g, const char *op, Val a, Val b, bool flt) {
             /* both within 32 bits: the product fits */
             emit(g, "add %s, %s, 2147483648", XI0, a.i);
             emit(g, "bgt.u64 %s, 4294967295, %s", XI0, slow);
-            if (!(bconst && bc >= -2147483648LL && bc <= 2147483647LL)) {
+            if (!one && !(bconst && bc >= -2147483648LL && bc <= 2147483647LL)) {
                 emit(g, "add %s, %s, 2147483648", XI0, b.i);
                 emit(g, "bgt.u64 %s, 4294967295, %s", XI0, slow);
             }
@@ -1982,6 +1991,7 @@ static Val call(Fn *g, Node *e, bool tailpos) {
     }
     Val *args = xmalloc(((size_t)n + 1) * sizeof *args);
     if (target) {
+        int res = tailpos ? -1 : temp(g);
         for (int k = 0; k < n; k++)
             args[k] = ev(g, e->kids.v[k]);
         loc(g, e);
@@ -1989,7 +1999,11 @@ static Val call(Fn *g, Node *e, bool tailpos) {
             tcall_fn(g, target, args, n);
             return vnil();
         }
-        return call_fn(g, target, args, n);
+        g->want = res + 1;
+        Val v = call_fn(g, target, args, n);
+        g->want = 0;
+        g->top = res + 1;
+        return v;
     }
     if (callee->kind == N_REMOTE) {
         /* M:F(Args) with M or F computed */
@@ -2796,10 +2810,14 @@ static Val ev(Fn *g, Node *e) {
     case N_TUPLE: {
         if (constant(e))
             return const_term(g, e);
+        int res = temp(g);
         Val *vs = xmalloc(((size_t)e->kids.n + 1) * sizeof *vs);
         for (int k = 0; k < e->kids.n; k++)
             vs[k] = ev(g, e->kids.v[k]);
+        g->want = res + 1;
         Val t = make_tuple(g, vs, e->kids.n);
+        g->want = 0;
+        g->top = res + 1;
         free(vs);
         return t;
     }
@@ -2889,10 +2907,17 @@ static Val ev(Fn *g, Node *e) {
             return rt2(g, op, a, b);
         }
         bool flt = likely_float(g, e);
+        /* the result's slot is taken first, so the operands' temporaries
+         * are free again after it */
+        int res = temp(g);
         Val a = ev(g, e->a);
         Val b = ev(g, e->b);
         loc(g, e);
-        return arith_f(g, op, a, b, flt);
+        g->want = res + 1;
+        Val v = arith_f(g, op, a, b, flt);
+        g->want = 0;
+        g->top = res + 1;
+        return v;
     }
     case N_UNOP: {
         Val a = ev(g, e->a);
