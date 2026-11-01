@@ -3,6 +3,57 @@
 Each compiler is versioned on its own (its `VERSION` file); a release of
 this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
+## Release 0.6.0
+
+Erlang 0.2.0, Lox 0.5.0, Lua 0.4.3; bf stays at 0.4.1. For MLWSVM 0.6.0
+or later; tested on MLWSVM 0.6.1, 0.7.0 and 0.8.0, with 0.8.0's JIT
+(`MLWSVM_JIT=on`) on and off. The changes make faster code for the
+interpreter and the JIT alike, steering clear of the instruction forms the
+JIT cannot compile (`mlwsvm run --jit-report -`).
+
+### Repository
+
+* README: performance tables for Lua and Erlang, MLWSVM interpreting and
+  with its JIT, against `lua` 5.5 and Erlang/OTP; lox/README has the Lox
+  benchmarks.
+* A stray `erl_crash.dump` is gone from the Erlang tests, and ignored.
+
+### Erlang 0.2.0
+
+* An operation, tuple or call takes its result's slot before its operands,
+  so temporaries are free again at once: nbody's hot function no longer
+  spills to the stack (0.78 s to 0.50 s; 0.23 s with the JIT).
+* A received message joins the saved ones only if the `receive` does not
+  take it; a process's mailbox state is a struct.
+* A fun that captures nothing is made once; constant patterns on a list
+  cell's fields are compared from a register; clauses in a row beginning
+  with tuples of one size share the tuple test.
+
+### Lox 0.5.0
+
+* Instances keep their fields in shapes (field names to places, shared by
+  instances whose fields were added in the same order), with an inline
+  cache of two shapes at each field read and set: making an instance
+  allocates no map. binary_trees 1.74 s to 0.85 s (0.54 s with the JIT).
+* `super.m(...)` caches its method; a global read as an operand, and a
+  global's "defined" check, go through a register; a comparison's value is
+  made with a branch, not `sel`.
+
+### Lua 0.4.3
+
+* A library function's argument error names the function as Lua does (by
+  its call site, `'rep'` or `calling 'rep' on bad self`, else its library
+  name, `'string.rep'`) and says `got no value` for an argument not passed;
+  `coroutine.resume` and `status` expect a `thread`, `rawlen` and
+  `table.unpack` say what they got, and `ipairs` takes any value. The
+  library made by `make lib` must be made again.
+* `pairs` steps through a table's hash part inline; `t[i]` past the array
+  part of a plain table is nil inline; `math.sqrt` is inline when it is the
+  library's. iterate 0.09 s to 0.07 s, binarytrees 0.55 s to 0.47 s, nbody
+  0.96 s to 0.85 s (0.41 s with the JIT, as fast as `lua`).
+* `setmetatable`'s inline path no longer leaves a constant argument unset
+  for the call it makes when the function has been replaced.
+
 ## Release 0.5.0
 
 Erlang 0.1.0, new; bf 0.4.1, Lox 0.4.1 and Lua 0.4.2 are unchanged. For
