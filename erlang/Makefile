@@ -41,8 +41,12 @@ src/embedded.o: src/embedded.c
 
 test: mlws-vm-erlc
 	../tools/run-tests.py erlang tests
+	../tools/test-drivers.sh ./mlws-vm-erl tests/drivers/hello.erl tests/drivers/hello.out 5
+
+bench: mlws-vm-erlc
+	bench/run.sh
 
 clean:
 	rm -f mlws-vm-erlc src/*.o src/embedded.c
 
-.PHONY: all test clean
+.PHONY: all test bench clean

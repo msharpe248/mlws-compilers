@@ -8,6 +8,7 @@ Each compiler lives in its own directory:
 | [`bf/`](bf/README.md) | brainfuck | `bf/mlws-vm-bfc` | `bf/mlws-vm-bf program.b` | `bf/mlws-vm-bf -S program.b` |
 | [`lox/`](lox/README.md) | [Lox](https://craftinginterpreters.com/the-lox-language.html) | `lox/mlws-vm-loxc` | `lox/mlws-vm-lox program.lox` | `lox/mlws-vm-lox -S program.lox` |
 | [`lua/`](lua/README.md) | [Lua 5.5](https://www.lua.org/manual/5.5/) | `lua/mlws-vm-luac` | `lua/mlws-vm-lua program.lua` | `lua/mlws-vm-lua -S program.lua` |
+| [`erlang/`](erlang/README.md) | [Erlang](https://www.erlang.org/doc/system/reference_manual.html) | `erlang/mlws-vm-erlc` | `erlang/mlws-vm-erl program.erl` | `erlang/mlws-vm-erl -S program.erl` |
 
 The compilers are written in C11 with no dependencies beyond a C compiler and
 `make`. They emit `.masm` text, which `mlwsvm run` assembles and runs directly,
@@ -28,7 +29,7 @@ lox/mlws-vm-lox -k program.lox              # run it, and keep program.masm
 lox/mlws-vm-lox -o out.masm program.lox     # run it, and keep out.masm
 ```
 
-(and the same for `bf/mlws-vm-bf` and `lua/mlws-vm-lua`). `-S` needs no VM.
+(and the same for `bf/mlws-vm-bf`, `lua/mlws-vm-lua` and `erlang/mlws-vm-erl`). `-S` needs no VM.
 The compilers themselves take `-o FILE`, defaulting to `program.masm` next
 to the source: `lox/mlws-vm-loxc program.lox`, `lua/mlws-vm-luac
 program.lua` and `bf/mlws-vm-bfc program.b` only compile.
@@ -36,11 +37,11 @@ program.lua` and `bf/mlws-vm-bfc program.b` only compile.
 ## Versions
 
 Each compiler has its own version, in its `VERSION` file (`bf/VERSION`,
-`lox/VERSION`, `lua/VERSION`), printed by `--version` (on the compiler and
+`lox/VERSION`, `lua/VERSION`, `erlang/VERSION`), printed by `--version` (on the compiler and
 its driver) and written into the header of every `.masm` file it produces.
 The compilers are released together as releases of this repository, tagged
 `vX.Y.Z` (the top-level `VERSION`); a compiler's own versions are tagged
-`bf-vX.Y.Z`, `lox-vX.Y.Z` and `lua-vX.Y.Z`. [CHANGELOG.md](CHANGELOG.md)
+`bf-vX.Y.Z`, `lox-vX.Y.Z`, `lua-vX.Y.Z` and `erlang-vX.Y.Z`. [CHANGELOG.md](CHANGELOG.md)
 says what changed in each.
 
 | Release | bf | Lox | Lua |
@@ -68,10 +69,11 @@ mlwsvm debug program.masm                   # or debug, profile, trace, disassem
 ## Building and testing
 
 ```sh
-make            # builds bf/mlws-vm-bfc, lox/mlws-vm-loxc and lua/mlws-vm-luac
+make            # builds bf/mlws-vm-bfc, lox/mlws-vm-loxc, lua/mlws-vm-luac and erlang/mlws-vm-erlc
 make test       # runs every test suite (needs python3)
 make -C lox bench   # the Lox benchmarks
 make -C lua bench   # the Lua benchmarks (with the reference lua's times, if installed)
+make -C erlang bench   # the Erlang benchmarks (with erl's times, if installed)
 ```
 
 The test runner is `tools/run-tests.py`. The Lox tests include the
@@ -79,11 +81,12 @@ complete test suite from *Crafting Interpreters*
 (`lox/tests/craftinginterpreters`, MIT licensed), which mlws-vm-loxc passes
 in full (241 tests, skipping only the scanner/parser-chapter and clox-limit
 tests that jlox also skips). The Lua tests' expected output comes from the
-reference `lua` 5.5 (`lua/tests/expect.sh`), so running them needs no Lua.
+reference `lua` 5.5 (`lua/tests/expect.sh`), so running them needs no Lua;
+the Erlang tests' from Erlang/OTP (`erlang/tests/expect.sh`).
 
 ## Finding the VM
 
-The driver scripts (`bf/mlws-vm-bf`, `lox/mlws-vm-lox`, `lua/mlws-vm-lua`) and the test runner
+The driver scripts (`bf/mlws-vm-bf`, `lox/mlws-vm-lox`, `lua/mlws-vm-lua`, `erlang/mlws-vm-erl`) and the test runner
 use the `mlwsvm` executable given by `$MLWSVM`, else `mlwsvm` on the `PATH`, else
 `../mlws-vm/mlwsvm` next to this repository.
 
@@ -108,6 +111,9 @@ lox/       the Lox compiler: src/ (scanner, parser, resolver, code generator,
 lua/       the Lua 5.5 compiler: src/ (lexer, parser, code generator; runtime.masm,
            lib.masm and match.masm, the runtime and library in assembly; and
            prelude.lua, the library written in Lua), tests/, bench/
+erlang/    the Erlang compiler: src/ (lexer, preprocessor and parser, code generator;
+           runtime.masm, the runtime in assembly; lib/, the library in Erlang),
+           tests/, bench/
 tools/     the test runners and the VM locator shared by the driver scripts
 ```
 

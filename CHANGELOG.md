@@ -3,6 +3,17 @@
 Each compiler is versioned on its own (its `VERSION` file); a release of
 this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
+## Unreleased
+
+### Erlang 0.1.0 (new)
+
+* `mlws-vm-erlc` and `mlws-vm-erl`: a compiler for Erlang, whose processes,
+  messages, monitors and links are MLWSVM's. Modules, records, the
+  preprocessor, pattern matching, funs, comprehensions, maps, binaries,
+  BigInts, exceptions, selective `receive`, and a library (`io`, `io_lib`,
+  `lists`, `maps`, `string`, ...) written in Erlang. See
+  [erlang/README.md](erlang/README.md). Needs MLWSVM 0.6.0 or later.
+
 ## Release 0.4.2
 
 Lua 0.4.2; bf and Lox stay at 0.4.1. For MLWSVM 0.4.1 or later.
