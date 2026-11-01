@@ -1,0 +1,62 @@
+// Instances keep their fields in shapes: instances whose fields were added
+// in the same order share one. Each field access caches two shapes.
+class P {}
+var a = P();
+a.x = 1;
+a.y = 2;
+var b = P();
+b.y = 3;
+b.x = 4;
+fun sum(p) { return p.x * 10 + p.y; }
+print sum(a); // expect: 12
+print sum(b); // expect: 43
+var c = P();
+c.y = 5;
+c.z = 0;
+c.x = 6;
+print sum(c); // expect: 65
+print sum(a); // expect: 12
+a.x = "s";
+print a.x + "!"; // expect: s!
+
+// A field shadows a method of the same name.
+class M {
+  m() { return "method"; }
+}
+var m = M();
+print m.m(); // expect: method
+fun field() { return "field"; }
+m.m = field;
+print m.m(); // expect: field
+
+// More fields than an instance's first slots hold.
+class Big {
+  init() {
+    this.f1 = 1; this.f2 = 2; this.f3 = 3; this.f4 = 4;
+    this.f5 = 5; this.f6 = 6; this.f7 = 7;
+  }
+}
+var big = Big();
+print big.f1 + big.f7; // expect: 8
+big.f4 = 40;
+print big.f4 + big.f5; // expect: 45
+
+// A field set before it is read, and a missing field.
+class Q { init() { this.n = nil; } }
+var q = Q();
+print q.n; // expect: nil
+q.n = true;
+print q.n; // expect: true
+
+// super.m() with a different superclass at the same site.
+fun make(base) {
+  class D < base {
+    m() { return "D " + super.m(); }
+  }
+  return D();
+}
+class B1 { m() { return "B1"; } }
+class B2 { m() { return "B2"; } }
+print make(B1).m(); // expect: D B1
+print make(B2).m(); // expect: D B2
+print make(B1).m(); // expect: D B1

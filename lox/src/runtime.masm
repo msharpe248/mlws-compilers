@@ -30,8 +30,19 @@
 
 .struct Inst
     cls: ref
-    fields: ref                 ; map: name -> Box
+    shape: ref                  ; the names of its fields: a Shape, shared
+    slots: ref                  ; list: each field's number, then its reference
 .ends
+
+; Instances whose fields were added in the same order share a Shape, which
+; never changes: adding a field moves the instance to the next one.
+.struct Shape
+    keys: ref                   ; map: name -> the word of the field in Inst.slots
+    next: ref                   ; map: name -> this shape with that field added
+    nw: i64                     ; words in Inst.slots: two per field
+.ends
+
+rt$shape0: .zero 8              ; the shape of no fields
 
 .struct Bound                   ; a method bound to its receiver
     recv: ref
@@ -196,11 +207,13 @@
 .func rt$get(i64 line, ref obj, ref name) -> (f64, ref)
     isa I1, obj, Inst
     bz I1, 8f
-    mov.r R2, obj->Inst.fields
-    mget.r R3, R2, name, null
-    bz.r R3, 1f
-    mov.f64 F0, R3->Box.f
-    mov.r R4, R3->Box.r
+    mov.r R2, obj->Inst.shape
+    mov.r R2, R2->Shape.keys
+    mget I2, R2, name, -1
+    blt I2, 0, 1f
+    mov.r R3, obj->Inst.slots
+    mov.f64 F0, R3[I2]
+    mov.r R4, R3[I2+1]
     ret F0, R4
 1:  mov.r R2, obj->Inst.cls
     mov.r R2, R2->Class.methods
@@ -233,9 +246,68 @@
 .func rt$new_instance(ref cls) -> ref
     new R1, Inst
     mov.r R1->Inst.cls, cls
-    mnew R2
-    mov.r R1->Inst.fields, R2
+    mov.r R2, @rt$shape0
+    mov.r R1->Inst.shape, R2
+    lnew R2, 8
+    mov.r R1->Inst.slots, R2
     ret R1
+.endf
+
+.func rt$init_shapes
+    new R0, Shape
+    mnew R1
+    mov.r R0->Shape.keys, R1
+    mnew R1
+    mov.r R0->Shape.next, R1
+    mov.r @rt$shape0, R0
+    ret
+.endf
+
+; The word of field name in shape, or -1.
+.func rt$field(ref shape, ref name) -> i64
+    mov.r R2, shape->Shape.keys
+    mget I0, R2, name, -1
+    ret I0
+.endf
+
+; shape with the field name added: made the first time, then shared.
+.func rt$shape_add(ref shape, ref name) -> ref
+    mov.r R2, shape->Shape.next
+    mget.r R3, R2, name, null
+    bz.r R3, 1f
+    ret R3
+1:  new R3, Shape
+    mov.r R4, shape->Shape.keys
+    mnew R5
+    ncall "map.union" (R4, R5) -> (R5)
+    mov I0, shape->Shape.nw
+    mset R5, name, I0
+    mov.r R3->Shape.keys, R5
+    add I1, I0, 2
+    mov R3->Shape.nw, I1
+    mnew R5
+    mov.r R3->Shape.next, R5
+    mset R2, name, R3
+    ret R3
+.endf
+
+; obj.name = value, for an instance. Returns the field's word, and the new
+; shape if the field was added (else null): what a set's inline cache keeps.
+.func rt$set(ref obj, ref name, f64 vf, ref vr) -> (i64, ref)
+    mov.r R3, obj->Inst.shape
+    mov.r R4, R3->Shape.keys
+    mget I0, R4, name, -1
+    blt I0, 0, 1f
+    mov.r R5, obj->Inst.slots
+    mov.f64 R5[I0], vf
+    mov.r R5[I0+1], vr
+    ret I0, null
+1:  call rt$shape_add (R3, name) -> (R6)
+    mov I0, R3->Shape.nw
+    mov.r R5, obj->Inst.slots
+    lpush R5, vf, vr
+    mov.r obj->Inst.shape, R6
+    ret I0, R6
 .endf
 
 ; super.name as a value: the superclass's method bound to this.

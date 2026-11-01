@@ -106,9 +106,15 @@ so they are never equal to a string, and they are module constants, so
   assigned lives in a heap `Box` that the closures share. Functions are
   created "Fn first", so a local recursive function can capture itself by
   value.
-* **Instances** have a map from field names to `Box`es. Classes have a map of
-  methods, with inherited ones copied in when the class is created, as clox
-  does.
+* **Instances** keep their fields in a list (each field's number, then its
+  reference) and a **shape**: a map from field names to their places in the
+  list, shared by all instances whose fields were added in the same order,
+  and never changed (adding a field moves the instance to the next shape).
+  Each `obj.f` and `obj.f = v` in the program has an **inline cache** of the
+  two shapes it saw last and where `f` is in them, so a read is a shape
+  compare and two loads, with no hash lookup; a set that adds a field caches
+  the shape it moves to. Classes have a map of methods, with inherited ones
+  copied in when the class is created, as clox does.
 
 ### Calls
 
@@ -126,7 +132,7 @@ or something that is not callable) goes to the generated helper
   monomorphic call is an instance check, a class compare and a `calli`. The
   check for a field shadowing the method is left out when the program never
   assigns a property of that name, and the instance check when `obj` is
-  `this`.
+  `this`. `super.m(...)` caches the superclass it saw last and its method.
 
 ### Optimisations
 
@@ -150,23 +156,26 @@ or something that is not callable) goes to the generated helper
 
 ### Performance
 
-The book's benchmarks (`make bench`), on the machine this was developed on:
+The book's benchmarks (`make bench`), on an Apple M5 Pro with MLWSVM 0.8.0, in
+seconds (each prints its own time), interpreting and with the VM's JIT
+(`MLWSVM_JIT=on`):
 
-| Benchmark | Seconds |
-|---|---|
-| fib | 1.07 |
-| binary_trees | 2.75 |
-| trees | 4.97 |
-| properties | 1.17 |
-| invocation | 0.86 |
-| instantiation | 0.73 |
-| method_call | 0.46 |
-| zoo | 0.91 |
-| zoo_batch | 1,877 batches in 10 s |
+| Benchmark | MLWSVM | MLWSVM JIT |
+|---|---|---|
+| fib | 0.30 | 0.17 |
+| binary_trees | 0.86 | 0.54 |
+| trees | 1.84 | 1.12 |
+| properties | 0.39 | 0.27 |
+| invocation | 0.26 | 0.19 |
+| instantiation | 0.34 | 0.26 |
+| method_call | 0.17 | 0.12 |
+| zoo | 0.29 | 0.19 |
+| zoo_batch | 5,897 batches in 10 s | 8,990 batches in 10 s |
 
-Field access is now the main cost (`trees`, `binary_trees`): each read is a
-map lookup and a load from a `Box`. Giving classes a shared field layout,
-with per-site caches of field positions, would be the next step.
+With the JIT, `mlwsvm run --jit-report -` lists the instructions its machine
+code could not run itself; the generated code avoids the VM's general forms
+on hot paths (a branch on a global's value, a `sel` of two constants), so
+for these benchmarks the list is all but empty.
 
 ## Tests
 

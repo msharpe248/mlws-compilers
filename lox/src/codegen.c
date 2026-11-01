@@ -490,7 +490,9 @@ static void check_defined(FS *fs, Token *name) {
     int g = global_index(name);
     if (fact(fs, F_DEF(g))) return;
     int l = cold_error(fs, undefined_msg(name));
-    emit(fs, "bz.b @gd$%s, L%d", tok_str(name), l);
+    /* a branch on a global is the VM's general form; a load of one is fast */
+    emit(fs, "mov I2, @gd$%s", tok_str(name));
+    emit(fs, "bz I2, L%d", l);
     fact_set(fs, F_DEF(g), true);
 }
 
@@ -585,7 +587,7 @@ static void define_var(FS *fs, Var *v, Token *name, Val val) {
     if (!v) {
         emit(fs, "mov.f64 @gf$%s, %s", tok_str(name), val.f);
         emit(fs, "mov.r @gr$%s, %s", tok_str(name), val.r);
-        emit(fs, "mov.b @gd$%s, 1", tok_str(name));
+        emit(fs, "mov.i64 @gd$%s, 1", tok_str(name));
         fact_set(fs, F_DEF(global_index(name)), true);
         fact_set(fs, F_NUM(global_index(name)), val.num);
         return;
@@ -930,6 +932,7 @@ static bool class_init(Stmt *cls, int depth, Func **init) {
 }
 
 static int n_inline_caches;
+static int n_field_caches, n_set_caches, n_super_caches;
 
 static Val gen_call(FS *fs, Expr *e, int dst) {
     int d = dst >= 0 ? dst : alloc_slot(fs);
@@ -982,7 +985,8 @@ static Val gen_call(FS *fs, Expr *e, int dst) {
             emit(fs, "bz I0, L%d", slow);
         }
         if (field_name_assigned(&c->tok)) {
-            emit(fs, "mov.r R25, %s->Inst.fields", ro);
+            emit(fs, "mov.r R25, %s->Inst.shape", ro);
+            emit(fs, "mov.r R25, R25->Shape.keys");
             emit(fs, "mhas I0, R25, \"%s\"", name);
             emit(fs, "bnz I0, L%d", slow);
         }
@@ -1012,7 +1016,22 @@ static Val gen_call(FS *fs, Expr *e, int dst) {
         int m = alloc_slot(fs);
         Val mv = slot_val(m);
         fs->line = c->line;
+        /* each site caches the superclass it last saw and its method */
+        int sc = n_super_caches++;
+        int found = new_label(fs);
+        int miss = cold_begin(fs);
         emit(fs, "call rt$super_method (%d, %s, \"%s\") -> (%s)", c->line, s.r, tok_str(&c->tok), mv.r);
+        emit(fs, "mov.r R26, %s", s.r);
+        emit(fs, "mov.r @spc$%d, R26", sc);
+        emit(fs, "mov.r R26, %s", mv.r);
+        emit(fs, "mov.r @spf$%d, R26", sc);
+        cold_back(fs, found, -1);
+        cold_end(fs);
+        const char *rs = rreg(fs, s.r, "R25");
+        emit(fs, "mov.r R26, @spc$%d", sc);
+        emit(fs, "bne.r %s, R26, L%d", rs, miss);
+        emit(fs, "mov.r %s, @spf$%d", mv.r, sc);
+        place(fs, found);
         fix_f(fs, m);
         Val *args = gen_args(fs, e, false, NULL);
         fs->line = e->line;
@@ -1073,8 +1092,10 @@ static Val gen_call(FS *fs, Expr *e, int dst) {
         emit(fs, "mov.r R24, @gr$%s", tok_str(&c->tok));
         emit(fs, "new R25, Inst");
         emit(fs, "mov.r R25->Inst.cls, R24");
-        emit(fs, "mnew R26");
-        emit(fs, "mov.r R25->Inst.fields, R26");
+        emit(fs, "mov.r R26, @rt$shape0");
+        emit(fs, "mov.r R25->Inst.shape, R26");
+        emit(fs, "lnew R26, 8");
+        emit(fs, "mov.r R25->Inst.slots, R26");
         if (init && init->nups == 0) {
             char fl[300];
             func_label(init, fl, sizeof fl);
@@ -1145,11 +1166,35 @@ static Val gen_get(FS *fs, Expr *e, int dst) {
         emit(fs, "isa I0, %s, Inst", ro);
         emit(fs, "bz I0, L%d", slow);
     }
-    emit(fs, "mov.r R25, %s->Inst.fields", ro);
-    emit(fs, "mget.r R25, R25, \"%s\", null", name);
-    emit(fs, "bz.r R25, L%d", slow);
-    emit(fs, "mov.f64 %s, R25->Box.f", dv.f);
-    emit(fs, "mov.r %s, R25->Box.r", dv.r);
+    /* the two shapes this site saw last, and the field's word in each */
+    int fc = n_field_caches++;
+    int hit = new_label(fs);
+    int miss = cold_begin(fs);
+    int miss2 = new_label(fs);
+    emit(fs, "mov.r R26, @fs$%d_1", fc);
+    emit(fs, "bne.r R25, R26, L%d", miss2);
+    emit(fs, "mov I1, @fw$%d_1", fc);
+    emit(fs, "jmp L%d", hit);
+    place(fs, miss2);
+    emit(fs, "mov.r R26, R25->Shape.keys");
+    emit(fs, "mget I1, R26, \"%s\", -1", name);
+    emit(fs, "blt I1, 0, L%d", slow);
+    emit(fs, "mov.r R26, @fs$%d", fc);
+    emit(fs, "mov.r @fs$%d_1, R26", fc);
+    emit(fs, "mov I0, @fw$%d", fc);
+    emit(fs, "mov @fw$%d_1, I0", fc);
+    emit(fs, "mov.r @fs$%d, R25", fc);
+    emit(fs, "mov @fw$%d, I1", fc);
+    cold_back(fs, hit, -1);
+    cold_end(fs);
+    emit(fs, "mov.r R25, %s->Inst.shape", ro);
+    emit(fs, "mov.r R26, @fs$%d", fc);
+    emit(fs, "bne.r R25, R26, L%d", miss);
+    emit(fs, "mov I1, @fw$%d", fc);
+    place(fs, hit);
+    emit(fs, "mov.r R25, %s->Inst.slots", ro);
+    emit(fs, "mov.f64 %s, R25[I1]", dv.f);
+    emit(fs, "mov.r %s, R25[I1+1]", dv.r);
     place(fs, back);
     fs->next = mark;
     return dv;
@@ -1173,18 +1218,52 @@ static Val gen_set(FS *fs, Expr *e, int dst) {
     fs->line = e->line;
     const char *name = tok_str(&e->tok);
     ro = rreg(fs, o.r, "R24");
-    emit(fs, "mov.r R25, %s->Inst.fields", ro);
-    emit(fs, "mget.r R26, R25, \"%s\", null", name);
-    int back = new_label(fs);
-    int add = cold_begin(fs);
-    emit(fs, "new R26, Box");
-    emit(fs, "mset R25, \"%s\", R26", name);
+    /* the two shapes this site saw last, the field's word in each, and the
+     * shape after it if the set added the field */
+    int sc = n_set_caches++;
+    int back = new_label(fs), have = new_label(fs);
+    int miss = cold_begin(fs);
+    int miss2 = new_label(fs);
+    emit(fs, "mov.r R26, @ss$%d_1", sc);
+    emit(fs, "bne.r R25, R26, L%d", miss2);
+    emit(fs, "mov.r R26, @sn$%d_1", sc);
+    emit(fs, "mov I1, @sw$%d_1", sc);
+    emit(fs, "jmp L%d", have);
+    place(fs, miss2);
+    emit(fs, "call rt$set (%s, \"%s\", %s, %s) -> (I1, R26)", ro, name, v.f, v.r);
+    emit(fs, "mov.r R27, @ss$%d", sc);
+    emit(fs, "mov.r @ss$%d_1, R27", sc);
+    emit(fs, "mov I0, @sw$%d", sc);
+    emit(fs, "mov @sw$%d_1, I0", sc);
+    emit(fs, "mov.r R27, @sn$%d", sc);
+    emit(fs, "mov.r @sn$%d_1, R27", sc);
+    emit(fs, "mov.r @ss$%d, R25", sc);
+    emit(fs, "mov @sw$%d, I1", sc);
+    emit(fs, "mov.r @sn$%d, R26", sc);
     cold_back(fs, back, -1);
     cold_end(fs);
-    emit(fs, "bz.r R26, L%d", add);
+    int add = cold_begin(fs);
+    const char *pr = v.r;
+    if (strcmp(pr, "null") == 0) {
+        /* lpush would take a literal null as an i64 */
+        emit(fs, "mov.r R27, null");
+        pr = "R27";
+    }
+    emit(fs, "lpush R25, %s, %s", v.f, pr);
+    emit(fs, "mov.r %s->Inst.shape, R26", ro);
+    cold_back(fs, back, -1);
+    cold_end(fs);
+    emit(fs, "mov.r R25, %s->Inst.shape", ro);
+    emit(fs, "mov.r R26, @ss$%d", sc);
+    emit(fs, "bne.r R25, R26, L%d", miss);
+    emit(fs, "mov.r R26, @sn$%d", sc);
+    emit(fs, "mov I1, @sw$%d", sc);
+    place(fs, have);
+    emit(fs, "mov.r R25, %s->Inst.slots", ro);
+    emit(fs, "bnz.r R26, L%d", add);
+    emit(fs, "mov.f64 R25[I1], %s", v.f);
+    emit(fs, "mov.r R25[I1+1], %s", v.r);
     place(fs, back);
-    emit(fs, "mov.f64 R26->Box.f, %s", v.f);
-    emit(fs, "mov.r R26->Box.r, %s", v.r);
     fs->next = mark;
     return v;
 }
@@ -1685,13 +1764,14 @@ static void gen_script(Func *script) {
     int try_start = new_label(&fs), try_end = new_label(&fs), fault = new_label(&fs);
     emit(&fs, ".try L%d, L%d, L%d", try_start, try_end, fault);
     place(&fs, try_start);
+    emit(&fs, "call rt$init_shapes ()");
     for (int i = 0; i < globals->n; i++) {
         if (strcmp(globals->v[i].name, "clock") == 0) {
             emit(&fs, "new R24, Native");
             emit(&fs, "mov.r R24->Native.name, \"clock\"");
             emit(&fs, "mov.f64 @gf$clock, 0.0");
             emit(&fs, "mov.r @gr$clock, R24");
-            emit(&fs, "mov.b @gd$clock, 1");
+            emit(&fs, "mov.i64 @gd$clock, 1");
         }
     }
     for (int i = 0; i < script->nbody; i++) gen_stmt(&fs, script->body[i]);
@@ -1868,13 +1948,31 @@ void generate(Func *script, Globals *g, const char *runtime, FILE *out) {
         buf_addf(&all, 0, "gf$%s: .f64 0", g->v[i].name);
         buf_addf(&all, 0, "gr$%s: .zero 8", g->v[i].name);
     }
-    for (int i = 0; i < g->n; i++) buf_addf(&all, 0, "gd$%s: .b 0", g->v[i].name);
+    for (int i = 0; i < g->n; i++) buf_addf(&all, 0, "gd$%s: .i64 0", g->v[i].name);
     buf_add(&all, 0, "; Method call inline caches: the class last seen, and its method's closure.");
     buf_add(&all, 0, "    .align 8");
     for (int i = 0; i < n_inline_caches; i++) {
         buf_addf(&all, 0, "ic$%d: .zero 8", i);
         buf_addf(&all, 0, "icf$%d: .zero 8", i);
     }
+    buf_add(&all, 0, "; super.name(...) caches (the superclass last seen, and its method); field");
+    buf_add(&all, 0, "; inline caches: the two shapes last seen, and the field's word in");
+    buf_add(&all, 0, "; each; for a set, also the shape after it if the set added the field.");
+    for (int i = 0; i < n_super_caches; i++) {
+        buf_addf(&all, 0, "spc$%d: .zero 8", i);
+        buf_addf(&all, 0, "spf$%d: .zero 8", i);
+    }
+    for (int i = 0; i < n_field_caches; i++)
+        for (int j = 0; j < 2; j++) {
+            buf_addf(&all, 0, "fs$%d%s: .zero 8", i, j ? "_1" : "");
+            buf_addf(&all, 0, "fw$%d%s: .i64 0", i, j ? "_1" : "");
+        }
+    for (int i = 0; i < n_set_caches; i++)
+        for (int j = 0; j < 2; j++) {
+            buf_addf(&all, 0, "ss$%d%s: .zero 8", i, j ? "_1" : "");
+            buf_addf(&all, 0, "sw$%d%s: .i64 0", i, j ? "_1" : "");
+            buf_addf(&all, 0, "sn$%d%s: .zero 8", i, j ? "_1" : "");
+        }
     buf_add(&all, 0, "");
 
     /* The functions, with a .loc where the Lox line changes. */
