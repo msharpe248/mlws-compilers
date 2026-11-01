@@ -2343,6 +2343,8 @@ static void gen_method(FS *fs, int ss, Str name, const char *desc, int d) {
 
 /* A call. The results go to slot d: the first value, with the count in
    I31 and the rest in @rt$mv. With tail, a tail call is made instead. */
+static bool math_fn(Expr *e, const char *name);
+
 static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
     int line = fs->line;
     fs->line = e->line;
@@ -2448,13 +2450,50 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
        with the call for anything it would complain about */
     int inl_cont = -1;
     Ty mty = n == 2 ? vty(fs, &vals[1]) : TY_ANY;
-    if (!method && n == 2 && !multi && fslot >= 0 && named(e->a, "setmetatable") &&
+    if (!method && n == 1 && !multi && fslot >= 0 && math_fn(e->a, "sqrt")) {
+        /* math.sqrt(x), when the function is the library's: inline for a
+           float or an integer, with the call for anything else */
+        int slow = new_label(fs);
+        inl_cont = new_label(fs);
+        /* (the argument in its slot first: the call takes it from there) */
+        int as = in_slot(fs, vals[0]);
+        vals[0] = vslot(as);
+        emit(fs, "    mov R31, @rt$sqrt_fn");
+        branch(fs, slow, "bne.r %s, R31", RB(fs, fslot, "R28"));
+        Ty at = ty_get(fs, as);
+        if (at == TY_INT) {
+            emit(fs, "    cvt.f64.i64 F31, %s", SI(as));
+        } else if (at == TY_FLT) {
+            emit(fs, "    mov F31, %s", SF(as));
+        } else {
+            int flt = new_label(fs), have = new_label(fs);
+            emit(fs, "    beq.r %s, " FLT ", .L%d", SR(as), flt);
+            branch(fs, slow, "bnz %s", SR(as));
+            emit(fs, "    cvt.f64.i64 F31, %s", SI(as));
+            emit(fs, "    jmp .L%d", have);
+            emit(fs, ".L%d:", flt);
+            emit(fs, "    mov F31, %s", SF(as));
+            emit(fs, ".L%d:", have);
+        }
+        emit(fs, "    sqrt %s, F31", SF(d));
+        if (tail) {
+            emit(fs, "    ret 1, 0, %s, " FLT, SF(d));
+            fs->dead = true;
+        } else {
+            emit(fs, "    mov I31, 1");
+            emit(fs, "    mov.r %s, " FLT, SR(d));
+            ty_set(fs, d, TY_FLT);
+            jump(fs, inl_cont);
+        }
+        cold_begin(fs);
+        place(fs, slow);
+    } else if (!method && n == 2 && !multi && fslot >= 0 && named(e->a, "setmetatable") &&
         (vals[1].k == V_SLOT || mty == TY_NIL)) {
         int slow = new_label(fs);
         inl_cont = new_label(fs);
-        branch(fs, slow, "bne.r %s, @rt$setmt", RB(fs, fslot, "R28"));
         int ts = in_slot(fs, vals[0]);
         vals[0] = vslot(ts);
+        branch(fs, slow, "bne.r %s, @rt$setmt", RB(fs, fslot, "R28"));
         if (ty_get(fs, ts) != TY_TAB)
             branch(fs, slow, "bnisa %s, Tab", RB(fs, ts, "R28"));
         if (args.v[0]->k != X_TABLE) {
@@ -5188,6 +5227,14 @@ static void mark_elems(Var *v) {
 
 static bool is_str(Expr *e, const char *s) {
     return e->k == X_STR && (size_t)e->s.len == strlen(s) && memcmp(e->s.s, s, (size_t)e->s.len) == 0;
+}
+
+/* Is e math.NAME (or a local never assigned that was set to it)? */
+static bool math_fn(Expr *e, const char *name) {
+    if (e->k == X_LOCAL && !e->var->assigned && e->var->init)
+        e = e->var->init;
+    return e->k == X_INDEX && e->a->k == X_GLOBAL && !e->a->env && e->a->s.len == 4 &&
+           memcmp(e->a->s.s, "math", 4) == 0 && is_str(e->b, name);
 }
 
 static bool flt_math_fn(Expr *e) {
