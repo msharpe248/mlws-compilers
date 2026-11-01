@@ -664,7 +664,13 @@ static void gen_equal(FS *fs, Val *a, Val *b) {
 /* Store the boolean in I0 (negated if `invert`) into slot d. */
 static Val set_bool(FS *fs, int d, bool invert) {
     Val dv = slot_val(d);
-    emit(fs, "sel.r %s, I0, %s, %s", dv.r, invert ? FALSE : TRUE, invert ? TRUE : FALSE);
+    /* a branch, not sel: sel of two constants is a general form */
+    int done = new_label(fs);
+    emit(fs, "mov.r %s, %s", dv.r, invert ? FALSE : TRUE);
+    emit(fs, "bnz I0, L%d", done);
+    jump(fs, done, false);
+    emit(fs, "mov.r %s, %s", dv.r, invert ? TRUE : FALSE);
+    place(fs, done);
     fix_f(fs, d);
     return dv;
 }
