@@ -17,6 +17,9 @@ lua/bench/*.masm
 erlang/tests/**/*.masm
 erlang/bench/*.masm
 
+# What erl leaves when tests/expect.sh runs a program it cannot boot
+erl_crash.dump
+
 .DS_Store
 __pycache__/
 
