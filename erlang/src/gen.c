@@ -975,6 +975,12 @@ static int match_load(Fn *g, Node *p, const char *mi, const char *mr, const char
             return -1;
         }
     }
+    if (strstr(mr, "->") && (p->kind == N_ATOM || p->kind == N_NIL || p->kind == N_INT
+                             || (p->kind == N_STRING && p->len == 0))) {
+        /* a compare on a field is the VM's general form; on a register, fast */
+        emit(g, "mov.r %s, %s", XR0, mr);
+        mr = XR0;
+    }
     if (p->kind == N_ATOM) {
         note_atom(p->s);
         emit(g, "bne.r %s, %s, %s", mr, quote(p->s, (int)strlen(p->s)), fail);
@@ -2119,6 +2125,22 @@ static void fun_captures(Fn *g, Node *e, Names *caps) {
     free(stack.v);
 }
 
+/* A value made once (per process) and kept in a constant's global: the code
+ * between cached_begin and cached_end makes it into tv the first time. */
+static const char *cached_begin(Fn *g, Val tv) {
+    int k = P.nconst++;
+    const char *have = new_label(g);
+    emit(g, "mov.r %s, @K%d", tv.r, k);
+    emit(g, "bnz.r %s, %s", tv.r, have);
+    return S("%d:%s", k, have);
+}
+
+static void cached_end(Fn *g, Val tv, const char *have) {
+    emit(g, "mov.r @K%d, %s", atoi(have), tv.r);
+    label(g, strchr(have, ':') + 1);
+    emit(g, is_loc(tv.i) ? "mov.i64 %s, 0" : "mov %s, 0", tv.i);
+}
+
 static Val fun_expr(Fn *g, Node *e) {
     int arity = e->clauses.v[0]->pats.n;
     Names caps = {0};
@@ -2143,6 +2165,8 @@ static Val fun_expr(Fn *g, Node *e) {
     buf_add(&a, "", 0);
     int t = temp(g);
     Val tv = slot_val(t);
+    /* a fun that captures nothing is made once, and kept like a constant */
+    const char *have = caps.n == 0 && box < 0 ? cached_begin(g, tv) : NULL;
     emit(g, "closure %s (%s) -> %s", mname, a.s ? a.s : "", XR0);
     const char *r = build_reg(t);
     emit(g, "new %s, Fun", r);
@@ -2154,6 +2178,8 @@ static Val fun_expr(Fn *g, Node *e) {
         emit(g, "mov.r %s[0], %s", XR2, r);
     }
     built(g, t, r);
+    if (have)
+        cached_end(g, tv, have);
     gen_fun_body(g, e, mname, &caps, e->s);
     free(caps.v);
     return tv;
@@ -2197,6 +2223,7 @@ static Val funref(Fn *g, Node *e) {
         return rt3(g, "make_fun", vatom(mod), vatom(name), vint(n));
     }
     int t = temp(g);
+    const char *have = cached_begin(g, slot_val(t));
     emit(g, "closure %s -> %s", target, XR0);
     const char *r = build_reg(t);
     emit(g, "new %s, Fun", r);
@@ -2205,6 +2232,7 @@ static Val funref(Fn *g, Node *e) {
     const char *fname = S("%s:%s/%d", mod, name, n);
     emit(g, "mov.r %s->Fun.name, %s", r, quote(fname, (int)strlen(fname)));
     built(g, t, r);
+    cached_end(g, slot_val(t), have);
     return slot_val(t);
 }
 
