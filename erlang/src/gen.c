@@ -1002,6 +1002,18 @@ static int match_load(Fn *g, Node *p, const char *mi, const char *mr, const char
     return t;
 }
 
+/* A tuple pattern's elements, the tuple in register r having been tested:
+ * load them, then match those that need more. */
+static void match_elements(Fn *g, Node *p, const char *r, const char *fail) {
+    int *pending = xmalloc(((size_t)p->kids.n + 1) * sizeof *pending);
+    for (int k = 0; k < p->kids.n; k++)
+        pending[k] = match_load(g, p->kids.v[k], S("%s[%d]", r, 2 * k + 1), S("%s[%d]", r, 2 * k), fail);
+    for (int k = 0; k < p->kids.n; k++)
+        if (pending[k] >= 0)
+            match(g, p->kids.v[k], slot_val(pending[k]), fail);
+    free(pending);
+}
+
 /* A register holding v's R, for reading fields: XR1 if need be. */
 static const char *base_reg(Fn *g, Val v) {
     if (is_reg(v.r))
@@ -1089,16 +1101,9 @@ static void match(Fn *g, Node *p, Val v, const char *fail) {
         match_list(g, p, v, fail);
         return;
     case N_TUPLE: {
-        /* load the elements, then match those that need more */
         const char *r = base_reg(g, v);
         test_tuple(g, r, p->kids.n, fail);
-        int *pending = xmalloc(((size_t)p->kids.n + 1) * sizeof *pending);
-        for (int k = 0; k < p->kids.n; k++)
-            pending[k] = match_load(g, p->kids.v[k], S("%s[%d]", r, 2 * k + 1), S("%s[%d]", r, 2 * k), fail);
-        for (int k = 0; k < p->kids.n; k++)
-            if (pending[k] >= 0)
-                match(g, p->kids.v[k], slot_val(pending[k]), fail);
-        free(pending);
+        match_elements(g, p, r, fail);
         return;
     }
     case N_MATCH:
@@ -3150,24 +3155,45 @@ static void finish(Fn *g, const char *header) {
 
 /* The clauses of a function or fun, matched against the arguments in
  * slots 0..n-1. */
+/* The arity of the clause's first pattern if it is a tuple, else -1. */
+static int first_tuple(Clause *c) {
+    return c->pats.n && c->pats.v[0]->kind == N_TUPLE ? c->pats.v[0]->kids.n : -1;
+}
+
 static void gen_clauses(Fn *g, Clauses *cs, int nvars_base) {
+    /* Where clauses in a row begin with tuples of one size, a clause that
+     * fails after its tuple test goes to the next one's elements, past its
+     * tuple test (shared_in: the label there). */
+    const char *shared_in = NULL;
     for (int k = 0; k < cs->n; k++) {
         Clause *c = cs->v[k];
         setup_clause(g, c, nvars_base);
-        const char *next = new_label(g);
+        const char *next = new_label(g), *fail = next;
+        int tn = first_tuple(c);
+        const char *shared_out = tn >= 0 && k + 1 < cs->n && first_tuple(cs->v[k + 1]) == tn ? new_label(g) : NULL;
         g->line = 0;
         if (c->body.n)
             loc(g, c->body.v[0]);
         for (int j = 0; j < c->pats.n; j++) {
             Node *p = c->pats.v[j];
+            if (j == 0 && (shared_in || shared_out)) {
+                const char *r = base_reg(g, slot_val(0));
+                test_tuple(g, r, tn, next);
+                if (shared_in)
+                    label(g, shared_in);
+                if (shared_out)
+                    fail = shared_out;
+                match_elements(g, p, r, fail);
+                continue;
+            }
             Var *v = p->kind == N_VAR ? find_var(g, p->s) : NULL;
             if (v && v->slot == j && !v->bound) {
                 v->bound = true;
                 continue;
             }
-            match(g, p, slot_val(j), next);
+            match(g, p, slot_val(j), fail);
         }
-        guards(g, c, next);
+        guards(g, c, fail);
         g->top = g->nparams + g->ncaps + (g->vars.n - nvars_base);
         if (g->top < g->nparams + g->ncaps)
             g->top = g->nparams + g->ncaps;
@@ -3179,6 +3205,7 @@ static void gen_clauses(Fn *g, Clauses *cs, int nvars_base) {
         g->top = maxv + 1;
         tail_body(g, &c->body);
         label(g, next);
+        shared_in = shared_out;
     }
     /* no clause matched: function_clause */
     Val *args = xmalloc(((size_t)g->nparams + 1) * sizeof *args);

@@ -1,0 +1,12 @@
+[{first,1},
+ {second,5},
+ {third,1},
+ {fourth,"s"},
+ {fourth,[x]},
+ {triple,1,2,3},
+ pair,
+ {other,x},
+ {other,{}}]
+3
+1
+function_clause
