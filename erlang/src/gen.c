@@ -2542,12 +2542,17 @@ static Val receive_expr(Fn *g, Node *e, bool tailpos) {
     } else {
         emit(g, "mov %s, -1", ireg(deadline));
     }
-    emit(g, "call rt$recv_reset ()");
     const char *loop = new_label(g), *after = new_label(g), *done = new_label(g);
     int msg = temp(g);
     int st = temp(g);
+    /* rt$recv_next gets back what it returned last: st 2 is a new message,
+     * which it saves only if no clause took it. */
+    emit(g, is_loc(ireg(st)) ? "mov.i64 %s, -1" : "mov %s, -1", ireg(st));
+    emit(g, is_loc(ireg(msg)) ? "mov.i64 %s, 0" : "mov %s, 0", ireg(msg));
+    emit(g, "mov.r %s, null", rreg(msg));
     label(g, loop);
-    emit(g, "call rt$recv_next (%s) -> (%s, %s, %s)", ireg(deadline), ireg(st), ireg(msg), rreg(msg));
+    emit(g, "call rt$recv_next (%s, %s, %s, %s) -> (%s, %s, %s)", ireg(deadline), ireg(st), ireg(msg), rreg(msg),
+         ireg(st), ireg(msg), rreg(msg));
     emit(g, "bz %s, %s", ireg(st), after);
     Bound entry = save_bound(g);
     Bound acc = save_bound(g);
@@ -2560,7 +2565,10 @@ static Val receive_expr(Fn *g, Node *e, bool tailpos) {
         match(g, c->pats.v[0], m, next);
         guards(g, c, next);
         g->top = mark;
+        const char *taken = new_label(g);
+        emit(g, "bne %s, 1, %s", ireg(st), taken);
         emit(g, "call rt$recv_accept ()");
+        label(g, taken);
         if (tailpos) {
             tail_body(g, &c->body);
         } else {

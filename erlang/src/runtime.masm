@@ -25,7 +25,6 @@
 .struct Mbox
     saved: ref      ; a list, R and I each
     scan: i64       ; the next saved message a receive looks at
-    pend: ref       ; the new message rt$recv_next returned last, not yet saved
 .ends
 
 .struct Ref
@@ -1227,20 +1226,6 @@ bad:
     ret m, mr
 .endf
 
-.func rt$recv_reset
-    mov.r R0, @g$mbox
-    bz R0, 1f
-    mov R0->Mbox.scan, 0
-    mov.r R1, R0->Mbox.pend
-    bz R1, 1f
-    mov.r R3, R0->Mbox.saved
-    mov.r R2, R1[0]
-    mov I2, R1[1]
-    lpush R3, R2, I2
-    mov.r R0->Mbox.pend, null
-1:  ret
-.endf
-
 .func rt$mbox_new -> ref
     new R0, Mbox
     lnew R1
@@ -1266,23 +1251,26 @@ bad:
 .endf
 
 ; The next message a receive should look at: those saved first, then new
-; ones. (0, ...) when the deadline passes. A new message is saved only if
-; the receive does not take it: it is kept in Mbox.pend until this is called
-; again or rt$recv_accept takes it.
-.func rt$recv_next(i64 deadline) -> (i64, i64, ref)
+; ones. The receive passes back what this returned last (st = -1 the first
+; time): st 1 for a saved message, 2 for a new one, which is saved only if
+; the receive does not take it, and is kept in the receive's registers until
+; then, not in the Mbox (a store the collector would have to remember).
+; (0, ...) when the deadline passes.
+.func rt$recv_next(i64 deadline, i64 st, i64 mi, ref mr) -> (i64, i64, ref)
+    mov.r R7, mr            ; R0 and I2 are needed below
+    mov I9, mi
     mov.r R0, @g$mbox
     bnz R0, 1f
     call rt$mbox_new () -> R0
 1:  mov.r R6, R0->Mbox.saved
-    mov.r R2, R0->Mbox.pend
-    bz R2, 3f
-    mov.r R1, R2[0]
-    mov I5, R2[1]
-    lpush R6, R1, I5
-    mov.r R0->Mbox.pend, null
+    bne st, 2, 2f
+    lpush R6, R7, I9
     mov I2, R0->Mbox.scan
     inc I2
     mov R0->Mbox.scan, I2
+    jmp 3f
+2:  bne st, -1, 3f
+    mov R0->Mbox.scan, 0
 3:  len I1, R6
     mov I2, R0->Mbox.scan
     shl I3, I2, 1
@@ -1306,10 +1294,9 @@ inf:
     recv R2
 got:
     bisa R2, Down, down
-    mov.r R0->Mbox.pend, R2
     mov.r R1, R2[0]
     mov I5, R2[1]
-    ret 1, I5, R1
+    ret 2, I5, R1
 down:
     call rt$down_msg (R2) -> (I8, I5, R1)
     bz I8, wait
@@ -1322,14 +1309,10 @@ timeout:
     ret 0, 0, null
 .endf
 
-; Take the message the receive matched: the pending one, or out of the saved.
+; Take the saved message the receive matched.
 .func rt$recv_accept
     mov.r R0, @g$mbox
-    mov.r R1, R0->Mbox.pend
-    bz R1, 1f
-    mov.r R0->Mbox.pend, null
-    ret
-1:  mov.r R2, R0->Mbox.saved
+    mov.r R2, R0->Mbox.saved
     mov I0, R0->Mbox.scan
     dec I0
     shl I0, I0, 1
