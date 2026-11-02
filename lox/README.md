@@ -156,21 +156,21 @@ or something that is not callable) goes to the generated helper
 
 ### Performance
 
-The book's benchmarks (`make bench`), on an Apple M5 Pro with MLWSVM 0.9.0, in
+The book's benchmarks (`make bench`), on an Apple M5 Pro with MLWSVM 0.10.0, in
 seconds (each prints its own time), interpreting and with the VM's JIT
 (`MLWSVM_JIT=on`):
 
 | Benchmark | MLWSVM | MLWSVM JIT |
 |---|---|---|
 | fib | 0.30 | 0.17 |
-| binary_trees | 0.76 | 0.45 |
-| trees | 1.71 | 1.08 |
-| properties | 0.37 | 0.27 |
+| binary_trees | 0.69 | 0.39 |
+| trees | 1.67 | 1.06 |
+| properties | 0.37 | 0.28 |
 | invocation | 0.25 | 0.19 |
-| instantiation | 0.36 | 0.27 |
+| instantiation | 0.29 | 0.19 |
 | method_call | 0.15 | 0.10 |
 | zoo | 0.28 | 0.18 |
-| zoo_batch | 5,964 batches in 10 s | 9,296 batches in 10 s |
+| zoo_batch | 6,051 batches in 10 s | 9,143 batches in 10 s |
 
 With the JIT, `mlwsvm run --jit-report -` lists the instructions its machine
 code could not run itself; the generated code avoids the VM's general forms

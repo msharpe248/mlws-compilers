@@ -108,7 +108,7 @@ Lua counts to find an error's position. See the VM's
 ## Performance
 
 The Lua and Erlang benchmarks (`make -C lua bench`, `make -C erlang bench`),
-in seconds, the best of three runs, on an Apple M5 Pro with MLWSVM 0.9.0.
+in seconds, the best of three runs, on an Apple M5 Pro with MLWSVM 0.10.0.
 MLWSVM is run interpreting, and with its JIT (MLWSVM 0.8.0 and later:
 `mlwsvm run --jit on`, or `MLWSVM_JIT=on` in the environment, which works
 with the driver scripts and `make test` too). The references are the
@@ -118,28 +118,28 @@ machine code (its times include starting it, about 0.07 s):
 | Lua | MLWSVM | MLWSVM JIT | lua 5.5 |
 |---|---|---|---|
 | fib (32) | 0.06 | 0.03 | 0.05 |
-| loop (30,000,000 iterations) | 0.20 | 0.05 | 0.21 |
-| methods (2M method calls and objects) | 0.57 | 0.37 | 0.34 |
-| strings (format, gmatch, gsub) | 0.22 | 0.16 | 0.13 |
+| loop (30,000,000 iterations) | 0.19 | 0.05 | 0.21 |
+| methods (2M method calls and objects) | 0.53 | 0.35 | 0.34 |
+| strings (format, gmatch, gsub) | 0.22 | 0.15 | 0.13 |
 | iterate (pairs, ipairs) | 0.07 | 0.03 | 0.05 |
-| binarytrees (15) | 0.38 | 0.24 | 0.37 |
-| nbody (500,000) | 0.86 | 0.41 | 0.39 |
-| spectralnorm (500) | 0.23 | 0.09 | 0.18 |
-| fannkuch (10) | 1.98 | 0.68 | 0.79 |
+| binarytrees (15) | 0.33 | 0.18 | 0.37 |
+| nbody (500,000) | 0.85 | 0.41 | 0.39 |
+| spectralnorm (500) | 0.22 | 0.09 | 0.18 |
+| fannkuch (10) | 1.97 | 0.68 | 0.79 |
 
 | Erlang | MLWSVM | MLWSVM JIT | erl (JIT) |
 |---|---|---|---|
 | fib (30) | 0.04 | 0.02 | 0.08 |
 | ring (1,000 processes, 1,000,000 messages) | 0.23 | 0.21 | 0.26 |
-| binarytrees (16) | 0.59 | 0.28 | 0.12 |
-| nbody (100,000 steps) | 0.50 | 0.23 | 0.16 |
-| sorting (200,000 integers, maps) | 0.70 | 0.40 | 0.11 |
+| binarytrees (16) | 0.56 | 0.24 | 0.12 |
+| nbody (100,000 steps) | 0.48 | 0.20 | 0.16 |
+| sorting (200,000 integers, maps) | 0.65 | 0.35 | 0.11 |
 
 The Lox benchmarks, with and without the JIT, are in
 [lox/README.md](lox/README.md#performance); there is no reference Lox
 to compare with.
 
-Every test suite passes with the JIT (tested on MLWSVM 0.8.0 and 0.9.1), and
+Every test suite passes with the JIT (tested on MLWSVM 0.8.0, 0.9.1 and 0.10.0), and
 prints the same as without it, and with the generational collector of MLWSVM
 0.9.0 and later checked against a full heap walk at every minor collection
 (`MLWSVM_GC_VERIFY=1`). Use MLWSVM 0.9.1 or later with the JIT: 0.9.0's can
