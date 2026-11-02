@@ -6,11 +6,12 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 ## Release 0.6.1
 
 Erlang 0.2.1; Lox 0.5.0, Lua 0.4.3 and bf 0.4.1 are unchanged. For MLWSVM
-0.6.0 or later; tested on MLWSVM 0.6.1, 0.7.0, 0.8.0 and 0.9.0, and with
-0.9.0's JIT, optimizer and generational collector (`MLWSVM_GC_VERIFY=1`
-checks it at every minor collection). On MLWSVM 0.9.0, `MLWSVM_JIT=all`
-together with `MLWSVM_OPT=3` can crash the VM while it compiles a large
-function (a VM bug, fixed after 0.9.0); either one alone is fine.
+0.6.0 or later; tested on MLWSVM 0.6.1, 0.7.0, 0.8.0, 0.9.0 and 0.9.1, and
+with the JIT, optimizer and generational collector of 0.9.x
+(`MLWSVM_GC_VERIFY=1` checks it at every minor collection). Use MLWSVM
+0.9.1 or later with the JIT: 0.9.0's can crash the VM while it compiles a
+large function (seen with `MLWSVM_JIT=all` and `MLWSVM_OPT=3`, but any
+large function it compiles could hit it).
 
 ### Repository
 
