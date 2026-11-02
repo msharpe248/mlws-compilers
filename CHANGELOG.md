@@ -3,6 +3,29 @@
 Each compiler is versioned on its own (its `VERSION` file); a release of
 this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
+## Release 0.6.1
+
+Erlang 0.2.1; Lox 0.5.0, Lua 0.4.3 and bf 0.4.1 are unchanged. For MLWSVM
+0.6.0 or later; tested on MLWSVM 0.6.1, 0.7.0, 0.8.0 and 0.9.0, and with
+0.9.0's JIT, optimizer and generational collector (`MLWSVM_GC_VERIFY=1`
+checks it at every minor collection). On MLWSVM 0.9.0, `MLWSVM_JIT=all`
+together with `MLWSVM_OPT=3` can crash the VM while it compiles a large
+function (a VM bug, fixed after 0.9.0); either one alone is fine.
+
+### Repository
+
+* README, lua/README, lox/README, erlang/README: benchmark times on MLWSVM
+  0.9.0, interpreting and with the JIT.
+
+### Erlang 0.2.1
+
+* A new message stays in the `receive`'s registers until a clause takes
+  it or none does, instead of in the process's mailbox struct: taking it
+  stores nothing into a long-lived object (which MLWSVM 0.9.0's
+  generational collector would have to remember) and calls no runtime
+  function. The mailbox struct is just the saved messages and the scan
+  position.
+
 ## Release 0.6.0
 
 Erlang 0.2.0, Lox 0.5.0, Lua 0.4.3; bf stays at 0.4.1. For MLWSVM 0.6.0
