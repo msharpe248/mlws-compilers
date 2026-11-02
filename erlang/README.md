@@ -144,16 +144,16 @@ exit reason written as a term, which the VM hands to the monitors in its
 `bench/run.sh` (`make bench`) times five programs on MLWSVM and on
 Erlang/OTP 29 (whose BEAM compiles to machine code, and whose time includes
 starting it, about 0.07 s), on an Apple M5 Pro, in seconds, the best of
-three runs. MLWSVM is run interpreting, and with the JIT of MLWSVM 0.8.0
-and later (`MLWSVM_JIT=on`):
+three runs, on MLWSVM 0.9.0. MLWSVM is run interpreting, and with its JIT
+(MLWSVM 0.8.0 and later, `MLWSVM_JIT=on`):
 
 | Benchmark | MLWSVM | MLWSVM JIT | erl |
 |---|---|---|---|
 | fib (fib(30)) | 0.04 | 0.02 | 0.08 |
-| ring (1,000 processes, 1,000,000 messages) | 0.30 | 0.27 | 0.26 |
-| binarytrees (depth 16) | 0.64 | 0.32 | 0.12 |
+| ring (1,000 processes, 1,000,000 messages) | 0.23 | 0.21 | 0.26 |
+| binarytrees (depth 16) | 0.59 | 0.28 | 0.12 |
 | nbody (100,000 steps, floats in tuples) | 0.50 | 0.23 | 0.16 |
-| sorting (200,000 integers, maps) | 0.77 | 0.46 | 0.11 |
+| sorting (200,000 integers, maps) | 0.70 | 0.40 | 0.11 |
 
 These need MLWSVM 0.7.0 or later, whose fast forms for `bitcast`,
 `typeof` and comparisons of list elements came from these programs'
@@ -166,4 +166,5 @@ what its machine code could not run itself: here, only `send` and `recv`.
 `tests/lang` and `tests/programs` hold modules with a `main/0`; each
 `NAME.out` is what Erlang/OTP prints for it, made by `tests/expect.sh`
 (which needs `erlc` and `erl`). A module without `main/0` is a helper that
-a test calls. The tests pass with `MLWSVM_GC_STRESS=1` and `MLWSVM_OPT=3`.
+a test calls. The tests pass with `MLWSVM_GC_STRESS=1` and `MLWSVM_OPT=3`, and with
+MLWSVM 0.9.0's `MLWSVM_GC_VERIFY=1`.
