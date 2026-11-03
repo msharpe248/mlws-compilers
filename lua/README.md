@@ -305,27 +305,29 @@ backtrace to find the call site, or the library function that called it.
 
 ## Performance
 
-`make bench` (`bench/run.sh`), on an Apple M5 Pro with MLWSVM 0.13.0, in
+`make bench` (`bench/run.sh`), on an Apple M5 Pro with MLWSVM 0.14.0, in
 seconds, the best of three runs: interpreting, with the VM's JIT
 (`MLWSVM_JIT=on`), and Lua 5.5.1 for comparison:
 
 | Benchmark | MLWSVM | MLWSVM JIT | lua 5.5 |
 |---|---|---|---|
-| fib (32) | 0.06 | 0.02 | 0.05 |
+| fib (32) | 0.05 | 0.02 | 0.05 |
 | loop | 0.18 | 0.05 | 0.21 |
-| methods (2M method calls and objects) | 0.52 | 0.22 | 0.34 |
-| strings (format, gmatch, gsub) | 0.21 | 0.14 | 0.13 |
-| iterate (pairs, ipairs) | 0.06 | 0.03 | 0.05 |
+| methods (2M method calls and objects) | 0.51 | 0.21 | 0.34 |
+| strings (format, gmatch, gsub) | 0.18 | 0.10 | 0.13 |
+| iterate (pairs, ipairs) | 0.07 | 0.03 | 0.05 |
 | binarytrees (15) | 0.32 | 0.16 | 0.37 |
-| nbody (500,000) | 0.83 | 0.36 | 0.39 |
+| nbody (500,000) | 0.83 | 0.34 | 0.39 |
 | spectralnorm (500) | 0.21 | 0.08 | 0.18 |
-| fannkuch (10) | 1.92 | 0.65 | 0.79 |
+| fannkuch (10) | 1.93 | 0.63 | 0.79 |
 
 `pairs` steps through a table's hash part inline, `t[i]` past the array
 part of a plain table is nil inline, and `math.sqrt` is inline when it is
 the library's. strings spends its time in the pattern matcher and
-`string.format`; with the JIT, the VM's string-building instructions are
-all that its machine code leaves to the interpreter.
+`string.format`; with the JIT (MLWSVM 0.14.0 compiles the string-building
+instructions too), calls to the VM's native functions (`ncall`) are all
+that its machine code leaves to the interpreter. With the JIT, all nine
+benchmarks run faster than Lua 5.5.
 
 The profiles (`mlwsvm run --profile`) show almost every instruction on the
 VM's fast paths; what remains is instruction count, mostly type checks on
