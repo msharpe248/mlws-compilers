@@ -19,6 +19,7 @@ print(show(("hello world"):gsub("(%w+)", "<%1>")), show(("abc"):gsub("%w", "%0%0
 print(show(("aaa"):gsub("a", "b", 0)), show(("x1y22z"):gsub("%d+", {["1"] = "one"})), show(("ab"):gsub(".", function(c) return c:byte() end)))
 print(show(("plain text plain"):gsub("plain", "P")), show(("aaaa"):gsub("aa", "b")), show(("abc"):gsub("abc", "")))
 print(show(("%d%%"):gsub("%%", "pct")), show(("a+b"):find("+", 1, true)), show(("a+b"):find("%+")))
+print(show(("abc"):gsub("", "-", 2)), show((""):gsub("", "-")), show(("abc"):gsub("", "")), show(("abc"):gsub("b", "", -1)), show(("aaa"):gsub("aa", "x", 9)))
 -- a stateful iterator called through a generic for, once per step
 local obj = {}
 function obj:iter(m) local i = 0 return function(_, _) i = i + 1 if i <= m then return i end end end

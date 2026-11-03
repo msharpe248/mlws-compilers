@@ -163,7 +163,7 @@ function string.gsub(s, pat, repl, max_n)
   max_n = optint(max_n, 4, "gsub", ls + 1)
   local out = {}
   local n = 0
-  if tr == "string" and len(pat) > 0 and nospecials(pat) and not pfind(repl, "%", 1) then
+  if tr == "string" and nospecials(pat) and not pfind(repl, "%", 1) then
     -- a plain string replaced by a plain string
     return P.gsub_plain(s, pat, repl, max_n)
   end

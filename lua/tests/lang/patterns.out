@@ -14,10 +14,11 @@ aXcaXc 2	-a-b-c- 4	-a-c- 3
 aaa 0	xoney22z 2	9798 2
 P text P 2	bb 2	 1
 pctdpctpct 3	2 2	2 2
+-a-bc 2	- 1	abc 4	abc 0	xa 1
 1 2 3 4 5 
 false	malformed pattern (ends with '%')
 false	malformed pattern (missing ']')
 false	unfinished capture
 true	xax	2
-false	patterns.lua:31: malformed pattern (missing arguments to '%b')
+false	patterns.lua:32: malformed pattern (missing arguments to '%b')
 false	too many captures

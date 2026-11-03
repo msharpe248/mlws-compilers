@@ -3,6 +3,15 @@
 Each compiler is versioned on its own (its `VERSION` file); a release of
 this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
+## Unreleased
+
+### Lua
+
+* `gsub` of a plain pattern by a plain string is one call to MLWSVM
+  0.14.0's `text.replace_n`, instead of a loop in the runtime, and an
+  empty pattern takes that path too. Lua programs now need MLWSVM 0.14.0
+  or later.
+
 ## Release 0.6.1
 
 Erlang 0.2.1; Lox 0.5.0, Lua 0.4.3 and bf 0.4.1 are unchanged. For MLWSVM

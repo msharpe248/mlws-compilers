@@ -39,9 +39,10 @@ mlws-vm-luac --library DIR
 ```
 
 The assembly is one self-contained file: the program, the runtime and the
-library, with no imports. It uses MLWSVM M37's `text.ascii_upper` and
-`text.ascii_lower` (and M34's `.loc` source positions, M32's element
-offsets and `bisa`/`bnisa`), so it needs M37 or a later VM. It can be assembled to a binary module
+library, with no imports. It uses MLWSVM 0.14.0's `text.replace_n` (for
+`gsub` of a plain pattern by a plain string), M37's `text.ascii_upper` and
+`text.ascii_lower`, M34's `.loc` source positions, and M32's element
+offsets and `bisa`/`bnisa`, so it needs MLWSVM 0.14.0 or later. It can be assembled to a binary module
 (`mlwsvm asm program.masm -o program.mlwso`), or run under `mlwsvm debug`,
 `--profile` or `--trace`; each function is named `L<n>$name` after the Lua
 function it came from, and its code carries the Lua lines it came from

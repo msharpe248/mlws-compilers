@@ -1446,32 +1446,14 @@ MATHF1 exp, ncall "math.exp" (F0) -> (F0)
     ret 0, 0, 0.0, 1n
 .endf
 
-; P.gsub_plain(s, pat, repl, max): gsub of a plain, non-empty pat by a
-; plain repl, at most max times: the string and the count.
+; P.gsub_plain(s, pat, repl, max): gsub of a plain pat by a plain repl,
+; at most max times: the string and the count. text.replace_n (MLWSVM
+; 0.14.0) replaces all for a negative n, where gsub replaces none.
 .func P$gsub_plain(i64, f64, ref, i64, f64, ref, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
-    len I4, R0
-    len I5, R1
-    bufnew R4, 0
-    mov I6, 0               ; where the rest of s starts
-    mov I7, 0               ; replacements
-1:  bge I7, I3, 8f
-    strfind I8, R0, R1, I6
-    blt I8, 0, 8f
-    sub I9, I8, I6
-    bz I9, 2f
-    substr R5, R0, I6, I9
-    bufcat R4, R5
-2:  bufcat R4, R2
-    inc I7
-    add I6, I8, I5
-    jmp 1b
-8:  bz I7, 9f
-    sub I9, I4, I6
-    bz I9, 81f
-    substr R5, R0, I6, I9
-    bufcat R4, R5
-81: strcat R0, R4
-9:  mov R10, @rt$mv
+    bge I3, 0, 1f
+    mov I3, 0
+1:  ncall "text.replace_n" (R0, R1, R2, I3) -> (R0, I7)
+    mov R10, @rt$mv
     mov I11, 0
     mov.r R10[I11], null
     inc I11
