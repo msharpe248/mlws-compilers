@@ -153,7 +153,7 @@ three runs, on MLWSVM 0.14.0. MLWSVM is run interpreting, and with its JIT
 | ring (1,000 processes, 1,000,000 messages) | 0.22 | 0.20 | 0.26 |
 | binarytrees (depth 16) | 0.54 | 0.21 | 0.12 |
 | nbody (100,000 steps, floats in tuples) | 0.46 | 0.18 | 0.16 |
-| sorting (200,000 integers, maps) | 0.65 | 0.32 | 0.11 |
+| sorting (200,000 integers, maps) | 0.36 | 0.22 | 0.11 |
 
 These need MLWSVM 0.7.0 or later, whose fast forms for `bitcast`,
 `typeof` and comparisons of list elements came from these programs'

@@ -133,7 +133,7 @@ machine code (its times include starting it, about 0.07 s):
 | ring (1,000 processes, 1,000,000 messages) | 0.22 | 0.20 | 0.26 |
 | binarytrees (16) | 0.54 | 0.21 | 0.12 |
 | nbody (100,000 steps) | 0.46 | 0.18 | 0.16 |
-| sorting (200,000 integers, maps) | 0.65 | 0.32 | 0.11 |
+| sorting (200,000 integers, maps) | 0.36 | 0.22 | 0.11 |
 
 The Lox benchmarks, with and without the JIT, are in
 [lox/README.md](lox/README.md#performance); there is no reference Lox
