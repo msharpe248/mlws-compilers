@@ -139,7 +139,7 @@ The Lox benchmarks, with and without the JIT, are in
 [lox/README.md](lox/README.md#performance); there is no reference Lox
 to compare with.
 
-Every test suite passes with the JIT (tested on MLWSVM 0.8.0, 0.9.1 and 0.10.0), and
+Every test suite passes with the JIT (tested on MLWSVM 0.8.0, 0.9.1, 0.10.0 and 0.11.0), and
 prints the same as without it, and with the generational collector of MLWSVM
 0.9.0 and later checked against a full heap walk at every minor collection
 (`MLWSVM_GC_VERIFY=1`). Use MLWSVM 0.9.1 or later with the JIT: 0.9.0's can
