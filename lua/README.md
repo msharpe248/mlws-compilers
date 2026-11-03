@@ -304,7 +304,7 @@ backtrace to find the call site, or the library function that called it.
 
 ## Performance
 
-`make bench` (`bench/run.sh`), on an Apple M5 Pro with MLWSVM 0.10.0, in
+`make bench` (`bench/run.sh`), on an Apple M5 Pro with MLWSVM 0.12.0, in
 seconds, the best of three runs: interpreting, with the VM's JIT
 (`MLWSVM_JIT=on`), and Lua 5.5.1 for comparison:
 
@@ -312,13 +312,13 @@ seconds, the best of three runs: interpreting, with the VM's JIT
 |---|---|---|---|
 | fib (32) | 0.06 | 0.03 | 0.05 |
 | loop | 0.19 | 0.05 | 0.21 |
-| methods (2M method calls and objects) | 0.53 | 0.35 | 0.34 |
+| methods (2M method calls and objects) | 0.54 | 0.24 | 0.34 |
 | strings (format, gmatch, gsub) | 0.22 | 0.15 | 0.13 |
 | iterate (pairs, ipairs) | 0.07 | 0.03 | 0.05 |
-| binarytrees (15) | 0.33 | 0.18 | 0.37 |
-| nbody (500,000) | 0.85 | 0.41 | 0.39 |
-| spectralnorm (500) | 0.22 | 0.09 | 0.18 |
-| fannkuch (10) | 1.97 | 0.68 | 0.79 |
+| binarytrees (15) | 0.32 | 0.17 | 0.37 |
+| nbody (500,000) | 0.85 | 0.40 | 0.39 |
+| spectralnorm (500) | 0.22 | 0.08 | 0.18 |
+| fannkuch (10) | 1.98 | 0.68 | 0.79 |
 
 `pairs` steps through a table's hash part inline, `t[i]` past the array
 part of a plain table is nil inline, and `math.sqrt` is inline when it is
