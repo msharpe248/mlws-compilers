@@ -71,6 +71,7 @@ struct Fn {
     VEC(Var) vars;
     int top, maxslot;
     int want;               /* if > 0, the next temp() is slot want - 1 */
+    int tbase;              /* the first temporary's slot (a clause's variables are below) */
     int label;
     int nfuns;              /* funs made so far in this function (for names) */
     int *funcount;          /* shared by the funs of one Erlang function */
@@ -370,10 +371,21 @@ static bool mentions(Node *e, const char *name) {
 
 /* The argument slot a variable can use: the first head pattern that is
  * just that variable, unless an earlier pattern binds it. -1 for none. */
+/* Whether pattern p is the variable name, or binds it to the whole value
+ * with =, as [X | Xs] = A does, mentioning it nowhere else. */
+static bool whole_var(Node *p, const char *name) {
+    if (p->kind == N_VAR)
+        return p->s == name;
+    if (p->kind == N_MATCH)
+        return (whole_var(p->a, name) && !mentions(p->b, name)) ||
+               (whole_var(p->b, name) && !mentions(p->a, name));
+    return false;
+}
+
 static int head_slot(Clause *c, const char *name) {
     for (int j = 0; j < c->pats.n; j++) {
         Node *p = c->pats.v[j];
-        if (p && p->kind == N_VAR && p->s == name)
+        if (p && whole_var(p, name))
             return j;
         if (p && mentions(p, name))
             return -1;
@@ -608,6 +620,7 @@ static void setup_clause(Fn *g, Clause *c, int base) {
     free(slots);
     free(names.v);
     g->top = next;
+    g->tbase = next;
     if (next - 1 > g->maxslot)
         g->maxslot = next - 1;
 }
@@ -878,8 +891,17 @@ static Val make_cons(Fn *g, Val h, Val t) {
 static Val make_list(Fn *g, Val *vs, int n, Val tail) {
     if (n == 0)
         return tail;
-    int acc = temp(g);
-    move(g, acc, tail);
+    /* a tail in the newest temporary (a call's result, say) is built on
+     * where it is, unless that is a variable's (a comprehension's) */
+    int acc = g->top - 1;
+    bool own = acc >= g->tbase && same(tail.i, ireg(acc)) && same(tail.r, rreg(acc));
+    for (int k = 0; own && k < g->vars.n; k++)
+        if (g->vars.v[k].slot == acc)
+            own = false;
+    if (!own) {
+        acc = temp(g);
+        move(g, acc, tail);
+    }
     for (int k = n - 1; k >= 0; k--)
         push_cell(g, acc, vs[k]);
     return slot_val(acc);

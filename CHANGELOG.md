@@ -21,9 +21,14 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   rebuilds the path to it without rebalancing, since the tree keeps its
   shape.
 * `maps:update_with/4` looks the key up once, not twice, when it is there.
-* `bench/sorting.erl` (200,000 `maps:update_with`) runs in 0.37 s instead
-  of 0.64 interpreting, and 0.22 s instead of 0.32 with the JIT, on
-  MLWSVM 0.14.0.
+* A head pattern that binds the whole argument as well (`[X | Xs] = A`)
+  uses the argument's own slot, as a plain variable does, instead of a
+  copy; and a list cell built on a call's result is built where the
+  result is. `lists:merge2`, which `lists:sort` spends its time in, runs
+  21% fewer instructions.
+* `bench/sorting.erl` (`lists:sort` and 200,000 `maps:update_with` of 200,000
+  integers) runs in 0.36 s instead of 0.64 interpreting, and 0.22 s instead
+  of 0.32 with the JIT, on MLWSVM 0.14.0.
 
 ## Release 0.6.1
 
