@@ -144,16 +144,16 @@ exit reason written as a term, which the VM hands to the monitors in its
 `bench/run.sh` (`make bench`) times five programs on MLWSVM and on
 Erlang/OTP 29 (whose BEAM compiles to machine code, and whose time includes
 starting it, about 0.07 s), on an Apple M5 Pro, in seconds, the best of
-three runs, on MLWSVM 0.14.0. MLWSVM is run interpreting, and with its JIT
+three runs, on MLWSVM 0.15.0. MLWSVM is run interpreting, and with its JIT
 (MLWSVM 0.8.0 and later, `MLWSVM_JIT=on`):
 
 | Benchmark | MLWSVM | MLWSVM JIT | erl |
 |---|---|---|---|
 | fib (fib(30)) | 0.03 | 0.01 | 0.08 |
-| ring (1,000 processes, 1,000,000 messages) | 0.22 | 0.20 | 0.26 |
-| binarytrees (depth 16) | 0.54 | 0.21 | 0.12 |
-| nbody (100,000 steps, floats in tuples) | 0.46 | 0.18 | 0.16 |
-| sorting (200,000 integers, maps) | 0.36 | 0.22 | 0.11 |
+| ring (1,000 processes, 1,000,000 messages) | 0.22 | 0.21 | 0.26 |
+| binarytrees (depth 16) | 0.55 | 0.19 | 0.12 |
+| nbody (100,000 steps, floats in tuples) | 0.47 | 0.18 | 0.16 |
+| sorting (200,000 integers, maps) | 0.36 | 0.21 | 0.11 |
 
 These need MLWSVM 0.7.0 or later, whose fast forms for `bitcast`,
 `typeof` and comparisons of list elements came from these programs'

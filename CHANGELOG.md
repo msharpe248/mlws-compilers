@@ -3,16 +3,28 @@
 Each compiler is versioned on its own (its `VERSION` file); a release of
 this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
-## Unreleased
+## Release 0.7.0
 
-### Lua
+Lua 0.4.4 and Erlang 0.2.2; Lox 0.5.0 and bf 0.4.1 are unchanged. Lua
+programs now need MLWSVM 0.14.0 or later; Erlang, Lox and bf still run on
+MLWSVM 0.6.0 or later (tested on 0.6.1). Every suite passes on MLWSVM
+0.14.0 and 0.15.0 with the JIT off, on and compiling everything, with
+`MLWSVM_OPT=3`, `MLWSVM_GC_STRESS=1` and `MLWSVM_GC_VERIFY=1`.
+
+### Repository
+
+* README, lua/README, lox/README, erlang/README: benchmark times on MLWSVM
+  0.15.0, interpreting and with the JIT; with the JIT, all nine Lua
+  benchmarks run faster than Lua 5.5.
+
+### Lua 0.4.4
 
 * `gsub` of a plain pattern by a plain string is one call to MLWSVM
   0.14.0's `text.replace_n`, instead of a loop in the runtime, and an
   empty pattern takes that path too. Lua programs now need MLWSVM 0.14.0
   or later.
 
-### Erlang
+### Erlang 0.2.2
 
 * Map keys that are both small integers are compared inline, in the
   lookups of small and large maps and in the tree's inserts, without
