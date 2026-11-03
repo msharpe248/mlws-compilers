@@ -12,6 +12,19 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   empty pattern takes that path too. Lua programs now need MLWSVM 0.14.0
   or later.
 
+### Erlang
+
+* Map keys that are both small integers are compared inline, in the
+  lookups of small and large maps and in the tree's inserts, without
+  ranking the two terms.
+* Replacing the value of a key that a large map (a tree) already has
+  rebuilds the path to it without rebalancing, since the tree keeps its
+  shape.
+* `maps:update_with/4` looks the key up once, not twice, when it is there.
+* `bench/sorting.erl` (200,000 `maps:update_with`) runs in 0.37 s instead
+  of 0.64 interpreting, and 0.22 s instead of 0.32 with the JIT, on
+  MLWSVM 0.14.0.
+
 ## Release 0.6.1
 
 Erlang 0.2.1; Lox 0.5.0, Lua 0.4.3 and bf 0.4.1 are unchanged. For MLWSVM

@@ -537,7 +537,9 @@ diff:
 lt: ret -1
 same:
     beq a, b, eq
-    jmp diff
+    bnz.r ar, diff
+    blt a, b, lt        ; two small integers
+    ret 1
 eq: ret 0
 1:  jtab I3, Lnum, Latom, Lref, Lfun, eq, Lpid, Ltuple, Lmap, eq, Llist, Lbin
     ret 0
@@ -1767,7 +1769,13 @@ timeout:
 1:  beq.r n, "e", 3f
     mov.r R2, n[4]
     mov I2, n[5]
-    call rt$compare (ki, I2, 1, kr, R2) -> I3
+    bnz.r kr, 5f
+    bnz.r R2, 5f
+    beq ki, I2, 4f      ; two small integers
+    blt ki, I2, 2f
+    mov.r n, n[8]
+    jmp 1b
+5:  call rt$compare (ki, I2, 1, kr, R2) -> I3
     beq I3, 0, 4f
     blt I3, 0, 2f
     mov.r n, n[8]
@@ -1782,7 +1790,14 @@ timeout:
 
 ; The order of map keys (exact: 1 and 1.0 are two keys), for erts_map.
 .func rt$mapcmp(i64 a, i64 b, ref ar, ref br) -> (i64, ref)
-    call rt$compare (a, b, 1, ar, br) -> I2
+    bnz.r ar, 1f
+    bnz.r br, 1f
+    blt a, b, 2f        ; two small integers
+    bgt a, b, 3f
+    ret 0, null
+2:  ret -1, null
+3:  ret 1, null
+1:  call rt$compare (a, b, 1, ar, br) -> I2
     ret I2, null
 .endf
 
@@ -1799,7 +1814,13 @@ timeout:
     mov.r R2, kv[I5]
     add I6, I5, 1
     mov I7, kv[I6]
-    call rt$compare (ki, I7, 1, kr, R2) -> I8
+    bnz.r kr, 5f
+    bnz.r R2, 5f
+    beq ki, I7, 2f      ; two small integers
+    blt ki, I7, 4f
+    add I2, I4, 1
+    jmp 1b
+5:  call rt$compare (ki, I7, 1, kr, R2) -> I8
     beq I8, 0, 2f
     blt I8, 0, 4f
     add I2, I4, 1

@@ -48,7 +48,7 @@ update_with(K, F, M) -> M#{K := F(get(K, M))}.
 
 update_with(K, F, Init, M) ->
     case find(K, M) of
-        {ok, V} -> M#{K := F(V)};
+        {ok, V} -> M#{K => F(V)};   % K is there: no second lookup
         error -> M#{K => Init}
     end.
 

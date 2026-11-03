@@ -4,7 +4,8 @@
 -module(erts_map).
 -export([insert/3, from_kv/1]).
 
-%% {Tree, 1} if K was not there, {Tree, 0} if its value was replaced.
+%% {Tree, 1} if K was not there, {Tree, 0} if its value was replaced (then
+%% the tree keeps its shape and colors, and needs no balancing).
 insert(K, V, T) ->
     {{_, L, K1, V1, R}, Grew} = ins(K, V, T),
     {{b, L, K1, V1, R}, Grew}.
@@ -12,8 +13,14 @@ insert(K, V, T) ->
 ins(K, V, e) -> {{r, e, K, V, e}, 1};
 ins(K, V, {C, L, K1, V1, R}) ->
     case '$rt':mapcmp(K, K1) of
-        -1 -> {L1, G} = ins(K, V, L), {balance(C, L1, K1, V1, R), G};
-        1 -> {R1, G} = ins(K, V, R), {balance(C, L, K1, V1, R1), G};
+        -1 -> case ins(K, V, L) of
+                  {L1, 0} -> {{C, L1, K1, V1, R}, 0};
+                  {L1, G} -> {balance(C, L1, K1, V1, R), G}
+              end;
+        1 -> case ins(K, V, R) of
+                 {R1, 0} -> {{C, L, K1, V1, R1}, 0};
+                 {R1, G} -> {balance(C, L, K1, V1, R1), G}
+             end;
         0 -> {{C, L, K, V, R}, 0}
     end.
 
