@@ -3984,6 +3984,21 @@ static void check_undef(FS *fs, Expr *t) {
     fs->nslots = mark;
 }
 
+/* A local of this function that nothing in the assignment s can change
+ * before its stores: no target of s, and no closure assigns it. */
+static bool unchanged_by(FS *fs, Stmt *s, Expr *e) {
+    if (e->k != X_LOCAL || e->var->fn != fs->f || e->var->boxed || is_top_env(fs, e->var))
+        return false;
+    if (!e->var->assigned)
+        return true;
+    if (e->var->captured)
+        return false;
+    for (int i = 0; i < s->ntargets; i++)
+        if (s->targets[i]->k == X_LOCAL && s->targets[i]->var == e->var)
+            return false;
+    return true;
+}
+
 static void gen_assign(FS *fs, Stmt *s) {
     if (s->check_undef)
         for (int i = 0; i < s->ntargets; i++)
@@ -4013,12 +4028,12 @@ static void gen_assign(FS *fs, Stmt *s) {
             tv[i] = gen(fs, t->a, -1);
             kv[i] = gen(fs, t->b, -1);
             /* keep them in temporaries: a local may be assigned first */
-            if (tv[i].k == V_SLOT && !is_temp(fs, tv[i].slot)) {
+            if (tv[i].k == V_SLOT && !is_temp(fs, tv[i].slot) && !unchanged_by(fs, s, t->a)) {
                 int k = alloc_slot(fs);
                 put(fs, k, tv[i]);
                 tv[i] = vslot(k);
             }
-            if (kv[i].k == V_SLOT && !is_temp(fs, kv[i].slot)) {
+            if (kv[i].k == V_SLOT && !is_temp(fs, kv[i].slot) && !unchanged_by(fs, s, t->b)) {
                 int k = alloc_slot(fs);
                 put(fs, k, kv[i]);
                 kv[i] = vslot(k);
