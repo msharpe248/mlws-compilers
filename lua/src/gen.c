@@ -4201,16 +4201,15 @@ typedef struct {
 static void numfor_body(FS *fs, void *c, int head) {
     ForCtx *x = c;
     Loop lp = {x->exit, fs->closes.n};
+    bool unit = x->const_step && (x->cstep == 1 || x->cstep == -1);
     vec_push(fs->loops, lp);
+    if (unit)
+        emit(fs, "    %s %s", x->cstep == 1 ? "inc" : "dec", SI(x->var));
     gen_block(fs, x->s->body);
     fs->loops.n--;
     if (!fs->dead) {
-        if (x->const_step && x->cstep == 1) {
-            branch(fs, x->exit, "bge %s, %s", SI(x->var), SI(x->lim));
-            emit(fs, "    inc %s", SI(x->var));
-        } else if (x->const_step && x->cstep == -1) {
-            branch(fs, x->exit, "ble %s, %s", SI(x->var), SI(x->lim));
-            emit(fs, "    dec %s", SI(x->var));
+        if (unit) {
+            branch(fs, head, "%s %s, %s", x->cstep == 1 ? "blt" : "bgt", SI(x->var), SI(x->lim));
         } else {
             branch(fs, x->exit, "bz %s", SI(x->count));
             emit(fs, "    dec %s", SI(x->count));
@@ -4218,8 +4217,8 @@ static void numfor_body(FS *fs, void *c, int head) {
                 emit(fs, "    add %s, %lld", SI(x->var), (long long)x->cstep);
             else
                 emit(fs, "    add %s, %s", SI(x->var), SI(x->step));
+            jump(fs, head);
         }
-        jump(fs, head);
     }
     place(fs, x->exit);
 }
@@ -4334,6 +4333,9 @@ static void gen_numfor(FS *fs, Stmt *s) {
             branch(fs, x.exit, "%s %s, %s", x.cstep == 1 ? "bgt" : "blt", SI(x.var), SI(x.lim));
             if (clip)
                 place(fs, cont);
+            /* the body steps the variable first, and the loop's end
+               branches back while it is short of the limit */
+            emit(fs, "    %s %s", x.cstep == 1 ? "dec" : "inc", SI(x.var));
         }
         fs->nlocals = fs->nslots;
         fs->nactive++;
