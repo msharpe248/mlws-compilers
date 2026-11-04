@@ -4489,17 +4489,46 @@ static void gen_genfor(FS *fs, Stmt *s) {
 
 typedef struct {
     Stmt *s;
+    int exit;           /* while: the exit, if the test is made before the head */
 } WhileCtx;
 
+/* A condition small enough to test both before a loop and at its end:
+   no calls, functions or tables, and at most *budget nodes. */
+static bool small_cond(Expr *e, int *budget) {
+    if (!e)
+        return true;
+    if (--*budget < 0)
+        return false;
+    switch (e->k) {
+    case X_NIL: case X_TRUE: case X_FALSE: case X_INT: case X_FLT: case X_STR:
+    case X_LOCAL: case X_GLOBAL:
+        return true;
+    case X_INDEX: case X_BIN: case X_UN: case X_AND: case X_OR: case X_PAREN:
+        return small_cond(e->a, budget) && small_cond(e->b, budget);
+    default:
+        return false;
+    }
+}
+
 static void while_body(FS *fs, void *c, int head) {
-    Stmt *s = ((WhileCtx *)c)->s;
-    int exit = new_label(fs);
-    gen_branch(fs, s->cond, exit, false);
+    WhileCtx *x = c;
+    Stmt *s = x->s;
+    int exit = x->exit;
+    if (exit < 0) {
+        exit = new_label(fs);
+        gen_branch(fs, s->cond, exit, false);
+    }
     Loop lp = {exit, fs->closes.n};
     vec_push(fs->loops, lp);
     gen_block(fs, s->body);
     fs->loops.n--;
-    jump(fs, head);
+    if (x->exit < 0) {
+        jump(fs, head);
+    } else if (!fs->dead) {
+        /* tested again at the end, back to the head while it holds */
+        fs->line = s->line;
+        gen_branch(fs, s->cond, head, true);
+    }
     place(fs, exit);
 }
 
@@ -4568,12 +4597,17 @@ static void gen_stmt(FS *fs, Stmt *s) {
         break;
     }
     case S_WHILE: {
-        WhileCtx c = {s};
+        WhileCtx c = {s, -1};
+        int budget = 12;
+        if (small_cond(s->cond, &budget)) {
+            c.exit = new_label(fs);
+            gen_branch(fs, s->cond, c.exit, false);
+        }
         speculate(fs, while_body, &c, s);
         break;
     }
     case S_REPEAT: {
-        WhileCtx c = {s};
+        WhileCtx c = {s, -1};
         speculate(fs, repeat_body, &c, s);
         break;
     }
