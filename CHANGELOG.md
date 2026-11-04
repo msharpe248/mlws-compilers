@@ -3,6 +3,45 @@
 Each compiler is versioned on its own (its `VERSION` file); a release of
 this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
+## Unreleased
+
+Smaller and cheaper generated code; no change to what programs do, or to
+the MLWSVM they need. Numbers on MLWSVM 0.15.0.
+
+### Lua
+
+* A multiple assignment uses its targets' tables and keys where they are
+  when they are locals that nothing in it can change (no closure captures
+  them, and no target assigns them), instead of copying them first; the
+  stores then use a loop's cached array part. fannkuch runs 12% fewer
+  instructions: 1.97 to 1.77 s interpreted, 0.65 to 0.58 with the JIT.
+* An integer `for` loop with a step of 1 or -1 ends in one branch back to
+  its head instead of a branch, a step and a jump (spectralnorm: 3.5%
+  fewer instructions).
+* A `while` loop whose condition is small (no calls, functions or tables)
+  tests it before the loop and at its end, one branch an iteration
+  instead of two (loop: 7% fewer instructions). An error in the second
+  test reports the `while`'s line.
+* The runtime branches on a value's type in one instruction (`bisa`,
+  `bnisa`) where it used `isa` and a branch.
+
+### Erlang
+
+* A tuple, list cell or constant term returned by a function is returned
+  from the register it was built in, without moving it into the result's
+  registers first: binarytrees runs 3.7% fewer instructions, sorting
+  4.2%.
+
+### Lox
+
+* A function's scratch registers are the ones just above its slots
+  instead of R24-R28, so its calls clear a smaller register window
+  (`Tree.walk`: 12 words instead of 27). With the JIT, properties,
+  method_call and zoo run 10% faster and trees 6%, and zoo_batch does
+  13% more batches.
+* Property gets, calls and invokes test an object's type and branch in
+  one instruction (`bnisa`) instead of two.
+
 ## Release 0.7.0
 
 Lua 0.4.4 and Erlang 0.2.2; Lox 0.5.0 and bf 0.4.1 are unchanged. Lua
