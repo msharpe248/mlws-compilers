@@ -3,18 +3,28 @@
 Each compiler is versioned on its own (its `VERSION` file); a release of
 this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
-## Unreleased
+## Release 0.7.1
 
-Smaller and cheaper generated code; no change to what programs do, or to
-the MLWSVM they need. Numbers on MLWSVM 0.15.0.
+Lua 0.4.5, Erlang 0.2.3 and Lox 0.5.1; bf 0.4.1 is unchanged. Smaller and
+cheaper generated code, with no change to what programs do or to the
+MLWSVM they need: Lua programs need MLWSVM 0.14.0 or later, and Erlang,
+Lox and bf MLWSVM 0.6.0 or later (tested on 0.6.1). Every suite passes on
+MLWSVM 0.15.0 with the JIT off, on and compiling everything, with
+`MLWSVM_OPT=3`, `MLWSVM_GC_STRESS=1` and `MLWSVM_GC_VERIFY=1`. Numbers on
+MLWSVM 0.15.0.
 
-### Lua
+### Repository
+
+* README, lua/README, lox/README, erlang/README: benchmark times with
+  these compilers on MLWSVM 0.15.0.
+
+### Lua 0.4.5
 
 * A multiple assignment uses its targets' tables and keys where they are
   when they are locals that nothing in it can change (no closure captures
   them, and no target assigns them), instead of copying them first; the
   stores then use a loop's cached array part. fannkuch runs 12% fewer
-  instructions: 1.97 to 1.77 s interpreted, 0.65 to 0.58 with the JIT.
+  instructions: 1.99 to 1.73 s interpreted, 0.65 to 0.57 with the JIT.
 * An integer `for` loop with a step of 1 or -1 ends in one branch back to
   its head instead of a branch, a step and a jump (spectralnorm: 3.5%
   fewer instructions).
@@ -25,14 +35,14 @@ the MLWSVM they need. Numbers on MLWSVM 0.15.0.
 * The runtime branches on a value's type in one instruction (`bisa`,
   `bnisa`) where it used `isa` and a branch.
 
-### Erlang
+### Erlang 0.2.3
 
 * A tuple, list cell or constant term returned by a function is returned
   from the register it was built in, without moving it into the result's
   registers first: binarytrees runs 3.7% fewer instructions, sorting
   4.2%.
 
-### Lox
+### Lox 0.5.1
 
 * A function's scratch registers are the ones just above its slots
   instead of R24-R28, so its calls clear a smaller register window

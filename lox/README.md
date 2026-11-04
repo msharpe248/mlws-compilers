@@ -162,15 +162,15 @@ seconds (each prints its own time), interpreting and with the VM's JIT
 
 | Benchmark | MLWSVM | MLWSVM JIT |
 |---|---|---|
-| fib | 0.31 | 0.12 |
-| binary_trees | 0.70 | 0.30 |
-| trees | 1.67 | 0.61 |
-| properties | 0.39 | 0.12 |
-| invocation | 0.26 | 0.07 |
-| instantiation | 0.29 | 0.18 |
-| method_call | 0.15 | 0.07 |
-| zoo | 0.28 | 0.09 |
-| zoo_batch | 6,030 batches in 10 s | 18,099 batches in 10 s |
+| fib | 0.30 | 0.12 |
+| binary_trees | 0.69 | 0.28 |
+| trees | 1.63 | 0.57 |
+| properties | 0.37 | 0.11 |
+| invocation | 0.25 | 0.07 |
+| instantiation | 0.29 | 0.17 |
+| method_call | 0.15 | 0.06 |
+| zoo | 0.27 | 0.08 |
+| zoo_batch | 6,344 batches in 10 s | 20,281 batches in 10 s |
 
 With the JIT, `mlwsvm run --jit-report -` lists the instructions its machine
 code could not run itself; the generated code avoids the VM's general forms
