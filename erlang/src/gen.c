@@ -79,10 +79,14 @@ struct Fn {
     int ncaps;              /* captures (UP words) of a fun */
     const char *file;
     int line;               /* last .loc emitted */
+    size_t built_at;        /* the hot code's length before built()'s moves */
+    size_t built_end;       /* and after them, */
+    const char *built_r;    /* of the term built in this register (NULL: cold) */
 };
 
 static Val ev(Fn *g, Node *e);
 static void tail(Fn *g, Node *e);
+static void built(Fn *g, int slot, const char *r);
 static void match(Fn *g, Node *pat, Val v, const char *fail);
 static void cond(Fn *g, Node *e, const char *fail);
 static Val ev_body(Fn *g, Nodes *body);
@@ -710,8 +714,7 @@ static void push_cell(Fn *g, int acc, Val h) {
     emit(g, "mov.r %s->Cons.hr, %s", XR1, h.r);
     emit(g, "mov %s->Cons.ti, %s", XR1, ireg(acc));
     emit(g, "mov.r %s->Cons.tr, %s", XR1, rreg(acc));
-    emit(g, "mov.r %s, %s", rreg(acc), XR1);
-    emit(g, "mov %s, 0", ireg(acc));
+    built(g, acc, XR1);
 }
 
 /* A list of characters from a string literal, from the end. */
@@ -802,7 +805,7 @@ static Val const_term(Fn *g, Node *e) {
     emit(g, "bnz.r %s, %s", tv.r, done);
     emit(g, "call K$%d -> %s", k, tv.r);
     label(g, done);
-    emit(g, "mov %s, 0", tv.i);
+    built(g, t, tv.r);
     return tv;
 }
 
@@ -861,9 +864,13 @@ static const char *build_reg(int slot) {
 }
 
 static void built(Fn *g, int slot, const char *r) {
+    Buf *b = g->in_cold ? &g->cold : &g->code;
+    g->built_at = b->n;
+    g->built_r = g->in_cold ? NULL : r;
     if (!same(r, rreg(slot)))
         emit(g, "mov.r %s, %s", rreg(slot), r);
     emit(g, is_loc(ireg(slot)) ? "mov.i64 %s, 0" : "mov %s, 0", ireg(slot));
+    g->built_end = b->n;
 }
 
 static Val make_tuple(Fn *g, Val *vs, int n) {
@@ -3133,7 +3140,13 @@ static void tail(Fn *g, Node *e) {
     }
     int mark = g->top;
     Val v = ev(g, e);
-    emit(g, "ret %s, %s", v.i, v.r);
+    /* a term just built is returned from where it was built */
+    if (!g->in_cold && g->built_r && g->code.n == g->built_end) {
+        g->code.n = g->built_at;
+        emit(g, "ret 0, %s", g->built_r);
+    } else {
+        emit(g, "ret %s, %s", v.i, v.r);
+    }
     g->top = mark;
 }
 
