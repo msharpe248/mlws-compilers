@@ -68,8 +68,7 @@
 .endf
 
 .func rt$checktab(i64 argn, ref fname, i64, f64, ref)
-    isa I2, R1, Tab
-    bnz I2, 1f
+    bisa R1, Tab, 1f
     call rt$argtype (I0, R0, "table", I1, F0, R1)
 1:  ret
 .endf
@@ -202,8 +201,7 @@
 
 .func P$ipairs_aux(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
     add I1, 1
-    isa I2, R0, Tab
-    bz I2, 5f
+    bnisa R0, Tab, 5f
     mov R2, R0->Tab.meta
     bnz R2, 5f
     sub I3, I1, 1
@@ -243,8 +241,7 @@
 .endf
 
 .func B$next(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
-    isa I2, R0, Tab
-    bnz I2, 1f
+    bisa R0, Tab, 1f
     call rt$argtype (1, "next", "table", I0, F0, R0)
 1:  call rt$next (R0, I1, F1, R1) -> (I3, F3, R3, I4, F4, R4)
     beq.r R3, 1n, 9f
@@ -320,8 +317,7 @@
 .endf
 
 .func B$rawlen(i64, f64, ref) -> (i64, i64, f64, ref)
-    isa I1, R0, Tab
-    bz I1, 1f
+    bnisa R0, Tab, 1f
     mov I2, R0->Tab.n
     ret 1, I2, 0.0, null
 1:  typeof I1, R0
@@ -335,8 +331,7 @@
 .func B$setmetatable(i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
     call rt$checktab (1, "setmetatable", I0, F0, R0)
     beq.r R1, 1n, 1f
-    isa I2, R1, Tab
-    bnz I2, 1f
+    bisa R1, Tab, 1f
     call rt$argtype (2, "setmetatable", "nil or table", I1, F1, R1)
 1:  mov R2, R0->Tab.meta
     bz R2, 2f
@@ -350,8 +345,7 @@
 .endf
 
 .func B$getmetatable(i64, f64, ref) -> (i64, i64, f64, ref)
-    isa I1, R0, Tab
-    bz I1, 1f
+    bnisa R0, Tab, 1f
     mov R1, R0->Tab.meta
     bz R1, 9f
     jmp 2f
@@ -869,8 +863,7 @@
 .endf
 
 .func B$tab_unpack(i64, f64, ref, i64, f64, ref, i64, f64, ref) -> (i64, i64, f64, ref)
-    isa I9, R0, Tab
-    bnz I9, 3f
+    bisa R0, Tab, 3f
     call rt$argtype (1, "unpack", "table", I0, F0, R0)
 3:    call rt$optint (2, "unpack", I1, F1, R1, 1) -> (I3)
     beq.r R2, 1n, 1f
@@ -882,8 +875,7 @@
     sub I5, I4, I3
     bge I5, 10000000, 8f
     lnew R5
-    isa I6, R0, Tab
-    bz I6, 5f
+    bnisa R0, Tab, 5f
     mov R6, R0->Tab.meta
     bnz R6, 5f
 3:  bgt I3, I4, 4f
@@ -1195,8 +1187,7 @@ MATHF1 exp, ncall "math.exp" (F0) -> (F0)
 
 ; nil, "name: message", code for a failed file operation.
 .func rt$ioerror(ref name, ref err) -> (i64, i64, f64, ref)
-    isa I0, R1, Error
-    bz I0, 1f
+    bnisa R1, Error, 1f
     mov R2, R1->Error.message
     ; "fs.open: path: reason" is already "path: reason" after its prefix
     ncall "text.starts_with" (R2, "fs.") -> (I1)
@@ -1231,8 +1222,7 @@ MATHF1 exp, ncall "math.exp" (F0) -> (F0)
 .endf
 
 .func rt$newthread(i64, f64, ref) -> ref
-    isa I1, R0, Fn
-    bnz I1, 1f
+    bisa R0, Fn, 1f
     call rt$argtype (1, "create", "function", I0, F0, R0)
 1:  closure rt$co_body (R0) -> (R1)
     conew R2, R1, 4096
@@ -1274,8 +1264,7 @@ MATHF1 exp, ncall "math.exp" (F0) -> (F0)
 .endf
 
 .func B$co_resume(i64, f64, ref, ref) -> (i64, i64, f64, ref)
-    isa I1, R0, Thread
-    bnz I1, 1f
+    bisa R0, Thread, 1f
     call rt$argtype (1, "resume", "thread", I0, F0, R0)
 1:  call rt$resume (R0, R1) -> (I2, I3, F3, R3)
     bz I2, 5f
@@ -1313,8 +1302,7 @@ MATHF1 exp, ncall "math.exp" (F0) -> (F0)
 .endf
 
 .func B$co_status(i64, f64, ref) -> (i64, i64, f64, ref)
-    isa I1, R0, Thread
-    bnz I1, 1f
+    bisa R0, Thread, 1f
     call rt$argtype (1, "status", "thread", I0, F0, R0)
 1:  call rt$costatus (R0) -> (R1)
     ret 1, 0, 0.0, R1
@@ -1353,8 +1341,7 @@ MATHF1 exp, ncall "math.exp" (F0) -> (F0)
 .endf
 
 .func B$co_wrap(i64, f64, ref) -> (i64, i64, f64, ref)
-    isa I1, R0, Fn
-    bnz I1, 1f
+    bisa R0, Fn, 1f
     call rt$argtype (1, "wrap", "function", I0, F0, R0)
 1:  call rt$newthread (I0, F0, R0) -> (R1)
     closure B$wrap_call (R1) -> (R2)
@@ -1365,8 +1352,7 @@ MATHF1 exp, ncall "math.exp" (F0) -> (F0)
 .endf
 
 .func B$co_close(i64, f64, ref) -> (i64, i64, f64, ref)
-    isa I1, R0, Thread
-    bnz I1, 1f
+    bisa R0, Thread, 1f
     call rt$argtype (1, "close", "coroutine", I0, F0, R0)
 1:  call rt$costatus (R0) -> (R1)
     strcmp I2, R1, "running"

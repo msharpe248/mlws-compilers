@@ -5528,8 +5528,7 @@ static void gen_helpers(Buf *b) {
         for (int j = 0; j < n; j++)
             sb_add(&params, ", i64, f64, ref");
         L(".func rt$call%d(ref, i64, f64, ref%s) -> (i64, i64, f64, ref)", n, sb_str(&params));
-        L("    isa I20, R1, Fn");
-        L("    bz I20, 90f");
+        L("    bnisa R1, Fn, 90f");
         L("    mov I21, R1->Fn.sig");
         L("    mov R20, R1->Fn.clo");
         L("    mov.r R21, " NIL);
@@ -5608,8 +5607,7 @@ static void gen_helpers(Buf *b) {
     }
     /* rt$apply: call f with the values in a list */
     L(".func rt$apply(i64, f64, ref, ref, ref) -> (i64, i64, f64, ref)");
-    L("    isa I20, R0, Fn");
-    L("    bz I20, 90f");
+    L("    bnisa R0, Fn, 90f");
     L("    mov I21, R0->Fn.sig");
     L("    mov R20, R0->Fn.clo");
     L("    len I23, R1");

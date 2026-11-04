@@ -147,14 +147,10 @@ rt$shape0: .zero 8              ; the shape of no fields
     beq.r v, "\"false", 3f
     typeof I0, v
     beq I0, 1, 4f
-    isa I0, v, Fn
-    bnz I0, 5f
-    isa I0, v, Bound
-    bnz I0, 6f
-    isa I0, v, Class
-    bnz I0, 7f
-    isa I0, v, Inst
-    bnz I0, 8f
+    bisa v, Fn, 5f
+    bisa v, Bound, 6f
+    bisa v, Class, 7f
+    bisa v, Inst, 8f
     ret "<native fn>"
 1:  ret "nil"
 2:  ret "true"
@@ -205,8 +201,7 @@ rt$shape0: .zero 8              ; the shape of no fields
 
 ; obj.name: a field, else a method bound to obj.
 .func rt$get(i64 line, ref obj, ref name) -> (f64, ref)
-    isa I1, obj, Inst
-    bz I1, 8f
+    bnisa obj, Inst, 8f
     mov.r R2, obj->Inst.shape
     mov.r R2, R2->Shape.keys
     mget I2, R2, name, -1

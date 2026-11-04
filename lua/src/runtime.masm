@@ -258,8 +258,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 .func rt$deflib(ref name) -> ref
     mov R1, @rt$G
     call rt$rawget (R1, 0, 0.0, R0) -> (I0, F0, R2)
-    isa I1, R2, Tab
-    bnz I1, 1f
+    bisa R2, Tab, 1f
     new R2, Tab
     call rt$rawset (R1, 0, 0.0, R0, 0, 0.0, R2)
 1:  ret R2
@@ -352,8 +351,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 2:  ncall "fs.stderr" -> (R4)    ; (writing to it flushes standard output first)
     strcat R5, "mlws-vm-lua: ", R1, "\n"
     ncall "fs.write" (R4, R5)
-    isa I3, R0, Error
-    bz I3, 3f
+    bnisa R0, Error, 3f
     strcmp I3, R0->Error.code, "E_CALL_DEPTH"
     bz I3, 3f
     mov R6, R0->Error.trace     ; a fault in the runtime: where it happened
@@ -367,14 +365,12 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 ; The value of a caught exception: a Lua error's value, or a message for a
 ; fault the VM raised.
 .func rt$errvalue(ref exc) -> (i64, f64, ref)
-    isa I0, R0, LuaErr
-    bz I0, 1f
+    bnisa R0, LuaErr, 1f
     mov I1, R0->LuaErr.i
     mov F1, R0->LuaErr.f
     mov R1, R0->LuaErr.r
     ret I1, F1, R1
-1:  isa I0, R0, Error
-    bz I0, 9f
+1:  bnisa R0, Error, 9f
     mov R1, R0->Error.code
     mov R2, R0->Error.trace
     strcmp I0, R1, "E_CALL_DEPTH"
@@ -699,12 +695,9 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     beq.r R0, 3n, 3f
     typeof I1, R0
     beq I1, 1, 4f
-    isa I1, R0, Tab
-    bnz I1, 5f
-    isa I1, R0, Fn
-    bnz I1, 6f
-    isa I1, R0, Thread
-    bnz I1, 7f
+    bisa R0, Tab, 5f
+    bisa R0, Fn, 6f
+    bisa R0, Thread, 7f
     ret "userdata"
 1:  ret "number"
 2:  ret "nil"
@@ -1027,8 +1020,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 3:  ret "nil"
 4:  ret "false"
 5:  ret "true"
-6:  isa I1, R0, Tab
-    bz I1, 8f
+6:  bnisa R0, Tab, 8f
     mov R2, R0->Tab.meta
     bz R2, 8f
     call rt$rawget (R2, 0, 0.0, "__tostring") -> (I3, F3, R3)
@@ -1496,16 +1488,14 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 ; t[k] with metamethods.
 .func rt$index(i64, f64, ref, i64, f64, ref, ref desc) -> (i64, f64, ref)
     mov I9, 0
-1:  isa I2, R0, Tab
-    bz I2, 20f
+1:  bnisa R0, Tab, 20f
     call rt$rawget (R0, I1, F1, R1) -> (I3, F3, R3)
     bne.r R3, 1n, 10f
     mov R4, R0->Tab.meta
     bz R4, 10f
     mov R5, R4->Tab.idx
     bz R5, 10f
-2:  isa I2, R5, Fn
-    bnz I2, 30f
+2:  bisa R5, Fn, 30f
     mov R0, R5
     mov I0, 0
     mov.r R2, null
@@ -1527,16 +1517,14 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 ; t[k] = v with metamethods.
 .func rt$setindex(i64, f64, ref, i64, f64, ref, i64, f64, ref, ref desc)
     mov I9, 0
-1:  isa I3, R0, Tab
-    bz I3, 20f
+1:  bnisa R0, Tab, 20f
     mov R4, R0->Tab.meta
     bz R4, 10f
     mov R5, R4->Tab.nidx
     bz R5, 10f
     call rt$rawget (R0, I1, F1, R1) -> (I4, F4, R6)
     bne.r R6, 1n, 10f
-    isa I3, R5, Fn
-    bnz I3, 30f
+    bisa R5, Fn, 30f
     mov R0, R5
     mov I0, 0
     mov.r R3, null
@@ -1579,8 +1567,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 ; obj:name — the method, looked up as obj.name (desc: obj, for messages).
 .func rt$method(i64, f64, ref, ref name, ref desc) -> (i64, f64, ref)
     mov R9, R2
-    isa I1, R0, Tab
-    bz I1, 5f
+    bnisa R0, Tab, 5f
     mov R2, R0->Tab.hm
     bz R2, 3f
     mget I2, R2, R1, -1
@@ -1591,8 +1578,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 3:  mov R5, R0->Tab.meta
     bz R5, 6f
     mov R6, R5->Tab.idx
-    isa I1, R6, Tab
-    bz I1, 6f
+    bnisa R6, Tab, 6f
     mov R7, R6->Tab.hm          ; the class's own method
     bz R7, 4f
     mget I2, R7, R1, -1
@@ -1606,8 +1592,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     bne I1, 1, 6f
     mov R5, @rt$strmeta
     mov R6, R5->Tab.idx
-    isa I1, R6, Tab
-    bz I1, 6f
+    bnisa R6, Tab, 6f
     call rt$rawget (R6, 0, 0.0, R1) -> (I4, F4, R4)
     bne.r R4, 1n, 9f
 6:  call rt$index (I0, F0, R0, 0, 0.0, R1, R9) -> (I4, F4, R4)
@@ -1620,8 +1605,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 .func rt$methodc(i64, f64, ref, ref name, ref desc) -> (i64, f64, ref, ref)
     mov R8, R2
     mov.r R9, 1n
-    isa I1, R0, Tab
-    bz I1, 1f
+    bnisa R0, Tab, 1f
     mov R2, R0->Tab.hm
     bz R2, 2f
     mov I1, R0->Tab.hmshared
@@ -1635,8 +1619,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 
 ; A metamethod of v (tables and strings have metatables), or nil.
 .func rt$getmm(i64, f64, ref, ref name) -> (i64, f64, ref)
-    isa I1, R0, Tab
-    bz I1, 2f
+    bnisa R0, Tab, 2f
     mov R2, R0->Tab.meta
     bz R2, 9f
     jmp 5f
@@ -1658,8 +1641,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     beq.r R3, 1n, 2f
     call rt$call1 (null, I3, F3, R3, I0, F0, R0) -> (I4, I5, F5, R5)
     ret I5, F5, R5
-2:  isa I1, R0, Tab
-    bz I1, 9f
+2:  bnisa R0, Tab, 9f
     mov I2, R0->Tab.n
     ret I2, 0.0, null
 9:  call rt$typeerror ("get length of", I0, F0, R0, R1)
@@ -1859,10 +1841,8 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     strcmp I4, R0, R1
     bz I4, 91f
     ret 0
-4:  isa I4, R0, Tab
-    bz I4, 90f
-    isa I4, R1, Tab
-    bz I4, 90f
+4:  bnisa R0, Tab, 90f
+    bnisa R1, Tab, 90f
     call rt$getmm (I0, F0, R0, "__eq") -> (I5, F5, R5)
     bne.r R5, 1n, 5f
     call rt$getmm (I1, F1, R1, "__eq") -> (I5, F5, R5)

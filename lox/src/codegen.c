@@ -981,8 +981,7 @@ static Val gen_call(FS *fs, Expr *e, int dst) {
 
         const char *ro = rreg(fs, o.r, "R24");
         if (!is_this(c->a)) {
-            emit(fs, "isa I0, %s, Inst", ro);
-            emit(fs, "bz I0, L%d", slow);
+            emit(fs, "bnisa %s, Inst, L%d", ro, slow);
         }
         if (field_name_assigned(&c->tok)) {
             emit(fs, "mov.r R25, %s->Inst.shape", ro);
@@ -1130,8 +1129,7 @@ static Val gen_call(FS *fs, Expr *e, int dst) {
     cold_back(fs, back, d);
     cold_end(fs);
     const char *rc = rreg(fs, cv.r, "R24");
-    emit(fs, "isa I0, %s, Fn", rc);
-    emit(fs, "bz I0, L%d", slow);
+    emit(fs, "bnisa %s, Fn, L%d", rc, slow);
     emit(fs, "mov.i64 I1, %s->Fn.arity", rc);
     emit(fs, "bne I1, %d, L%d", argc, slow);
     emit(fs, "mov.r R25, %s->Fn.clo", rc);
@@ -1162,8 +1160,7 @@ static Val gen_get(FS *fs, Expr *e, int dst) {
     cold_end(fs);
     const char *ro = rreg(fs, o.r, "R24");
     if (!is_this(e->a)) {
-        emit(fs, "isa I0, %s, Inst", ro);
-        emit(fs, "bz I0, L%d", slow);
+        emit(fs, "bnisa %s, Inst, L%d", ro, slow);
     }
     /* the two shapes this site saw last, and the field's word in each */
     int fc = n_field_caches++;
@@ -1208,8 +1205,7 @@ static Val gen_set(FS *fs, Expr *e, int dst) {
     if (!is_this(e->a)) {
         int err = cold_error(fs, "\"Only instances have fields.\"");
         ro = rreg(fs, o.r, "R24");
-        emit(fs, "isa I0, %s, Inst", ro);
-        emit(fs, "bz I0, L%d", err);
+        emit(fs, "bnisa %s, Inst, L%d", ro, err);
     }
     Val v = settle(fs, gen(fs, e->b, d), d, mark);
     fs->line = e->line;
@@ -1537,8 +1533,7 @@ static void gen_class(FS *fs, Stmt *s) {
         fs->line = s->expr->line;
         sup = slot_val(k);
         const char *rs = rreg(fs, sup.r, "R24");
-        emit(fs, "isa I0, %s, Class", rs);
-        emit(fs, "bz I0, L%d", cold_error(fs, "\"Superclass must be a class.\""));
+        emit(fs, "bnisa %s, Class, L%d", rs, cold_error(fs, "\"Superclass must be a class.\""));
         fs->line = s->line;
     }
     int t = alloc_slot(fs);
@@ -1805,14 +1800,12 @@ static void gen_helpers(Buf *b) {
         const char *c = n ? ", " : "";
         emit_line(b, "; Call any value with %d arguments (F1/R1, ...).", n);
         emit_line(b, ".func rt$call%d(i64, f64, ref%s) -> (f64, ref)", n, params);
-        emit_line(b, "    isa I1, R0, Fn");
-        emit_line(b, "    bz I1, 1f");
+        emit_line(b, "    bnisa R0, Fn, 1f");
         emit_line(b, "    mov.i64 I2, R0->Fn.arity");
         emit_line(b, "    bne I2, %d, 9f", n);
         emit_line(b, "    mov.r R30, R0->Fn.clo");
         emit_line(b, "    tcalli R30 (%s)", args);
-        emit_line(b, "1:  isa I1, R0, Bound");
-        emit_line(b, "    bz I1, 2f");
+        emit_line(b, "1:  bnisa R0, Bound, 2f");
         emit_line(b, "    mov.r R29, R0->Bound.fn");
         emit_line(b, "    mov.i64 I2, R29->Fn.arity");
         emit_line(b, "    bne I2, %d, 9f", n);
@@ -1820,8 +1813,7 @@ static void gen_helpers(Buf *b) {
         emit_line(b, "    mov.r R28, R0->Bound.recv");
         emit_line(b, "    mov.f64 F30, 0.0");
         emit_line(b, "    tcalli R30 (F30, R28%s%s)", c, args);
-        emit_line(b, "2:  isa I1, R0, Class");
-        emit_line(b, "    bz I1, 3f");
+        emit_line(b, "2:  bnisa R0, Class, 3f");
         emit_line(b, "    call rt$new_instance (R0) -> (R28)");
         emit_line(b, "    mov.r R29, R0->Class.init");
         emit_line(b, "    bz.r R29, 4f");
@@ -1836,8 +1828,7 @@ static void gen_helpers(Buf *b) {
             emit_line(b, "4:  mov I2, 0");
             emit_line(b, "    jmp 9f");
         }
-        emit_line(b, "3:  isa I1, R0, Native");
-        emit_line(b, "    bz I1, 5f");
+        emit_line(b, "3:  bnisa R0, Native, 5f");
         if (n == 0) {
             emit_line(b, "    tcall rt$native (R0)");
         } else {
@@ -1871,14 +1862,12 @@ static void gen_helpers(Buf *b) {
         emit_line(b, ".func rt$callp(i64, f64, ref, ref) -> (f64, ref)");
         emit_line(b, "    len I3, R1");
         emit_line(b, "    shr I3, 1");
-        emit_line(b, "    isa I1, R0, Fn");
-        emit_line(b, "    bz I1, 1f");
+        emit_line(b, "    bnisa R0, Fn, 1f");
         emit_line(b, "    mov.i64 I2, R0->Fn.arity");
         emit_line(b, "    bne I2, I3, 9f");
         emit_line(b, "    mov.r R30, R0->Fn.clo");
         emit_line(b, "    tcalli R30 (R1)");
-        emit_line(b, "1:  isa I1, R0, Bound");
-        emit_line(b, "    bz I1, 2f");
+        emit_line(b, "1:  bnisa R0, Bound, 2f");
         emit_line(b, "    mov.r R29, R0->Bound.fn");
         emit_line(b, "    mov.i64 I2, R29->Fn.arity");
         emit_line(b, "    bne I2, I3, 9f");
@@ -1886,8 +1875,7 @@ static void gen_helpers(Buf *b) {
         emit_line(b, "    mov.r R28, R0->Bound.recv");
         emit_line(b, "    mov.f64 F30, 0.0");
         emit_line(b, "    tcalli R30 (F30, R28, R1)");
-        emit_line(b, "2:  isa I1, R0, Class");
-        emit_line(b, "    bz I1, 3f");
+        emit_line(b, "2:  bnisa R0, Class, 3f");
         emit_line(b, "    call rt$new_instance (R0) -> (R28)");
         emit_line(b, "    mov.r R29, R0->Class.init");
         emit_line(b, "    mov I2, 0");
@@ -1897,9 +1885,8 @@ static void gen_helpers(Buf *b) {
         emit_line(b, "    mov.r R30, R29->Fn.clo");
         emit_line(b, "    calli R30 (0.0, R28, R1) -> (F31, R27)");
         emit_line(b, "    ret 0.0, R28");
-        emit_line(b, "3:  isa I1, R0, Native");
-        emit_line(b, "    mov I2, 0");
-        emit_line(b, "    bnz I1, 9f");
+        emit_line(b, "3:  mov I2, 0");
+        emit_line(b, "    bisa R0, Native, 9f");
         emit_line(b, "    call rt$error (\"Can only call functions and classes.\", I0)");
         emit_line(b, "    halt 70");
         emit_line(b, "9:  call rt$arity_error (I0, I2, I3)");
