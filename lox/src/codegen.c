@@ -32,6 +32,7 @@
  * Slow paths and error reports are emitted out of line, after the function's
  * last instruction ("cold" code), so the fast path falls straight through.
  */
+#include <ctype.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -1672,12 +1673,50 @@ static void gen_stmt(FS *fs, Stmt *s) {
 
 /* ------------------------------------------------------------- functions */
 
+/* Append src to dst with the scratch registers R24-R28 renamed to the
+ * five above the function's slots, from R`first`: a call clears every R
+ * register up to the highest its function names. Strings and names
+ * (@gr$R25) are left as they are. */
+static void cat_renumbered(Buf *dst, Buf *src, int first) {
+    size_t start = 0;
+    char tmp[8192];
+    for (int i = 0; i < src->nlines; i++) {
+        char *text = src->text + start;
+        char *nl = memchr(text, '\n', src->len - start);
+        size_t n = 0;
+        bool quoted = false;
+        for (char *p = text; p < nl && n + 4 < sizeof tmp; p++) {
+            if (quoted) {
+                if (*p == '\\' && p + 1 < nl) tmp[n++] = *p++;
+                else if (*p == '"') quoted = false;
+            } else if (*p == '"') {
+                quoted = true;
+            } else if (*p == 'R' && p + 2 < nl && p[1] == '2' && p[2] >= '4' && p[2] <= '8'
+                       && (p == text || !(isalnum((unsigned char)p[-1]) || strchr("_$.@", p[-1])))
+                       && (p + 3 == nl || !isalnum((unsigned char)p[3]))) {
+                n += (size_t)snprintf(tmp + n, sizeof tmp - n, "R%d", first + (p[2] - '4'));
+                p += 2;
+                continue;
+            }
+            tmp[n++] = *p;
+        }
+        tmp[n] = '\0';
+        buf_add(dst, src->lines[i], tmp);
+        start = (size_t)(nl - src->text) + 1;
+    }
+}
+
 static void finish_function(FS *fs, const char *header, int line) {
     Buf b = {0};
     buf_add(&b, line, header);
     if (fs->max > NREG) buf_addf(&b, line, "    enter %d", 2 * (fs->max - NREG));
-    buf_cat(&b, &fs->code);
-    buf_cat(&b, &fs->cold);
+    if (fs->max < NREG) {
+        cat_renumbered(&b, &fs->code, fs->max);
+        cat_renumbered(&b, &fs->cold, fs->max);
+    } else {
+        buf_cat(&b, &fs->code);
+        buf_cat(&b, &fs->cold);
+    }
     buf_add(&b, 0, ".endf");
     buf_add(&b, 0, "");
     buf_cat(&out_funcs, &b);
