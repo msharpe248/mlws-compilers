@@ -39,10 +39,11 @@ mlws-vm-luac --library DIR
 ```
 
 The assembly is one self-contained file: the program, the runtime and the
-library, with no imports. It uses MLWSVM 0.14.0's `text.replace_n` (for
-`gsub` of a plain pattern by a plain string), M37's `text.ascii_upper` and
+library, with no imports. It uses MLWSVM 0.17.0's `gc.finalize` and
+weak maps (for `__gc`), 0.14.0's `text.replace_n` (for `gsub` of a plain
+pattern by a plain string), M37's `text.ascii_upper` and
 `text.ascii_lower`, M34's `.loc` source positions, and M32's element
-offsets and `bisa`/`bnisa`, so it needs MLWSVM 0.14.0 or later. It can be assembled to a binary module
+offsets and `bisa`/`bnisa`, so it needs MLWSVM 0.17.0 or later. It can be assembled to a binary module
 (`mlwsvm asm program.masm -o program.mlwso`), or run under `mlwsvm debug`,
 `--profile` or `--trace`; each function is named `L<n>$name` after the Lua
 function it came from, and its code carries the Lua lines it came from
@@ -88,7 +89,7 @@ The whole language of Lua 5.5:
 * strings, tables with array and hash parts, metatables and every
   metamethod (`__index`, `__newindex`, `__call`, arithmetic and bitwise ones,
   `__eq`, `__lt`, `__le`, `__concat`, `__len`, `__unm`, `__close`,
-  `__tostring`, `__name`, `__metatable`, `__pairs`);
+  `__tostring`, `__name`, `__metatable`, `__pairs`, `__gc`);
 * closures with shared upvalues, varargs, multiple results and assignment,
   proper tail calls, `goto` and labels, integer and float `for` loops;
 * `local <const>` and `<close>` variables; Lua 5.5's `global` declarations
@@ -117,8 +118,14 @@ them, prefixed `mlws-vm-lua:`, with exit status 1.
 * **`debug`** has only `traceback` (without the frames), `getinfo` (without
   details), `sethook`, `gethook`, `getmetatable` and `setmetatable`.
   Uncaught errors print the message without a stack traceback.
-* **No weak tables or finalizers**: `__mode` and `__gc` are ignored (the
-  VM's collector is precise but has neither).
+* **Finalizers** (`__gc`) run at `collectgarbage()`, at the next
+  `setmetatable` that marks a table, and when the program ends (the ones
+  left then, the last marked first, as `lua_close` does; `os.exit` runs
+  them only when its second argument is true). Lua may run one at any
+  allocation instead. A table that a register of a running function last
+  held stays alive until the register is reused, so it can outlive its
+  last use there. Errors in a finalizer are dropped without a warning.
+* **No weak tables**: `__mode` is ignored.
 * **To-be-closed variables** are closed when their block exits normally or
   by `break`, `goto` or `return`, but not when an error unwinds it.
 * **`#t` for a table with holes** returns a border, as Lua does, but not

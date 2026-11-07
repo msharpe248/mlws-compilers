@@ -341,7 +341,11 @@
 2:  bne.r R1, 1n, 3f
     mov.r R1, null
 3:  mov R0->Tab.meta, R1
-    ret 1, 0, 0.0, R0
+    bz R1, 4f
+    mov I3, R1->Tab.gc
+    bz I3, 4f
+    call rt$markfin (R0)
+4:  ret 1, 0, 0.0, R0
 .endf
 
 .func B$getmetatable(i64, f64, ref) -> (i64, i64, f64, ref)
@@ -456,12 +460,14 @@
     bz I2, 4f
     ret 1, 0, 0.0, null
 1:  ncall "gc.collect"
+    call rt$runfins
     ret 1, 0, 0.0, null
 2:  ncall "gc.heap_bytes" -> (I3)
     cvt.f64.i64 F3, I3
     div F3, 1024.0
     ret 1, 0, F3, 4n
-3:  ret 1, 0, 0.0, 3n
+3:  call rt$runfins
+    ret 1, 0, 0.0, 3n
 4:  ret 1, 0, 0.0, "incremental"
 .endf
 
@@ -1160,7 +1166,10 @@ MATHF1 exp, ncall "math.exp" (F0) -> (F0)
     mov I2, 1
     beq.r R0, 2n, 9f
     call rt$checkint (1, "exit", I0, F0, R0) -> (I2)
-9:  ncall "os.exit" (I2)
+9:  beq.r R1, 1n, 10f
+    beq.r R1, 2n, 10f
+    call rt$closefin
+10: ncall "os.exit" (I2)
     ret 0, 0, 0.0, 1n
 .endf
 

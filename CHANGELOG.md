@@ -3,6 +3,19 @@
 Each compiler is versioned on its own (its `VERSION` file); a release of
 this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
+## Unreleased
+
+### Lua
+
+* `__gc`: a table whose metatable has a `__gc` field when `setmetatable`
+  is called is finalized after a collection finds nothing holds it, and
+  the ones left when the program ends are finalized then, the last marked
+  first (MLWSVM 0.17.0's `gc.finalize` and weak maps; Lua programs now need
+  MLWSVM 0.17.0). The VM's finalizer only queues the table; `__gc` runs at
+  `collectgarbage()`, at the next `setmetatable` that marks a table and at
+  exit, where Lua code may run without breaking a table the runtime is in
+  the middle of changing.
+
 ## Release 0.7.1
 
 Lua 0.4.5, Erlang 0.2.3 and Lox 0.5.1; bf 0.4.1 is unchanged. Smaller and

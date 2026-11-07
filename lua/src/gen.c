@@ -2541,13 +2541,18 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
         if (mty == TY_NIL) {
             emit(fs, "    mov.r %s->Tab.meta, null", RB(fs, ts, "R28"));
         } else if (mty == TY_TAB) {
+            /* a metatable with __gc marks the table: the library does it */
             const char *m = RB(fs, vals[1].slot, "R29");
+            emit(fs, "    mov I31, %s->Tab.gc", m);
+            branch(fs, slow, "bnz I31");
             emit(fs, "    mov %s->Tab.meta, %s", RB(fs, ts, "R28"), m);
         } else {
             int isnil = new_label(fs), set = new_label(fs);
             const char *m = RB(fs, vals[1].slot, "R29");
             emit(fs, "    beq.r %s, " NIL ", .L%d", m, isnil);
             branch(fs, slow, "bnisa %s, Tab", m);
+            emit(fs, "    mov I31, %s->Tab.gc", m);
+            branch(fs, slow, "bnz I31");
             emit(fs, "    mov %s->Tab.meta, %s", RB(fs, ts, "R28"), m);
             emit(fs, "    jmp .L%d", set);
             emit(fs, ".L%d:", isnil);

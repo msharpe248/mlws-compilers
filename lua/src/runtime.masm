@@ -32,6 +32,7 @@
     hw: i64             ; words in hs (for the compiler's inline caches)
     hmshared: i64       ; hm is a shape (shared, never changed), not this table's own
     prot: i64           ; as a metatable: it has a __metatable field
+    gc: i64             ; as a metatable: it has a __gc field
 .ends
 
 .struct Fn
@@ -77,6 +78,9 @@ rt$main:    .zero 8     ; the main Thread
 rt$ipairs_aux: .zero 8
 rt$next_fn: .zero 8
 rt$setmt:   .zero 8     ; the library's setmetatable, for calls made inline
+rt$fins:    .zero 8     ; tables marked for finalization -> 1 (weak keys)
+rt$finq:    .zero 8     ; marked tables found dead, waiting for their __gc
+rt$closing: .i64 0      ; the program is ending: running the finalizers left
 rt$sqrt_fn: .zero 8     ; the library's math.sqrt, for calls made inline
 rt$sitesfn: .zero 8     ; the program's call sites (p$sites), for rt$argwho
 rt$sites:   .zero 8     ; masm line -> [arguments, method, name], made the first time
@@ -331,6 +335,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 .endf
 
 .func rt$exit(i64 code)
+    call rt$closefin
     ncall "os.exit" (I0)
     ret
 .endf
@@ -356,7 +361,8 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     bz I3, 3f
     mov R6, R0->Error.trace     ; a fault in the runtime: where it happened
     ncall "fs.write" (R4, R6)
-3:  ncall "os.exit" (1)
+3:  call rt$closefin
+    ncall "os.exit" (1)
     ret
 .endf
 
@@ -1218,7 +1224,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 10: typeof I5, R1
     bne I5, 1, 99f
     len I5, R1
-    blt I5, 7, 99f
+    blt I5, 4, 99f
     mov I5, R1[0]
     bne I5, '_', 99f
     mov I5, R1[1]
@@ -1281,7 +1287,107 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     bz R2, 41f
     mov I1, 1
 41: mov R0->Tab.prot, I1
-5:  ret
+    ret
+5:  strcmp I0, R1, "__gc"
+    bnz I0, 6f
+    mov I1, 0
+    bz R2, 51f
+    mov I1, 1
+51: mov R0->Tab.gc, I1
+6:  ret
+.endf
+
+; ------------------------------------------------------------- finalizers
+
+; setmetatable(t, mt) where mt has a __gc field: mark t for finalization, once
+; until its finalizer runs (and not while the program is ending, as in Lua).
+; The finalizers already due run first.
+.func rt$markfin(ref t)
+    mov I0, @rt$closing
+    bnz I0, 9f
+    mov R1, @rt$fins
+    bnz R1, 1f
+    mnew R1
+    ncall "weak.map" (R1, 1)
+    mov @rt$fins, R1
+    lnew R3
+    mov @rt$finq, R3
+1:  mhas I1, R1, R0
+    bnz I1, 8f
+    mset R1, R0, 1
+    closure rt$gcfound -> (R2)
+    ncall "gc.finalize" (R0, R2)
+8:  call rt$runfins
+9:  ret
+.endf
+
+; The VM's finalizer: a marked table that nothing holds. It may run between
+; any two instructions, so it only queues the table; rt$runfins calls __gc
+; where Lua code may run.
+.func rt$gcfound(ref t)
+    mov R1, @rt$finq
+    lpush R1, R0
+    ret
+.endf
+
+; Call __gc for the tables queued (and any queued meanwhile), in order.
+.func rt$runfins
+    mov R0, @rt$finq
+    bz R0, 9f
+1:  len I0, R0
+    bz I0, 9f
+    lnew R1
+    mov @rt$finq, R1
+    mov I1, 0
+2:  bge I1, I0, 3f
+    mov R2, R0[I1]
+    call rt$fin1 (R2)
+    inc I1
+    jmp 2b
+3:  mov R0, @rt$finq
+    jmp 1b
+9:  ret
+.endf
+
+; Finalize t: call its metatable's __gc, if t is still marked. The results
+; others have left in @rt$mv are kept, and errors are dropped.
+.func rt$fin1(ref t)
+    mov R1, @rt$fins
+    mhas I0, R1, R0
+    bz I0, 9f
+    mdel R1, R0
+    call rt$getmm (0, 0.0, R0, "__gc") -> (I1, F1, R2)
+    beq.r R2, 1n, 9f
+    mov R3, @rt$mv
+    lnew R4, 128
+    resize R4, 128
+    mov @rt$mv, R4
+.try 8f
+    call rt$call1 (null, I1, F1, R2, 0, 0.0, R0) -> (I2, I3, F3, R5)
+.endtry
+    mov @rt$mv, R3
+    ret
+8:  catch R5
+    mov @rt$mv, R3
+9:  ret
+.endf
+
+; The program is ending (lua.c's lua_close): run the finalizers due, then
+; finalize every table still marked, the last marked first.
+.func rt$closefin
+    mov I0, 1
+    mov @rt$closing, I0
+    mov R0, @rt$fins
+    bz R0, 9f
+    call rt$runfins
+    mkeys R1, R0
+    len I1, R1
+1:  bz I1, 9f
+    dec I1
+    mov R2, R1[I1]
+    call rt$fin1 (R2)
+    jmp 1b
+9:  ret
 .endf
 
 ; Remove the hash slots whose value is nil (keeping the pinned ones).
