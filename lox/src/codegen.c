@@ -2043,12 +2043,9 @@ void generate(Func *script, Globals *g, const char *runtime, FILE *out) {
             "    ret R1",
             "2:  typeof I0, v",
             "    bne I0, 1, 9f",
-            "    strcmp I1, v, \"\\\"nil\"",       /* nil, true and false: copied, */
-            "    bz I1, 6f",                           /* so not the constants themselves */
-            "    strcmp I1, v, \"\\\"true\"",
-            "    bz I1, 7f",
-            "    strcmp I1, v, \"\\\"false\"",
-            "    bz I1, 8f",
+            "    beq.r v, \"\\\"nil\", 6f",          /* nil, true and false: not in quotes */
+            "    beq.r v, \"\\\"true\", 7f",
+            "    beq.r v, \"\\\"false\", 8f",
             "    strcat R1, \"\\\"\", v, \"\\\"\"",
             "    ret R1",
             "6:  ret \"nil\"",
