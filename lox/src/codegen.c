@@ -125,9 +125,13 @@ typedef struct FS {
     bool cold_called;    /* the cold block being generated calls Lox code */
     struct { bool *k; int n; bool has; } *rec;
     int rec_cap;
+    /* -g: the local variables named so far that are in scope, innermost last */
+    struct { char name[256]; int slot; } *named;
+    int nnamed, named_cap;
 } FS;
 
 static void forget_global_numbers(FS *fs);
+static char *tok_str(Token *t);
 
 static void emit(FS *fs, const char *fmt, ...) {
     char tmp[8192];
@@ -289,6 +293,40 @@ static int alloc_slot(FS *fs) {
     if (fs->next > fs->max) fs->max = fs->next;
     know(fs, k, false);
     return k;
+}
+
+/* -g: from here on, slot k's registers hold the variable `name`, which the
+ * debuggers show by rt$show (a slot on the stack cannot be named). */
+static void local_from_here(FS *fs, const char *name, int k) {
+    emit(fs, ".local \"%s\", F%d, R%d", name, k, k);
+}
+
+static void name_var(FS *fs, Var *v, Token *name) {
+    if (!debug_info || !v || v->slot < 0 || v->slot >= NREG) return;
+    if (fs->nnamed == fs->named_cap) {
+        fs->named_cap = fs->named_cap ? fs->named_cap * 2 : 16;
+        fs->named = xrealloc(fs->named, (size_t)fs->named_cap * sizeof *fs->named);
+    }
+    snprintf(fs->named[fs->nnamed].name, sizeof fs->named[0].name, "%s", tok_str(name));
+    fs->named[fs->nnamed++].slot = v->slot;
+    local_from_here(fs, tok_str(name), v->slot);
+}
+
+/* The end of a scope: the variables named in it are gone, and an outer one
+ * that one of them hid is seen again. */
+static void unname_to(FS *fs, int mark) {
+    for (int i = fs->nnamed - 1; i >= mark; i--) {
+        const char *name = fs->named[i].name;
+        emit(fs, ".local \"%s\"", name);
+        for (int j = mark - 1; j >= 0; j--)
+            if (strcmp(fs->named[j].name, name) == 0) {
+                bool hidden = false;   /* by another one still to be ended */
+                for (int k = mark; k < i; k++) hidden |= strcmp(fs->named[k].name, name) == 0;
+                if (!hidden) local_from_here(fs, name, fs->named[j].slot);
+                break;
+            }
+    }
+    fs->nnamed = mark;
 }
 
 /* --------------------------------------------------------------- values */
@@ -593,13 +631,18 @@ static void define_var(FS *fs, Var *v, Token *name, Val val) {
         fact_set(fs, F_NUM(global_index(name)), val.num);
         return;
     }
-    if (!var_boxed(v)) { put(fs, v->slot, val); return; }
+    if (!var_boxed(v)) {
+        put(fs, v->slot, val);
+        name_var(fs, v, name);
+        return;
+    }
     Val s = slot_val(v->slot);
     emit(fs, "new R28, Box");
     emit(fs, "mov.f64 R28->Box.f, %s", val.f);
     emit(fs, "mov.r R28->Box.r, %s", val.r);
     emit(fs, "mov.r %s, R28", s.r);
     fix_f(fs, v->slot);
+    name_var(fs, v, name);   /* rt$show opens the box */
 }
 
 /* A global function that is declared once, at the top level, and never
@@ -1604,6 +1647,7 @@ static void gen_stmt(FS *fs, Stmt *s) {
                 define_var(fs, s->var, &s->name, slot_val(k));
             } else {
                 put(fs, k, v);
+                name_var(fs, s->var, &s->name);
             }
         } else {
             Val v = s->expr ? gen(fs, s->expr, -1) : const_val(NIL);
@@ -1612,9 +1656,12 @@ static void gen_stmt(FS *fs, Stmt *s) {
         }
         break;
     }
-    case S_BLOCK:
+    case S_BLOCK: {
+        int named = fs->nnamed;
         for (int i = 0; i < s->n; i++) gen_stmt(fs, s->stmts[i]);
+        if (debug_info) unname_to(fs, named);
         break;
+    }
     case S_IF: {
         int els = new_label(fs);
         gen_branch(fs, s->expr, els, false);
@@ -1754,9 +1801,14 @@ static void gen_function(Func *f, FS *enclosing) {
             emit(&fs, "mov.r %s, R31[%d]", p.r, 2 * i + 1);
         }
     }
+    if (method) {
+        Token this_tok = { .start = "this", .length = 4 };
+        name_var(&fs, f->this_var, &this_tok);
+    }
     for (int i = 0; i < f->nparams; i++) {
         Var *v = f->param_vars[i];
         if (var_boxed(v)) define_var(&fs, v, &v->name, slot_val(v->slot));
+        else name_var(&fs, v, &v->name);
     }
 
     for (int i = 0; i < f->nbody; i++) gen_stmt(&fs, f->body[i]);
@@ -1962,6 +2014,53 @@ void generate(Func *script, Globals *g, const char *runtime, FILE *out) {
         p += n + (nl ? 1 : 0);
     }
     gen_helpers(&all);
+    if (debug_info) {
+        static const char *show[] = {
+            "; -g: how the debuggers show a variable (.local), as print would but with",
+            "; a string in quotes. A captured variable that is assigned is in a Box.",
+            ".requires mlwsvm, \">=0.17.3\"",
+            ".debug_format rt$show",
+            ".func rt$show(f64 n, ref v) -> ref",
+            "    bz.r v, 1f",
+            "    bnisa v, Box, 2f",
+            "    mov.f64 n, v->Box.f",
+            "    mov.r v, v->Box.r",
+            "    bnz.r v, 2f",
+            "1:  trunc F1, n",
+            "    bne.f64 F1, n, 3f",
+            "    abs F2, n",
+            "    bge.f64 F2, 1e18, 3f",
+            "    cvt.i64.f64 I0, n",
+            "    bitcast.i64.f64 I1, n",
+            "    blt I1, 0, 4f",
+            "    tostr R1, I0",
+            "    ret R1",
+            "4:  bnz I0, 5f",
+            "    ret \"-0\"",
+            "5:  tostr R1, I0",
+            "    ret R1",
+            "3:  tostr R1, n",
+            "    ret R1",
+            "2:  typeof I0, v",
+            "    bne I0, 1, 9f",
+            "    strcmp I1, v, \"\\\"nil\"",       /* nil, true and false: copied, */
+            "    bz I1, 6f",                           /* so not the constants themselves */
+            "    strcmp I1, v, \"\\\"true\"",
+            "    bz I1, 7f",
+            "    strcmp I1, v, \"\\\"false\"",
+            "    bz I1, 8f",
+            "    strcat R1, \"\\\"\", v, \"\\\"\"",
+            "    ret R1",
+            "6:  ret \"nil\"",
+            "7:  ret \"true\"",
+            "8:  ret \"false\"",
+            "9:  call rt$tostr (v) -> (R1)",
+            "    ret R1",
+            ".endf",
+            "",
+        };
+        for (size_t i = 0; i < sizeof show / sizeof *show; i++) buf_add(&all, 0, show[i]);
+    }
 
     buf_add(&all, 0, "; Globals: value (number, reference) and whether defined.");
     buf_add(&all, 0, "    .align 8");

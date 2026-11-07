@@ -16,6 +16,10 @@ mlwsvm run program.masm           # which runs on its own
 mlws-vm-lox [options] program.lox [args...]
   -S             only compile: write the assembly and do not run it
   -k             keep the assembly after running the program
+  -g             name the program's local variables for the debuggers
+                 (MLWSVM 0.17.3 or later)
+  -d             run the program in the debugger (mlwsvm debug), which reads
+                 its commands from standard input; implies -g
   -o FILE        the assembly file (default: program.masm next to the source);
                  with -S, '-' writes it to standard output
   -b FILE        write one executable, FILE, instead of running: the VM and
@@ -27,7 +31,8 @@ mlws-vm-lox [options] program.lox [args...]
 `mlws-vm-loxc` is the compiler itself; it only compiles:
 
 ```
-mlws-vm-loxc [-o FILE] program.lox
+mlws-vm-loxc [-g] [-o FILE] program.lox
+  -g             name the local variables for debuggers (needs MLWSVM 0.17.3)
   -o FILE        write the assembly to FILE (default: program.masm; '-' for stdout)
   --version      print the version
 ```
@@ -41,6 +46,29 @@ Lox lines it came from (`.loc`, MLWSVM M34 or later), so backtraces, the
 profiler's hot program lines and the debugger's `break program.lox:12` name
 lines of the Lox program.
 
+With `-g` the debuggers (`mlwsvm debug`, and editors through `mlwsvm dap`)
+also show the program's local variables by name, as Lox prints them but with
+strings in quotes:
+
+```
+$ ./mlws-vm-lox -d program.lox
+(mdb) break program.lox:12
+(mdb) run
+(mdb) locals
+this (F0, R0) = Point instance
+x (F1, R1) = 1.5
+label (F3, R3) = "origin"
+```
+
+Each local is named (`.local x, F1, R1`) where it is in scope, and the module's
+formatter (`.debug_format rt$show`) shows its two registers. Parameters,
+`this`, and locals (a captured one that is assigned opens its box) are named;
+globals, captured variables seen from a closure, and locals beyond the 24th of
+a function (on the stack) are not. The optimizer renames registers and
+drops the names of a function it changes, so debug code that is not
+optimized. The output of `-g` says it needs MLWSVM 0.17.3 (`.requires`);
+without `-g` it is as before.
+
 It implements the whole language (closures, classes, inheritance, `super`,
 initializers, `clock()`) and behaves like jlox: it passes all 241 applicable
 tests of the book's test suite, with jlox's compile error messages and error
@@ -49,7 +77,7 @@ recovery and the same runtime error messages. Compile errors exit with status
 
 ```
 make test     # the book's tests (tests/craftinginterpreters), mlws-vm-loxc's own
-              # (tests/compiler), and the mlws-vm-lox driver's -S, -o and -k options
+              # (tests/compiler), and the mlws-vm-lox driver's options
 make bench    # the book's benchmarks
 ```
 

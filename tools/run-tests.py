@@ -127,6 +127,9 @@ STACK_LINE = re.compile(r"\[line (\d+)\]")
 LANGUAGE = "java"
 
 
+# Options for the driver, from $LOX_FLAGS (-g: names for the debuggers).
+LOX_FLAGS = os.environ.get("LOX_FLAGS", "").split()
+
 def lox_test(path, tmp):
     out_lines, errors, runtime, runtime_line, want_exit = [], set(), None, 0, 0
     with open(path, encoding="utf-8", errors="replace") as f:
@@ -155,7 +158,7 @@ def lox_test(path, tmp):
         if m:
             runtime, runtime_line, want_exit = m.group(1), n, 70
 
-    code, out, err = run([os.path.join(ROOT, "lox", "mlws-vm-lox"), path])
+    code, out, err = run([os.path.join(ROOT, "lox", "mlws-vm-lox")] + LOX_FLAGS + [path])
     out = out.decode(errors="replace").split("\n")
     err = err.decode(errors="replace").split("\n")
     if out and out[-1] == "":
@@ -257,6 +260,8 @@ def lua_test(path, tmp):
 # --------------------------------------------------------------------- Erlang
 
 HELPER = "helper"
+# Options for the driver, from $ERL_FLAGS (-g: names for the debuggers).
+ERL_FLAGS = os.environ.get("ERL_FLAGS", "").split()
 
 def erlang_test(path, tmp):
     stem = path[:-4]
@@ -275,7 +280,7 @@ def erlang_test(path, tmp):
     if want_out is None:
         return ["no " + os.path.basename(stem) + ".out (run erlang/tests/expect.sh)"]
     driver = os.path.join(ROOT, "erlang", "mlws-vm-erl")
-    code, out, err = run([driver, os.path.basename(path)], opt(".in") or b"",
+    code, out, err = run([driver] + ERL_FLAGS + [os.path.basename(path)], opt(".in") or b"",
                          cwd=os.path.dirname(path) or ".")
     if code is None:
         return ["timeout"]

@@ -1,6 +1,6 @@
 /* mlws-vm-loxc: compile a Lox program to MLWSVM assembly.
  *
- *   mlws-vm-loxc [-o FILE] program.lox     (FILE '-' is standard output)
+ *   mlws-vm-loxc [-g] [-o FILE] program.lox     (FILE '-' is standard output)
  *
  * The output is one self-contained MLWSVM assembly file, which `mlwsvm run`
  * runs and `mlwsvm asm` turns into a binary module. Compile errors are
@@ -15,6 +15,7 @@ extern const char lox_runtime[];
 
 bool had_error;
 const char *source_path;
+bool debug_info;
 
 void error_at(Token *tok, const char *msg) {
     if (tok->type == T_EOF)
@@ -85,7 +86,8 @@ static char *read_file(const char *path) {
 
 static void usage(void) {
     fprintf(stderr,
-        "usage: mlws-vm-loxc [-o FILE] program.lox\n"
+        "usage: mlws-vm-loxc [-g] [-o FILE] program.lox\n"
+        "  -g             name the local variables for debuggers (needs MLWSVM 0.17.3)\n"
         "  -o FILE        write the assembly to FILE (default: program.masm; '-' for stdout)\n"
         "  --version      print the version\n");
     exit(64);
@@ -95,6 +97,7 @@ int main(int argc, char **argv) {
     const char *output = NULL;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) output = argv[++i];
+        else if (strcmp(argv[i], "-g") == 0) debug_info = true;
         else if (strcmp(argv[i], "--version") == 0) {
             printf("mlws-vm-loxc %s\n", VERSION);
             return 0;

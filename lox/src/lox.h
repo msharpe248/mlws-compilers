@@ -140,6 +140,7 @@ Global *global_get(Globals *g, const char *name, int len);
 
 extern bool had_error;
 extern const char *source_path;
+extern bool debug_info;     /* -g: .local names and a .debug_format formatter */
 
 void error_at(Token *tok, const char *msg);
 void error_line(int line, const char *msg);
