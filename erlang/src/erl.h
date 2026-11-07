@@ -208,6 +208,7 @@ Node *new_node(NodeKind kind, int line, const char *file);
 void generate(Module **mods, int nmods, FILE *out, const char *source_name);
 
 extern const char *runtime_masm;      /* runtime.masm, built in */
+extern const char *runtime_re_masm;   /* runtime_re.masm: for programs that use re */
 extern const char *prelude_files[];   /* the library modules' Erlang source, NULL-terminated */
 extern const char *prelude_names[];
 

@@ -18,11 +18,15 @@ src/%.o: src/%.c src/erl.h
 src/main.o src/gen.o: VERSION
 src/main.o src/gen.o: CFLAGS += -DVERSION='"$(VERSION)"'
 
-# The runtime (runtime.masm) and the library's modules (lib/*.erl), as C strings.
-src/embedded.c: src/runtime.masm $(LIBS)
+# The runtime (runtime.masm, and runtime_re.masm for re) and the library's
+# modules (lib/*.erl), as C strings.
+src/embedded.c: src/runtime.masm src/runtime_re.masm $(LIBS)
 	{ awk 'BEGIN { print "const char *runtime_masm =" } \
 	       { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); print "    \"" $$0 "\\n\"" } \
 	       END { print ";" }' src/runtime.masm; \
+	  awk 'BEGIN { print "const char *runtime_re_masm =" } \
+	       { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); print "    \"" $$0 "\\n\"" } \
+	       END { print ";" }' src/runtime_re.masm; \
 	  for f in $(LIBS); do \
 	    n=$$(basename $$f .erl); \
 	    awk -v n=$$n 'BEGIN { print "static const char lib_" n "[] =" } \

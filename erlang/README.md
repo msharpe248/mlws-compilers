@@ -55,7 +55,8 @@ that the program uses. It needs MLWSVM 0.6.0 or later.
   `get_line`), `io_lib` (`format` with every control sequence, `~p` laid
   out as OTP's pretty printer does, `write`, `print`), `lists`, `maps`,
   `string` (both the old and the new functions), `proplists`, `math`,
-  `timer`, `unicode`, and the BIFs of `erlang`.
+  `timer`, `unicode`, `re` (`run`, `replace`, `split` and `compile`, on
+  MLWSVM 0.17.0's regular expressions), and the BIFs of `erlang`.
 
 Not implemented: `maybe`, bit strings that are not whole bytes, bitwise
 operations on BigInts, hot code loading, distribution (nodes), ports,
@@ -77,6 +78,13 @@ the library beyond the modules above.
   end, but its own failure does not kill the other.
 * When `main` returns, the program ends and any processes still running
   are stopped (as `erl -eval '...main(), init:stop().'` does).
+* `re` patterns are RE2's syntax, which is Perl's without backreferences,
+  lookaround, possessive quantifiers and recursion, and match in time
+  linear in the subject. Named groups cannot be captured by name, a
+  replacement cannot be a fun, and `{return, iodata}` gives a binary. A
+  subject or pattern is matched as UTF-8 text with or without `unicode`.
+  A program that uses `re` needs MLWSVM 0.17.0; others still run on
+  0.6.0.
 
 ## How it works
 

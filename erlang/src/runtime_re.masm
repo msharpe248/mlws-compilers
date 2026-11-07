@@ -1,0 +1,51 @@
+; The runtime's part for re (src/lib/re.erl): only a program that uses re
+; gets it, and needs MLWSVM 0.17.0 for its regex natives.
+
+        .align 8
+rt$re_cache:    .zero 8     ; flags "/" pattern -> compiled regex (this process's)
+rt$re_bin:      .zero 8     ; the last subject binary, and its text
+rt$re_text:     .zero 8
+
+; re: the first match of pattern p (a binary) with flags f (an atom: any of
+; i, m, s) in binary s at or after byte offset o: a tuple of byte offsets,
+; the start and end of the match and of each group (-1 where a group took
+; no part), or nomatch. A bad pattern is badarg.
+.func rt$re_find(i64 pi, i64 fi, i64 si, i64 oi, ref p, ref f, ref s, ref o) -> (i64, ref)
+    bnisa s, Bin, 9f
+    bnz o, 9f
+    call rt$bin_str (pi, p) -> (I0, R10)
+    strcat R11, f, "/", R10
+    mov R12, @rt$re_cache
+    bnz R12, 1f
+    mnew R12
+    mov @rt$re_cache, R12
+1:  mget R13, R12, R11, null
+    bnz R13, 2f
+.try 7f
+    ncall "regex.compile" (R10, f) -> (R13)
+.endtry
+    mset R12, R11, R13
+2:  mov R14, @rt$re_bin
+    beq.r R14, s, 3f
+    call rt$bin_str (si, s) -> (I0, R15)
+    mov @rt$re_bin, s
+    mov @rt$re_text, R15
+3:  mov R15, @rt$re_text
+    ncall "regex.find" (R13, R15, oi) -> (R1)
+    bz R1, 8f
+    len I1, R1
+    shl I2, I1, 1
+    lnew R2, I2
+    mov I3, 0
+    mov.r R3, null
+4:  bge I3, I1, 5f
+    mov I4, R1[I3]
+    lpush R2, R3, I4
+    inc I3
+    jmp 4b
+5:  ret 0, R2
+7:  catch R0
+    tcall rt$badarg ()
+8:  ret 0, "nomatch"
+9:  tcall rt$badarg ()
+.endf
