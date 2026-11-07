@@ -25,3 +25,5 @@ __pycache__/
 
 # The Lua library made by make -C lua lib
 lua/lib/
+
+.zvec-grep/
