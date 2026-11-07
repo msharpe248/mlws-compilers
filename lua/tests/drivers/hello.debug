@@ -1,0 +1,5 @@
+break hello.lua:3
+run
+continue
+locals
+quit

@@ -94,6 +94,12 @@ typedef struct {
     int t, m, s;
 } SCache;
 
+/* -g: a local variable named for the debuggers (name: a masm string). */
+typedef struct {
+    char *name;
+    int slot;
+} Named;
+
 typedef struct FS {
     struct FS *parent;
     Func *f;
@@ -127,7 +133,10 @@ typedef struct FS {
     int want_count;     /* the call being generated must set I31 */
 
     int nsc;
+    VEC(Named) named;   /* -g: the named locals in scope in the hot code, innermost last */
 } FS;
+
+bool debug_info;
 
 /* A call site, for a library function's argument errors (rt$argwho): the
    name Lua gives the function called there (a masm string's contents),
@@ -905,6 +914,44 @@ static void write_var(FS *fs, Var *v, Val val) {
 }
 
 /* Give a newly declared variable its slot and value. */
+/* -g: from here on slot k's registers hold the variable `name` (a masm
+   string), which the debuggers show by rt$show. Only the hot code names
+   variables: the cold code, after it, keeps what its end had. */
+static void local_from_here(FS *fs, const char *name, int k) {
+    emit(fs, "    .local %s, I%d, F%d, R%d", name, k, k, k);
+}
+
+static void name_var(FS *fs, Var *v) {
+    if (!debug_info || fs->f->prelude || fs->cur != &fs->code || v->slot < 0 || v->slot >= NREG)
+        return;
+    Named nv = {masm_string(v->name), v->slot};
+    vec_push(fs->named, nv);
+    local_from_here(fs, nv.name, nv.slot);
+}
+
+/* The end of a scope: its variables are gone, and an outer one that one of
+   them hid is seen again. */
+static void unname_to(FS *fs, int mark) {
+    if (fs->cur != &fs->code || fs->named.n <= mark)
+        return;
+    for (int i = fs->named.n - 1; i >= mark; i--) {
+        const char *name = fs->named.v[i].name;
+        emit(fs, "    .local %s", name);
+        for (int j = mark - 1; j >= 0; j--)
+            if (strcmp(fs->named.v[j].name, name) == 0) {
+                bool hidden = false;   /* by another one still to be ended */
+                for (int k = mark; k < i; k++)
+                    hidden |= strcmp(fs->named.v[k].name, name) == 0;
+                if (!hidden)
+                    local_from_here(fs, name, fs->named.v[j].slot);
+                break;
+            }
+    }
+    for (int i = mark; i < fs->named.n; i++)
+        free(fs->named.v[i].name);
+    fs->named.n = mark;
+}
+
 static void define_var(FS *fs, Var *v, int slot) {
     v->slot = slot;
     if (v->boxed) {
@@ -3381,12 +3428,12 @@ static void close_to(FS *fs, int n) {
 typedef struct {
     int code_n, cold_n;
     int nslots;
-    int closes_n, loops_n, gl_n;
+    int closes_n, loops_n, gl_n, named_n;
     bool dead;
 } Snap;
 
 static Snap snap(FS *fs) {
-    return (Snap){fs->code.n, fs->cold.n, fs->nslots, fs->closes.n, fs->loops.n, fs->gotolabels.n, fs->dead};
+    return (Snap){fs->code.n, fs->cold.n, fs->nslots, fs->closes.n, fs->loops.n, fs->gotolabels.n, fs->named.n, fs->dead};
 }
 
 static void restore(FS *fs, Snap s) {
@@ -3397,6 +3444,10 @@ static void restore(FS *fs, Snap s) {
     fs->loops.n = s.loops_n;
     fs->gotolabels.n = s.gl_n;
     fs->gotolabel_ids.n = s.gl_n;
+    for (int i = s.named_n; i < fs->named.n; i++)   /* their .local lines are gone too */
+        free(fs->named.v[i].name);
+    if (fs->named.n > s.named_n)
+        fs->named.n = s.named_n;
     fs->dead = s.dead;
 }
 
@@ -3591,10 +3642,10 @@ static void speculate1(FS *fs, LoopBody body, void *ctx, Stmt *ls, bool cache) {
 }
 
 typedef struct {
-    int nslots, nlocals, nactive, closes;
+    int nslots, nlocals, nactive, closes, named;
 } Scope;
 
-static Scope scope_open(FS *fs) { return (Scope){fs->nslots, fs->nlocals, fs->nactive, fs->closes.n}; }
+static Scope scope_open(FS *fs) { return (Scope){fs->nslots, fs->nlocals, fs->nactive, fs->closes.n, fs->named.n}; }
 
 static void scope_close(FS *fs, Scope sc) {
     if (!fs->dead)
@@ -3603,6 +3654,7 @@ static void scope_close(FS *fs, Scope sc) {
     fs->nlocals = sc.nlocals;
     fs->nactive = sc.nactive;
     fs->closes.n = sc.closes;
+    unname_to(fs, sc.named);
 }
 
 static void gen_stmt(FS *fs, Stmt *s);
@@ -3890,6 +3942,8 @@ static void gen_block(FS *fs, Block *b) {
 /* Declare var in a new slot holding (or becoming) its value. */
 static int declare(FS *fs, Var *v, int slot) {
     define_var(fs, v, slot);
+    if (!v->param)          /* parameters: once they are in their slots */
+        name_var(fs, v);
     fs->nactive++;
     if (v->attrib == ATTR_CLOSE) {
         char *nm = masm_string(v->name);
@@ -3925,6 +3979,7 @@ static void gen_localfn(FS *fs, Stmt *s) {
         emit(fs, "    mov %s, R31", SR(k));
         ty_set(fs, k, TY_ANY);
     }
+    name_var(fs, v);
     gen_function(s->fn, fs);
     Func *f = s->fn;
     if (fs->f->packed && f->caps.n)
@@ -4347,6 +4402,7 @@ static void gen_numfor(FS *fs, Stmt *s) {
         }
         fs->nlocals = fs->nslots;
         fs->nactive++;
+        name_var(fs, s->var);
         speculate(fs, numfor_body, &x, s);
     } else {
         if (x.step < 0) {
@@ -4362,6 +4418,7 @@ static void gen_numfor(FS *fs, Stmt *s) {
         branch(fs, x.exit, "bz I31");
         fs->nlocals = fs->nslots;
         fs->nactive++;
+        name_var(fs, s->var);
         speculate(fs, numfor_generic_body, &x, s);
     }
     scope_close(fs, sc);
@@ -4489,6 +4546,7 @@ static void gen_genfor(FS *fs, Stmt *s) {
     for (int i = 0; i < s->nvars; i++) {
         s->vars[i]->slot = x.vars + i;
         fs->nactive++;
+        name_var(fs, s->vars[i]);
     }
     fs->nlocals = fs->nslots;
     speculate(fs, genfor_body, &x, s);
@@ -4742,6 +4800,8 @@ static void gen_function_as(Func *f, FS *parent, Clone *c) {
             ty_set(&fs, j, c->pt[j]);
         }
     }
+    for (int j = 0; j < np; j++)
+        name_var(&fs, f->params[j]);
     if (f->is_main)
         fs.nactive++;   /* _ENV */
     if (f->caps.n && has_loop(f->body)) {
@@ -4771,6 +4831,10 @@ static void gen_function_as(Func *f, FS *parent, Clone *c) {
                 emit(&fs, "    mov %s, %s", SR(k), words[2]);
                 w += 3;
             }
+            int slot = v->slot;   /* the variable's own, in its function */
+            v->slot = k;
+            name_var(&fs, v);
+            v->slot = slot;
         }
     }
     if (f->vaname) {
@@ -5571,6 +5635,7 @@ typedef struct {
 /* The MLWSVM that the output needs: 0.17.0, for gc.finalize and weak maps
    (__gc and __mode) */
 #define MIN_MLWSVM ">=0.17.0"
+#define MIN_MLWSVM_G ">=0.17.3"   /* -g: .local of several registers, .debug_format */
 
 /* Add a formatted line (with no Lua line) to b. */
 static void bufl(Buf *b, const char *fmt, ...) {
@@ -6122,6 +6187,7 @@ void generate(GenInput *in, FILE *f) {
     for (int i = 0; i < G.sites.n; i++)
         site_line[i] = -1;
     Out o = {f, 0, site_line};
+    const char *min = debug_info ? MIN_MLWSVM_G : MIN_MLWSVM;
     put_lines(&o, "; Generated by mlws-vm-luac %s from %s\n", VERSION, chunk);
     SymSet syms = {0};
     if (in->mode == GEN_SHARED) {
@@ -6131,13 +6197,15 @@ void generate(GenInput *in, FILE *f) {
             collect_symbols(&syms, lib.v[i].text, &state);
         if (in->module)
             put_lines(&o, ".module %s", in->module);
-        put_lines(&o, ".requires mlwsvm, \"" MIN_MLWSVM "\"");
+        put_lines(&o, ".requires mlwsvm, \"%s\"", min);
         put_lines(&o, ".import lua\n.requires lua, \"=%s\"\n", VERSION);
     } else {
-        put_lines(&o, ".requires mlwsvm, \"" MIN_MLWSVM "\"\n");
+        put_lines(&o, ".requires mlwsvm, \"%s\"\n", min);
         for (int i = 0; i < lib.n; i++)
             put_line(&o, lib.v[i].text, NULL);
     }
+    if (debug_info)     /* how the debuggers show a variable named by .local */
+        put_line(&o, ".debug_format rt$show", in->mode == GEN_SHARED ? &syms : NULL);
     for (int i = 0; i < prog.n; i++)
         put_line(&o, prog.v[i].text, in->mode == GEN_SHARED ? &syms : NULL);
     /* the call sites: masm line -> [arguments, method, name] */

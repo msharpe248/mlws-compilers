@@ -244,6 +244,9 @@ typedef struct {
 
 void generate(GenInput *in, FILE *out);
 
+/* -g: name local variables for the debuggers (.local, .debug_format). */
+extern bool debug_info;
+
 extern const char *runtime_masm;
 extern const char *prelude_lua;
 

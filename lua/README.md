@@ -19,6 +19,10 @@ make lib                              # the runtime as an MLWSVM library
 mlws-vm-lua [options] program.lua [args...]
   -S             only compile: write the assembly and do not run it
   -k             keep the assembly after running the program
+  -g             name the program's local variables for the debuggers
+                 (MLWSVM 0.17.3 or later)
+  -d             run the program in the debugger (mlwsvm debug), which reads
+                 its commands from standard input; implies -g
   -o FILE        the assembly file (default: program.masm next to the source);
                  with -S, '-' writes it to standard output
   -b FILE        write one executable, FILE, instead of running: the VM and
@@ -32,8 +36,9 @@ mlws-vm-lua [options] program.lua [args...]
 `mlws-vm-luac` is the compiler itself; it only compiles:
 
 ```
-mlws-vm-luac [--shared] [-o FILE] [-n NAME] program.lua
+mlws-vm-luac [-g] [--shared] [-o FILE] [-n NAME] program.lua
 mlws-vm-luac --library DIR
+  -g             name the local variables for debuggers (needs MLWSVM 0.17.3)
   -o FILE        write the assembly to FILE (default: program.masm; '-' for stdout)
   -n NAME        the chunk name in error messages (default: the path as given)
   --shared       import the runtime from the MLWSVM library lua (see below)
@@ -52,6 +57,33 @@ offsets and `bisa`/`bnisa`, so it needs MLWSVM 0.17.0 or later. It can be assemb
 function it came from, and its code carries the Lua lines it came from
 (`.loc`), so backtraces, the profiler's hot program lines and the
 debugger's `break program.lua:12` name lines of the Lua program.
+
+With `-g` the debuggers (`mlwsvm debug`, and editors through `mlwsvm dap`)
+also show the program's local variables by name, in Lua's terms:
+
+```
+$ ./mlws-vm-lua -d program.lua
+(mdb) break program.lua:11
+(mdb) run
+(mdb) locals
+total (I3, F3, R3) = 6
+f (I4, F4, R4) = 1.5
+list (I7, F7, R7) = {10, 20, 30, name = "l", ["a b"] = true, inner = {...}}
+i (I8, F8, R8) = 3
+```
+
+Each local is named (`.local x, I3, F3, R3`) where it is in scope, and the
+runtime's `rt$show` (`.debug_format`) shows its three registers: numbers,
+`nil` and booleans as `tostring` does, strings in quotes, a table by its
+first eight entries, a function or coroutine by its type, and a captured
+variable that is assigned by the value in its box. It runs in a process of
+its own, on copies, so it calls no `__tostring`. Parameters, locals, loop
+variables and the upvalues a function with a loop copies to registers are
+named; other upvalues, locals on the stack (beyond the 28th) and the
+prelude's are not, and slow paths (code out of line) show only what the
+function's end has. The optimizer drops the names of a function it changes,
+so debug code that is not optimized. The output of `-g` says it needs MLWSVM
+0.17.3 (`.requires`).
 
 ### The runtime as a library
 

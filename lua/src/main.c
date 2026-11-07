@@ -1,6 +1,6 @@
 /* mlws-vm-luac: compile a Lua 5.5 program to MLWSVM assembly.
  *
- *   mlws-vm-luac [--shared] [-o FILE] [-n NAME] program.lua    (FILE '-' is standard output)
+ *   mlws-vm-luac [-g] [--shared] [-o FILE] [-n NAME] program.lua    (FILE '-' is standard output)
  *   mlws-vm-luac --library DIR
  *
  * The output is one self-contained MLWSVM assembly file: the program, the
@@ -72,8 +72,9 @@ static int write_library(const char *dir) {
 }
 
 static void usage(void) {
-    fprintf(stderr, "usage: mlws-vm-luac [--shared] [-o FILE] [-n NAME] program.lua\n"
+    fprintf(stderr, "usage: mlws-vm-luac [-g] [--shared] [-o FILE] [-n NAME] program.lua\n"
                     "       mlws-vm-luac --library DIR\n"
+                    "  -g             name the local variables for debuggers (needs MLWSVM 0.17.3)\n"
                     "  -o FILE        write the assembly to FILE (default: program.masm; '-' for stdout)\n"
                     "  -n NAME        the chunk name in error messages (default: the path)\n"
                     "  --shared       import the runtime from the MLWSVM library lua (lua-%s.mlwsl)\n"
@@ -90,6 +91,8 @@ int main(int argc, char **argv) {
             out = argv[++i];
         else if (strcmp(argv[i], "--shared") == 0)
             shared = true;
+        else if (strcmp(argv[i], "-g") == 0)
+            debug_info = true;
         else if (strcmp(argv[i], "--library") == 0 && i + 1 < argc)
             libdir = argv[++i];
         else if (strcmp(argv[i], "-n") == 0 && i + 1 < argc)
@@ -106,7 +109,7 @@ int main(int argc, char **argv) {
             usage();
     }
     if (libdir) {
-        if (path || out || shared)
+        if (path || out || shared || debug_info)
             usage();
         return write_library(libdir);
     }

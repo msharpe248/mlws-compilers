@@ -1063,6 +1063,87 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     ret R5
 .endf
 
+;; For the debuggers (mlws-vm-luac -g names it with .debug_format): a
+;; variable as Lua shows it, a string in quotes and a table by its first
+;; entries ({1, 2, x = 3, ...}); a captured variable that is assigned opens its
+;; box. It runs in a process of its own, on copies, so it calls no Lua code
+;; (no __tostring) and uses no global of the program's.
+.func rt$show(i64, f64, ref) -> ref
+    bnisa R0, Box, 1f
+    mov R1, R0
+    mov I0, R1->Box.i
+    mov F0, R1->Box.f
+    mov R0, R1->Box.r
+1:  bnisa R0, Tab, 2f
+    mov R1, "{"
+    mov I1, 0                   ; position (rt$nextpos)
+    mov I2, 0                   ; entries shown
+    mov I3, 1                   ; the next array index, shown without its key
+3:  call rt$nextpos (R0, I1) -> (I1, I4, F4, R4, I5, F5, R5)
+    beq.r R4, 1n, 9f
+    bz I2, 4f
+    strcat R1, R1, ", "
+4:  bge I2, 8, 8f
+    inc I2
+    bnz R4, 5f
+    bne I4, I3, 6f
+    inc I3
+    jmp 7f
+5:  call rt$showname (R4) -> (I6)
+    bz I6, 6f
+    strcat R1, R1, R4, " = "
+    jmp 7f
+6:  call rt$show1 (I4, F4, R4) -> (R6)
+    strcat R1, R1, "[", R6, "] = "
+7:  call rt$show1 (I5, F5, R5) -> (R6)
+    strcat R1, R1, R6
+    jmp 3b
+8:  strcat R1, R1, "..."
+9:  strcat R1, R1, "}"
+    ret R1
+2:  call rt$show1 (I0, F0, R0) -> (R1)
+    ret R1
+.endf
+
+; One value of rt$show's: a table inside a table is {...}.
+.func rt$show1(i64, f64, ref) -> ref
+    bnisa R0, Tab, 1f
+    ret "{...}"
+1:  typeof I1, R0
+    beq I1, 0, 3f               ; an integer
+    beq I1, 8, 3f               ; a float, nil, false or true
+    bne I1, 1, 2f
+    strcat R1, "\"", R0, "\""
+    ret R1
+2:  call rt$typename (I0, F0, R0) -> (R1)   ; not tostring's id: a global's
+    ret R1
+3:  call rt$tostring (I0, F0, R0) -> (R1)
+    ret R1
+.endf
+
+; Whether a string key can be shown as a name (k = v): letters, digits and _,
+; not starting with a digit.
+.func rt$showname(ref) -> i64
+    typeof I1, R0
+    bne I1, 1, 9f
+    len I1, R0
+    bz I1, 9f
+    mov I2, 0
+1:  bge I2, I1, 8f
+    mov I3, R0[I2]
+    beq I3, 95, 2f              ; _
+    bz I2, 3f
+    blt I3, 48, 9f              ; a digit, after the first
+    ble I3, 57, 2f
+3:  or I4, I3, 32               ; a letter
+    blt I4, 97, 9f
+    bgt I4, 122, 9f
+2:  inc I2
+    jmp 1b
+8:  ret 1
+9:  ret 0
+.endf
+
 ; ----------------------------------------------------------------- tables
 
 ; The value word of key k in the hash part, or -1. The key is normalised:
