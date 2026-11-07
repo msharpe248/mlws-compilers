@@ -82,8 +82,8 @@ limit on recursion.
   `get_line`), `io_lib` (`format` with every control sequence, `~p` laid
   out as OTP's pretty printer does, `write`, `print`), `lists`, `maps`,
   `string` (both the old and the new functions), `proplists`, `math`,
-  `timer`, `unicode`, `re` (`run`, `replace`, `split` and `compile`, on
-  MLWSVM 0.17.0's regular expressions), and the BIFs of `erlang`.
+  `timer`, `unicode`, `re` (`run`, `replace`, `split`, `compile` and
+  `inspect`, on MLWSVM's regular expressions), and the BIFs of `erlang`.
 
 Not implemented: `maybe`, bit strings that are not whole bytes, bitwise
 operations on BigInts, hot code loading, distribution (nodes), ports,
@@ -107,11 +107,12 @@ the library beyond the modules above.
   are stopped (as `erl -eval '...main(), init:stop().'` does).
 * `re` patterns are RE2's syntax, which is Perl's without backreferences,
   lookaround, possessive quantifiers and recursion, and match in time
-  linear in the subject. Named groups cannot be captured by name, a
-  replacement cannot be a fun, and `{return, iodata}` gives a binary. A
-  subject or pattern is matched as UTF-8 text with or without `unicode`.
-  A program that uses `re` needs MLWSVM 0.17.0; others still run on
-  0.6.0.
+  linear in the subject. Named groups (`(?<name>...)`, `(?P<name>...)`)
+  are captured by name and with `all_names` (MLWSVM 0.17.3's
+  `regex.names`), and `inspect(MP, namelist)` lists them; a replacement
+  cannot be a fun, and `{return, iodata}` gives a binary. A subject or
+  pattern is matched as UTF-8 text with or without `unicode`. A program
+  that uses `re` needs MLWSVM 0.17.3; others still run on 0.6.0.
 
 ## How it works
 

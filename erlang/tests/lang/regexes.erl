@@ -53,4 +53,16 @@ main() ->
     P(re:run("héllo", "l+", [unicode])),
     P(re:replace("héllo", "é", "e", [unicode, {return, list}])),
     P(re:split(<<"α,β"/utf8>>, ",", [unicode, {return, list}])),
+    %% named groups
+    D = "(?<year>\\d+)-(?<mon>\\d+)(x)?(?P<day>\\d+)?",
+    P(re:run("2024-11", D, [{capture, all_names, binary}])),
+    P(re:run("2024-11", D, [{capture, all_names, index}])),
+    P(re:run("2024-11", D, [{capture, [mon, "year", <<"day">>], list}])),
+    P(re:run("2024-11", D, [{capture, [mon, 3, nosuch], index}])),
+    P(re:run("2024-11 1999-01", D, [global, {capture, [year], list}])),
+    P(re:run("2024-11", "(\\d+)", [{capture, all_names}])),
+    P(re:run("abc", D, [{capture, all_names}])),
+    {ok, DP} = re:compile(D),
+    P(re:inspect(DP, namelist)),
+    P(re:run("1999-12", DP, [{capture, [day, mon], binary}])),
     ok.

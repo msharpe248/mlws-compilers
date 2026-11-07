@@ -13,6 +13,22 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   so the bundle runs it at that level without the optimizer's start-up
   cost (spectralnorm: 0.08 s run with the JIT, 0.04 s bundled), and the JIT
   is on. tools/test-drivers.sh checks it on an MLWSVM that has `bundle`.
+* The Lox, Lua and Erlang compilers and drivers take `-g`: the output names
+  the program's local variables for MLWSVM's debuggers (`.local` of several
+  registers, MLWSVM 0.17.3) and gives them a formatter (`.debug_format`)
+  that shows a variable's registers in the language's own terms, so
+  `locals` and `print X` in `mlwsvm debug`, and an editor's Locals through
+  `mlwsvm dap`, show `x = 1.5`, `t = {1, 2, x = 3}` or `L = [{a,1}]`. The
+  output of `-g` requires MLWSVM 0.17.3; without it nothing changes. The
+  drivers' `-d` compiles with `-g` and runs the program in `mlwsvm debug`.
+  tools/test-drivers.sh checks both on MLWSVM 0.17.3 or later.
+
+### Lox
+
+* `-g`: parameters, `this` and locals are named where they are in scope
+  (a block's end ends its names and shows a variable it hid again), shown
+  by `rt$show` as `print` shows them, with strings in quotes and a captured
+  variable's box opened.
 
 ### Lua
 
@@ -36,17 +52,26 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   references. Tables are one word larger (`Tab.wk`).
 * Programs say they need MLWSVM 0.17.0 (`.requires mlwsvm, ">=0.17.0"`),
   so an older VM says so instead of failing to link a native.
+* `-g`: parameters, locals, loop variables and the upvalues a function with
+  a loop copies to registers are named where they are in scope, shown by
+  the runtime's `rt$show` as `tostring` shows them, with strings in quotes
+  and a table by its first entries (`{1, 2, x = 3, ...}`); it calls no
+  `__tostring`. With `--shared` the formatter is the library's.
 
 ### Erlang
 
 * `re`: `run/2,3` (`global`, `{capture, Spec, Type}` with `all`,
-  `all_but_first`, `first`, `none` or group numbers, and `index`, `list`
-  or `binary`; `caseless`, `multiline`, `dotall`, `unicode`, `{offset,
-  N}`), `replace/3,4` (`&`, `\N`, `\g{N}`; `global`, `{return, T}`),
-  `split/2,3` (groups, `group`, `trim`, `{parts, N}`) and `compile/1,2`,
-  in Erlang on one runtime function over MLWSVM 0.17.0's `regex.find`.
-  Only a program that uses `re` gets that part of the runtime, and needs
-  MLWSVM 0.17.0 (its `.requires` says so); others still need 0.6.0.
+  `all_but_first`, `first`, `none`, `all_names` or group numbers and
+  names, and `index`, `list` or `binary`; `caseless`, `multiline`,
+  `dotall`, `unicode`, `{offset, N}`), `replace/3,4` (`&`, `\N`, `\g{N}`;
+  `global`, `{return, T}`), `split/2,3` (groups, `group`, `trim`, `{parts,
+  N}`), `compile/1,2` and `inspect/2` (`namelist`), in Erlang on runtime
+  functions over MLWSVM's `regex.find` and 0.17.3's `regex.names`. Only a
+  program that uses `re` gets that part of the runtime, and needs MLWSVM
+  0.17.3 (its `.requires` says so); others still need 0.6.0.
+* `-g`: variables are named from where they are bound; after a `case`,
+  `receive` or `try`, only those every clause binds keep their names. They
+  are shown by `io_lib:print/1`, as `~p` prints them.
 
 ## Release 0.7.1
 

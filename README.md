@@ -36,6 +36,14 @@ program after it, optimized at `--opt 3` and with the JIT on, so it runs
 anywhere the same kind of machine runs, with no MLWSVM installed. On macOS,
 don't give it a name ending in `.app`: macOS kills any plain executable
 with such a name as it starts (`Killed: 9`).
+For Lox, Lua and Erlang, `-g` names the program's local variables for
+MLWSVM's debuggers, which then show them in the language's own terms
+(MLWSVM 0.17.3), and `-d` runs the program in `mlwsvm debug` with them:
+
+```sh
+lua/mlws-vm-lua -d program.lua              # (mdb) break program.lua:12, run, locals
+```
+
 The compilers themselves take `-o FILE`, defaulting to `program.masm` next
 to the source: `lox/mlws-vm-loxc program.lox`, `lua/mlws-vm-luac
 program.lua` and `bf/mlws-vm-bfc program.b` only compile.

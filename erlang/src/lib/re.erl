@@ -1,10 +1,11 @@
 %% re, on MLWSVM's regular expressions (regex.*): RE2's syntax, which is
 %% Perl's without backreferences and lookaround, matched in linear time.
+%% Named groups are (?<name>...) or (?P<name>...).
 %% Offsets are bytes, as in OTP. A compiled pattern is
 %% {re_pattern, Pattern, Flags, Unicode}.
 -module(re).
 -export([compile/1, compile/2, run/2, run/3, replace/3, replace/4,
-         split/2, split/3]).
+         split/2, split/3, inspect/2]).
 
 compile(RE) -> compile(RE, []).
 
@@ -18,7 +19,10 @@ run(S, RE) -> run(S, RE, []).
 run(S, RE, Opts) ->
     P = pattern(RE, Opts),
     Bin = subject(S, P),
-    {Spec, Type} = capture(Opts),
+    {Spec, Type} = case capture(Opts) of
+                       {all_names, T} -> {spec(sorted_names(P)), T};
+                       C -> C
+                   end,
     Off = proplists:get_value(offset, Opts, 0),
     case lists:member(global, Opts) of
         false ->
@@ -47,6 +51,10 @@ replace(S, RE, Repl, Opts) ->
          end,
     Out = iolist_to_binary(replaced(Ms, Bin, R, 0)),
     result(Out, proplists:get_value(return, Opts, iodata), P).
+
+%% The names of the pattern's named groups, in alphabetical order.
+inspect({re_pattern, _, _, _} = P, namelist) -> {namelist, sorted_names(P)};
+inspect(_, _) -> erlang:error(badarg).
 
 split(S, RE) -> split(S, RE, []).
 
@@ -93,6 +101,15 @@ result(B, iodata, _) -> B;
 result(B, list, {re_pattern, _, _, true}) -> unicode:characters_to_list(B);
 result(B, list, _) -> binary_to_list(B).
 
+%% Each group's name (a binary, or [] for one without), by group number - 1.
+names({re_pattern, Pat, Flags, _}) -> '$rt':re_names(Pat, Flags).
+
+sorted_names(P) -> lists:sort([N || N <- tuple_to_list(names(P)), N =/= []]).
+
+%% No values to capture: just match.
+spec([]) -> none;
+spec(Ns) -> Ns.
+
 capture(Opts) ->
     case lists:keyfind(capture, 1, Opts) of
         {capture, Spec} -> {Spec, index};
@@ -124,16 +141,24 @@ captured(M, Spec, Type, Bin, P) ->
              all -> set(M);
              first -> [hd(M)];
              all_but_first -> tl(set(M));
-             Ns when is_list(Ns) -> [group(N, M) || N <- Ns]
+             Ns when is_list(Ns) -> [group(N, M, P) || N <- Ns]
          end,
     [value(G, Type, Bin, P) || G <- Gs].
 
 %% Without the groups after the last that took part, as PCRE reports.
 set(M) -> lists:reverse(lists:dropwhile(fun({S, _}) -> S =:= -1 end, lists:reverse(M))).
 
-group(N, M) when is_integer(N), N >= 0, N < length(M) -> lists:nth(N + 1, M);
-group(N, _) when is_integer(N) -> {-1, -1};
-group(_, _) -> erlang:error(badarg).
+group(N, M, _) when is_integer(N), N >= 0, N < length(M) -> lists:nth(N + 1, M);
+group(N, _, _) when is_integer(N) -> {-1, -1};
+group(N, M, P) when is_atom(N) -> group(atom_to_binary(N, utf8), M, P);
+group(N, M, P) when is_list(N) -> group(unicode:characters_to_binary(N), M, P);
+group(N, M, P) when is_binary(N) -> group(number(N, tuple_to_list(names(P)), 1), M, P);
+group(_, _, _) -> erlang:error(badarg).
+
+%% A named group's number; -1 (not taking part) for a name it does not have.
+number(N, [N | _], K) -> K;
+number(N, [_ | Ns], K) -> number(N, Ns, K + 1);
+number(_, [], _) -> -1.
 
 value({-1, _}, index, _, _) -> {-1, 0};
 value({S, E}, index, _, _) -> {S, E - S};
