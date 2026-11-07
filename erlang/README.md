@@ -9,6 +9,7 @@ make                                   # builds mlws-vm-erlc
 ./mlws-vm-erl program.erl [args...]    # compile and run
 ./mlws-vm-erl -S program.erl           # write program.masm, don't run
 ./mlws-vm-erl -b app program.erl       # write one executable, app (MLWSVM 0.17.0)
+./mlws-vm-erl -d program.erl           # run it in the debugger, variables named (0.17.3)
 ./mlws-vm-erlc -o out.masm program.erl # the compiler alone
 make test                              # the tests (needs python3)
 make bench                             # the benchmarks, against erl if installed
@@ -20,6 +21,30 @@ compiled with it when they are found as `NAME.erl` next to it, or can be
 named on the compiler's command line. The output is one self-contained
 `.masm` file holding the program, the runtime and the part of the library
 that the program uses. It needs MLWSVM 0.6.0 or later.
+
+With `-g` (on `mlws-vm-erlc` and the driver) the debuggers (`mlwsvm debug`,
+and editors through `mlwsvm dap`) show the program's variables by name, as
+`~p` prints them; `-d` compiles with `-g` and runs the program in `mlwsvm
+debug`, which reads its commands from standard input:
+
+```
+$ ./mlws-vm-erl -d program.erl
+(mdb) break program.erl:6
+(mdb) run
+(mdb) locals
+W (I1, R1) = 2
+Shapes (I0, R0) = [{rect,2,3},{circle,1.5}]
+```
+
+A variable is named (`.local X, I1, R1`) from where it is bound, in the
+hot code; after a `case`, `receive` or `try`, only the variables every
+clause binds keep their names. The formatter, `.debug_format rt$show`,
+calls `io_lib:print/1` in a process of its own, on copies. Variables on the
+stack (beyond the 29th slot) are not named, and the optimizer drops the
+names of a function it changes, so debug code that is not optimized. The
+output of `-g` says it needs MLWSVM 0.17.3 (`.requires`); `mlwsvm debug`
+takes no `--max-frames`, so a program run with `-d` has the VM's default
+limit on recursion.
 
 ## What it implements
 

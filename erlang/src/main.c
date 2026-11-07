@@ -165,7 +165,8 @@ static char *read_file(const char *path, size_t *len) {
 }
 
 static void usage(void) {
-    fprintf(stderr, "usage: mlws-vm-erlc [--version] [-o FILE] program.erl [module.erl...]\n");
+    fprintf(stderr, "usage: mlws-vm-erlc [--version] [-g] [-o FILE] program.erl [module.erl...]\n"
+                    "  -g        name the variables for debuggers (needs MLWSVM 0.17.3)\n");
     exit(64);
 }
 
@@ -176,6 +177,8 @@ int main(int argc, char **argv) {
         if (!strcmp(argv[k], "--version")) {
             printf("mlws-vm-erlc %s\n", VERSION);
             return 0;
+        } else if (!strcmp(argv[k], "-g")) {
+            debug_info = true;
         } else if (!strcmp(argv[k], "-o")) {
             if (++k >= argc)
                 usage();

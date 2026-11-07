@@ -1,0 +1,4 @@
+break hello.erl:6
+run
+locals
+quit

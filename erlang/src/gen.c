@@ -58,6 +58,7 @@ typedef struct {
     int slot;
     bool bound;
     bool flt;           /* bound to a value that is likely a float */
+    bool named;         /* -g: its .local is in effect */
 } Var;
 
 typedef struct Fn Fn;
@@ -217,6 +218,27 @@ static const char *rreg(int slot) {
 
 static Val slot_val(int slot) {
     return (Val){ireg(slot), rreg(slot)};
+}
+
+bool debug_info;
+
+/* -g: from here on, a variable's slot holds it, for the debuggers (which
+ * show it by rt$show); or, bound false, no longer. Only the hot code names
+ * variables, the program's own (not "$rest") in registers. */
+static void name_var(Fn *g, Var *v, bool bound) {
+    if (!debug_info || g->in_cold || v->slot >= NR || !(v->name[0] == '_' || (v->name[0] >= 'A' && v->name[0] <= 'Z'))
+        || !strcmp(v->name, "_") || v->named == bound)
+        return;
+    v->named = bound;
+    if (bound)
+        emit(g, ".local \"%s\", I%d, R%d", v->name, v->slot, v->slot);
+    else
+        emit(g, ".local \"%s\"", v->name);
+}
+
+static void bind_var(Fn *g, Var *v) {
+    v->bound = true;
+    name_var(g, v, true);
 }
 
 static int temp(Fn *g) {
@@ -610,6 +632,9 @@ static int assign_slots(Clause *c, Names *names, int *slots, int next) {
 /* Give each variable of a function or fun clause its slot. A head
  * pattern that is just a new variable uses the argument's own slot. */
 static void setup_clause(Fn *g, Clause *c, int base) {
+    for (int k = base; k < g->vars.n; k++)   /* the last clause's */
+        if (g->vars.v[k].bound)
+            name_var(g, &g->vars.v[k], false);
     g->vars.n = base;
     Names names = {0};
     clause_vars(c, &names);
@@ -618,7 +643,7 @@ static void setup_clause(Fn *g, Clause *c, int base) {
         slots[k] = head_slot(c, names.v[k]);
     int next = assign_slots(c, &names, slots, g->nparams + g->ncaps);
     for (int k = 0; k < names.n; k++) {
-        Var v = {names.v[k], slots[k], false, false};
+        Var v = {names.v[k], slots[k], false, false, false};
         vec_push(g->vars, v);
     }
     free(slots);
@@ -629,8 +654,13 @@ static void setup_clause(Fn *g, Clause *c, int base) {
         g->maxslot = next - 1;
 }
 
-/* The bound flags of every variable, to save and restore around branches. */
-typedef VEC(bool) Bound;
+/* The bound flags of every variable, to save and restore around branches;
+ * after union_bound, all says which every branch bound (-g names those). */
+typedef struct {
+    bool *v;
+    int n, cap;
+    bool *all;
+} Bound;
 
 static Bound save_bound(Fn *g) {
     Bound b = {0};
@@ -640,14 +670,21 @@ static Bound save_bound(Fn *g) {
 }
 
 static void restore_bound(Fn *g, Bound *b) {
-    for (int k = 0; k < g->vars.n && k < b->n; k++)
+    for (int k = 0; k < g->vars.n && k < b->n; k++) {
+        name_var(g, &g->vars.v[k], b->all ? b->all[k] : b->v[k]);
         g->vars.v[k].bound = b->v[k];
+    }
 }
 
 /* Union: after a case, a variable bound in some clause counts as bound. */
 static void union_bound(Fn *g, Bound *acc) {
-    for (int k = 0; k < g->vars.n && k < acc->n; k++)
+    bool first = !acc->all;
+    if (first)
+        acc->all = xcalloc((size_t)acc->n + 1, sizeof *acc->all);
+    for (int k = 0; k < g->vars.n && k < acc->n; k++) {
+        acc->all[k] = g->vars.v[k].bound && (first || acc->all[k]);
         acc->v[k] = acc->v[k] || g->vars.v[k].bound;
+    }
 }
 
 /* ------------------------------------------------------------------ errors in the program */
@@ -1000,7 +1037,7 @@ static int match_load(Fn *g, Node *p, const char *mi, const char *mr, const char
         if (v && !v->bound) {
             emit(g, "mov %s, %s", ireg(v->slot), mi);
             emit(g, "mov.r %s, %s", rreg(v->slot), mr);
-            v->bound = true;
+            bind_var(g, v);
             return -1;
         }
     }
@@ -1085,7 +1122,7 @@ static void match(Fn *g, Node *p, Val v, const char *fail) {
             error_at(p, "variable '%s' is unbound", p->s);
         if (!var->bound) {
             move(g, var->slot, v);
-            var->bound = true;
+            bind_var(g, var);
             return;
         }
         /* an already bound variable: the values must be equal */
@@ -2370,7 +2407,7 @@ static void comp_quals(Fn *g, Node *e, int qi, const char *next, Comp *c) {
         rest->a->s = intern("$rest", 5);
         rest->s = "binary";
         vec_push(pat->kids, rest);
-        Var rv = {rest->a->s, cur, false, false};
+        Var rv = {rest->a->s, cur, false, false, false};
         vec_push(g->vars, rv);
         Names pv = {0};
         collect_vars(q->a, &pv);
@@ -2464,7 +2501,7 @@ static Val comprehension(Fn *g, Node *e, int kind) {
         }
         if (outer && outer->bound && !is_gen_var)
             continue;
-        Var v = {names.v[k], temp(g), false, false};
+        Var v = {names.v[k], temp(g), false, false, false};
         vec_push(g->vars, v);
     }
     free(names.v);
@@ -2523,6 +2560,7 @@ static void clause_bodies(Fn *g, Clauses *cs, Val scrut, int res, bool tailpos, 
     restore_bound(g, &acc);
     free(entry.v);
     free(acc.v);
+    free(acc.all);
     /* no clause matched */
     if (!strcmp(nomatch_kind, "if_clause")) {
         raise_error(g, vatom(intern("if_clause", 9)));
@@ -2627,6 +2665,7 @@ static Val receive_expr(Fn *g, Node *e, bool tailpos) {
     restore_bound(g, &acc);
     free(entry.v);
     free(acc.v);
+    free(acc.all);
     label(g, done);
     g->top = mark0;
     if (tailpos)
@@ -2708,6 +2747,7 @@ static Val try_expr(Fn *g, Node *e, bool tailpos) {
         restore_bound(g, &acc);
         free(entry.v);
         free(acc.v);
+        free(acc.all);
         emit(g, "throw %s", rreg(exc));
     }
     label(g, done);
@@ -3231,7 +3271,7 @@ static void gen_clauses(Fn *g, Clauses *cs, int nvars_base) {
             }
             Var *v = p->kind == N_VAR ? find_var(g, p->s) : NULL;
             if (v && v->slot == j && !v->bound) {
-                v->bound = true;
+                bind_var(g, v);
                 continue;
             }
             match(g, p, slot_val(j), fail);
@@ -3288,18 +3328,20 @@ static void gen_fun_body(Fn *parent, Node *e, const char *mname, Names *caps, co
     g.maxslot = arity + g.ncaps - 1;
     /* the captured variables keep their names, bound, in slots after the arguments */
     for (int k = 0; k < caps->n; k++) {
-        Var v = {caps->v[k], arity + k, true, false};
+        Var v = {caps->v[k], arity + k, true, false, false};
         vec_push(g.vars, v);
         emit(&g, "mov %s, UP[%d]", ireg(arity + k), 2 * k);
         emit(&g, "mov.r %s, UP[%d]", rreg(arity + k), 2 * k + 1);
+        name_var(&g, &g.vars.v[g.vars.n - 1], true);
     }
     if (selfname) {
         int s = arity + caps->n;
-        Var v = {selfname, s, true, false};
+        Var v = {selfname, s, true, false, false};
         vec_push(g.vars, v);
         emit(&g, "mov.r %s, UP[%d]", XR0, 2 * caps->n);
         emit(&g, "mov.r %s, %s[0]", rreg(s), XR0);
         emit(&g, "mov %s, 0", ireg(s));
+        name_var(&g, &g.vars.v[g.vars.n - 1], true);
     }
     int base = g.vars.n;
     /* fun clauses' variables shadow nothing they capture: setup_clause
@@ -3309,6 +3351,9 @@ static void gen_fun_body(Fn *parent, Node *e, const char *mname, Names *caps, co
         Clauses one = {0};
         vec_push(one, c);
         /* set up with the captures still visible */
+        for (int q = base; q < g.vars.n; q++)   /* the last clause's */
+            if (g.vars.v[q].bound)
+                name_var(&g, &g.vars.v[q], false);
         g.vars.n = base;
         Names names = {0};
         clause_vars(c, &names);
@@ -3335,7 +3380,7 @@ static void gen_fun_body(Fn *parent, Node *e, const char *mname, Names *caps, co
             slots[q] = head_slot(c, own.v[q]);
         next = assign_slots(c, &own, slots, next);
         for (int q = 0; q < own.n; q++) {
-            Var v = {own.v[q], slots[q], false, false};
+            Var v = {own.v[q], slots[q], false, false, false};
             vec_push(g.vars, v);
         }
         free(slots);
@@ -3353,7 +3398,7 @@ static void gen_fun_body(Fn *parent, Node *e, const char *mname, Names *caps, co
             Node *p = c->pats.v[j];
             Var *v = p->kind == N_VAR ? find_var(&g, p->s) : NULL;
             if (v && v->slot == j && !v->bound) {
-                v->bound = true;
+                bind_var(&g, v);
                 continue;
             }
             match(&g, p, slot_val(j), nextl);
@@ -3536,6 +3581,14 @@ void generate(Module **mods, int nmods, FILE *out, const char *source_name) {
         if (f)
             request(rm, f);
     }
+    /* -g: the debuggers show a variable as ~p does */
+    const char *print1 = NULL;
+    if (debug_info) {
+        Module *im = get_module(intern("io_lib", 6));
+        Function *pf = im ? find_function(im, intern("print", 5), 1) : NULL;
+        if (pf)
+            print1 = request(im, pf);
+    }
     bool uses_re = false;
     for (int k = 0; k < P.queue.n; k++) {
         FnReq r = P.queue.v[k];
@@ -3557,11 +3610,23 @@ void generate(Module **mods, int nmods, FILE *out, const char *source_name) {
     gen_atoms();
 
     fprintf(out, "; generated by mlws-vm-erlc %s from %s\n", VERSION, mods[0]->file);
-    /* re's regex natives came with MLWSVM 0.17.0 */
-    fprintf(out, ".requires mlwsvm, \"%s\"\n\n", uses_re ? ">=0.17.0" : ">=0.6.0");
+    /* re's regex natives came with MLWSVM 0.17.0, .local of several
+     * registers and .debug_format with 0.17.3 */
+    fprintf(out, ".requires mlwsvm, \"%s\"\n\n", debug_info ? ">=0.17.3" : uses_re ? ">=0.17.0" : ">=0.6.0");
     fputs(runtime_masm, out);
     if (uses_re)
         fputs(runtime_re_masm, out);
+    if (print1)
+        fprintf(out, "\n; -g: how the debuggers show a variable (.local): as ~p does. They run it\n"
+                     "; in a process of its own, on copies of its registers.\n"
+                     ".debug_format rt$show\n"
+                     ".func rt$show(i64 i, ref r) -> ref\n"
+                     "    call %s (i, r) -> (I1, R1)\n"
+                     "    bufnew R2, 0\n"
+                     "    call rt$iobuf (R2, I1, R1, 0) -> I3\n"
+                     "    tostr R3, R2\n"
+                     "    ret R3\n"
+                     ".endf\n", print1);
     fprintf(out, "\n; ---------------------------------------------------------------- constants\n");
     for (int k = 0; k < P.nconst; k++)
         fprintf(out, "K%d: .zero 8\n", k);

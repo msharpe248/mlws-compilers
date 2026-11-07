@@ -4,6 +4,10 @@
 #   mlws-vm-erl [options] program.erl [args...]
 #     -S           only compile: write the assembly (.masm) and do not run it
 #     -k           keep the assembly after running it
+#     -g           name the program's variables for MLWSVM's debuggers
+#                  (mlwsvm debug, mlwsvm dap; MLWSVM 0.17.3 or later)
+#     -d           run the program in MLWSVM's debugger (mlwsvm debug),
+#                  which reads its commands from standard input; implies -g
 #     -o FILE      the assembly file (default: program.masm next to the
 #                  source); with -S, '-' writes it to standard output
 #     -b FILE, --bundle FILE
@@ -19,15 +23,17 @@
 # next to this repository.
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 usage() {
-    echo "usage: mlws-vm-erl [--version] [-b FILE] [-S | -k] [-o FILE] program.erl [args...]" >&2
+    echo "usage: mlws-vm-erl [--version] [-g] [-d | -b FILE] [-S | -k] [-o FILE] program.erl [args...]" >&2
     exit 64
 }
 
-compile_only= keep= out= prog= bundle=
+compile_only= keep= out= prog= bundle= debug= g=
 while [ $# -gt 0 ]; do
     case "$1" in
         -S) compile_only=1; shift ;;
         -k) keep=1; shift ;;
+        -g) g=-g; shift ;;
+        -d) debug=1; g=-g; shift ;;
         -b|--bundle) [ $# -ge 2 ] || usage; bundle=$2; shift 2 ;;
         -o) [ $# -ge 2 ] || usage; out=$2; shift 2 ;;
         --version) exec "$here/mlws-vm-erlc" --version ;;
@@ -38,6 +44,7 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$prog" ] || usage
 [ -z "$bundle" ] || { [ $# -eq 0 ] && [ -z "$compile_only" ]; } || usage
+[ -z "$debug" ] || { [ $# -eq 0 ] && [ -z "$compile_only" ] && [ -z "$bundle" ]; } || usage
 
 if [ -n "$compile_only" ] || [ -n "$keep" ] || [ -n "$out" ]; then
     [ -n "$out" ] || out="${prog%.*}.masm"
@@ -50,13 +57,17 @@ else
     trap 'rm -rf "$tmp"' EXIT INT TERM
     out="$tmp/program.masm"
 fi
-"$here/mlws-vm-erlc" -o "$out" "$prog" || exit $?
+"$here/mlws-vm-erlc" $g -o "$out" "$prog" || exit $?
 [ -n "$compile_only" ] && exit 0
 
 . "$here/../tools/find-vm.sh"
 # Erlang recurses deeply (lists:map on a long list): allow many frames.
 if [ -n "$bundle" ]; then
     "$MLWSVM" bundle -o "$bundle" --opt 3 --jit on --max-frames 50000000 "$out"
+    exit $?
+fi
+if [ -n "$debug" ]; then
+    "$MLWSVM" debug "$out"      # (which takes no --max-frames)
     exit $?
 fi
 "$MLWSVM" run --max-frames 50000000 "$out" "$@"
