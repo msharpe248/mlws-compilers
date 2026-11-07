@@ -7,7 +7,9 @@
 #     -g           name the program's variables for MLWSVM's debuggers
 #                  (mlwsvm debug, mlwsvm dap; MLWSVM 0.17.3 or later)
 #     -d           run the program in MLWSVM's debugger (mlwsvm debug),
-#                  which reads its commands from standard input; implies -g
+#                  which reads its commands from standard input; implies -g;
+#                  the code runs as compiled (MLWSVM_OPT=0: the optimizer
+#                  would drop the names)
 #     -o FILE      the assembly file (default: program.masm next to the
 #                  source); with -S, '-' writes it to standard output
 #     -b FILE, --bundle FILE
@@ -67,7 +69,7 @@ if [ -n "$bundle" ]; then
     exit $?
 fi
 if [ -n "$debug" ]; then
-    "$MLWSVM" debug "$out"      # (which takes no --max-frames)
+    MLWSVM_OPT=0 "$MLWSVM" debug "$out"      # (which takes no --max-frames)
     exit $?
 fi
 "$MLWSVM" run --max-frames 50000000 "$out" "$@"
