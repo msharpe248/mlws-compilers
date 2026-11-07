@@ -24,6 +24,16 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   `collectgarbage()`, at the next `setmetatable` that marks a table and at
   exit, where Lua code may run without breaking a table the runtime is in
   the middle of changing.
+* Weak tables: `setmetatable` with a metatable whose `__mode` has `k`,
+  `v` or both moves the table's entries into MLWSVM weak maps (one for
+  references, made weak in that mode, and one for numbers, whose keys are
+  weak with `k`), so a collection removes the entries whose weak key or
+  value nothing else holds; weak keys are ephemerons, as in Lua.
+  `setmetatable` with a metatable without `__mode` moves them back. The
+  array and hash parts of a weak table stay empty, so the compiler's
+  inline caches miss and its accesses go to the runtime; `next` and
+  `pairs` walk a snapshot of the keys that holds objects by weak
+  references. Tables are one word larger (`Tab.wk`).
 
 ## Release 0.7.1
 

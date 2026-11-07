@@ -2538,12 +2538,15 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
             branch(fs, slow, "bnz I31");
             emit(fs, ".L%d:", ok);
         }
+        /* a weak table, and a metatable with __gc or __mode, are left
+           to the library */
+        emit(fs, "    mov R31, %s->Tab.wk", RB(fs, ts, "R28"));
+        branch(fs, slow, "bnz R31");
         if (mty == TY_NIL) {
             emit(fs, "    mov.r %s->Tab.meta, null", RB(fs, ts, "R28"));
         } else if (mty == TY_TAB) {
-            /* a metatable with __gc marks the table: the library does it */
             const char *m = RB(fs, vals[1].slot, "R29");
-            emit(fs, "    mov I31, %s->Tab.gc", m);
+            emit(fs, "    mov I31, %s->Tab.lib", m);
             branch(fs, slow, "bnz I31");
             emit(fs, "    mov %s->Tab.meta, %s", RB(fs, ts, "R28"), m);
         } else {
@@ -2551,7 +2554,7 @@ static void gen_call_into(FS *fs, Expr *e, int d, bool tail) {
             const char *m = RB(fs, vals[1].slot, "R29");
             emit(fs, "    beq.r %s, " NIL ", .L%d", m, isnil);
             branch(fs, slow, "bnisa %s, Tab", m);
-            emit(fs, "    mov I31, %s->Tab.gc", m);
+            emit(fs, "    mov I31, %s->Tab.lib", m);
             branch(fs, slow, "bnz I31");
             emit(fs, "    mov %s->Tab.meta, %s", RB(fs, ts, "R28"), m);
             emit(fs, "    jmp .L%d", set);

@@ -32,7 +32,18 @@
     hw: i64             ; words in hs (for the compiler's inline caches)
     hmshared: i64       ; hm is a shape (shared, never changed), not this table's own
     prot: i64           ; as a metatable: it has a __metatable field
-    gc: i64             ; as a metatable: it has a __gc field
+    lib: i64            ; as a metatable: 1 it has __gc, 2 and 4 its __mode has
+                        ; k and v (setmetatable leaves these to the library)
+    wk: ref             ; a weak table's entries (Weak), or null
+.ends
+
+.struct Weak            ; a weak table's entries, out of reach of the
+    mode: i64           ; compiler's inline caches: 1 weak keys, 2 weak values
+    r: ref              ; key -> value that is a reference (weak.map mode)
+    n: ref              ; key -> Box of a number (weak keys only)
+    s: ref              ; a snapshot of the keys for next, two words each
+                        ; (weak.ref for an object), or null
+    si: ref             ; key -> its index in s (weak keys)
 .ends
 
 .struct Fn
@@ -1072,7 +1083,9 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 
 .func rt$rawget(ref t, i64 ki, f64 kf, ref kr) -> (i64, f64, ref)
     bnz R1, 5f
-1:  sub I1, I0, 1
+1:  mov R5, R0->Tab.wk
+    bnz R5, 80f
+    sub I1, I0, 1
     blt I1, 0, 3f
     mov I2, R0->Tab.n
     bge I1, I2, 3f
@@ -1095,15 +1108,21 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     jmp 1b
 6:  bne.f64 F0, F0, 9f
 7:  beq.r R1, 1n, 9f
+    mov R5, R0->Tab.wk
+    bnz R5, 80f
     call rt$hfind (R0, I0, F0, R1) -> (I1)
     blt I1, 0, 9f
     jmp 4b
 9:  ret 0, 0.0, 1n
+80: call rt$wget (R0, I0, F0, R1) -> (I4, F1, R3)
+    ret I4, F1, R3
 .endf
 
 .func rt$rawset(ref t, i64 ki, f64 kf, ref kr, i64 vi, f64 vf, ref vr)
     bnz R1, 50f
-10: sub I2, I0, 1
+10: mov R7, R0->Tab.wk
+    bnz R7, 80f
+    sub I2, I0, 1
     blt I2, 0, 60f
     mov I3, R0->Tab.n
     bge I2, I3, 20f
@@ -1132,11 +1151,15 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 52: bne.f64 F0, F0, 58f
     jmp 60f
 55: beq.r R1, 1n, 57f
-60: call rt$hset (R0, I0, F0, R1, I1, F1, R2)
+60: mov R7, R0->Tab.wk
+    bnz R7, 80f
+    call rt$hset (R0, I0, F0, R1, I1, F1, R2)
     ret
 57: call rt$rterror ("table index is nil")
     ret
 58: call rt$rterror ("table index is NaN")
+    ret
+80: call rt$wset (R0, I0, F0, R1, I1, F1, R2)
     ret
 .endf
 
@@ -1290,11 +1313,256 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     ret
 5:  strcmp I0, R1, "__gc"
     bnz I0, 6f
-    mov I1, 0
+    mov I1, R0->Tab.lib
+    and I1, 6
     bz R2, 51f
-    mov I1, 1
-51: mov R0->Tab.gc, I1
-6:  ret
+    or I1, 1
+51: mov R0->Tab.lib, I1
+    ret
+6:  strcmp I0, R1, "__mode"
+    bnz I0, 7f
+    mov I1, R0->Tab.lib
+    and I1, 1
+    typeof I2, R2
+    bne I2, 1, 64f
+    len I3, R2
+    mov I4, 0
+61: bge I4, I3, 64f
+    mov I5, R2[I4]
+    bne I5, 'k', 62f
+    or I1, 2
+62: bne I5, 'v', 63f
+    or I1, 4
+63: inc I4
+    jmp 61b
+64: mov R0->Tab.lib, I1
+7:  ret
+.endf
+
+; ------------------------------------------------------------ weak tables
+
+; setmetatable gave t a metatable whose __mode differs from t's: move its
+; entries to a Weak (mode 1 weak keys, 2 weak values, 3 both), or back to
+; the array and hash parts (mode 0). _G stays as it is: its globals have
+; fixed slots.
+.func rt$setweak(ref t, i64 mode)
+    mov R1, @rt$G
+    beq.r R0, R1, 9f
+    lnew R2                     ; the entries: key, value (two words each)
+    mov I2, 0
+    mov F2, 0.0
+    mov.r R3, 1n
+1:  call rt$next (R0, I2, F2, R3) -> (I2, F2, R3, I4, F4, R4)
+    beq.r R3, 1n, 2f
+    PUSHV R2, I2, F2, R3
+    PUSHV R2, I4, F4, R4
+    jmp 1b
+2:  lnew R5
+    mov R0->Tab.arr, R5
+    mov I5, 0
+    mov R0->Tab.n, I5
+    mov R0->Tab.hw, I5
+    mov R0->Tab.dead, I5
+    mov R0->Tab.hmshared, I5
+    mnew R6
+    mov R0->Tab.hm, R6
+    lnew R7
+    mov R0->Tab.hs, R7
+    mov.r R8, null
+    bz I0, 3f
+    new R8, Weak
+    mov R8->Weak.mode, I0
+    mnew R9
+    ncall "weak.map" (R9, I0)
+    mov R8->Weak.r, R9
+    and I6, I0, 1
+    mnew R10
+    ncall "weak.map" (R10, I6)
+    mov R8->Weak.n, R10
+3:  mov R0->Tab.wk, R8
+    len I7, R2
+    mov I8, 0
+4:  bge I8, I7, 9f
+    LOADV R2, I8, I9, I10, F10, R10
+    add I8, 2
+    LOADV R2, I8, I9, I11, F11, R11
+    add I8, 2
+    call rt$rawset (R0, I10, F10, R10, I11, F11, R11)
+    jmp 4b
+9:  ret
+.endf
+
+; t[k] in a weak table (k a key as rt$rawset leaves it: not nil, NaN, or a
+; float with an integer value)
+.func rt$wget(ref t, i64 ki, f64 kf, ref kr) -> (i64, f64, ref)
+    mov R4, R0->Tab.wk
+    mov R5, R4->Weak.r
+    bnz R1, 1f
+    mget R6, R5, I0, 1n
+    jmp 3f
+1:  bne.r R1, 4n, 2f
+    mget R6, R5, F0, 1n
+    jmp 3f
+2:  mget R6, R5, R1, 1n
+3:  beq.r R6, 1n, 4f
+    ret 0, 0.0, R6
+4:  mov R5, R4->Weak.n
+    bnz R1, 5f
+    mget R6, R5, I0, null
+    jmp 7f
+5:  bne.r R1, 4n, 6f
+    mget R6, R5, F0, null
+    jmp 7f
+6:  mget R6, R5, R1, null
+7:  bz R6, 8f
+    mov I1, R6->Box.i
+    mov F1, R6->Box.f
+    mov R7, R6->Box.r
+    ret I1, F1, R7
+8:  ret 0, 0.0, 1n
+.endf
+
+; t[k] = v in a weak table: a reference in Weak.r, where the collector may
+; drop it, a number in a Box in Weak.n
+.func rt$wset(ref t, i64 ki, f64 kf, ref kr, i64 vi, f64 vf, ref vr)
+    mov R4, R0->Tab.wk
+    mov R5, R4->Weak.r
+    mov R6, R4->Weak.n
+    beq.r R2, 1n, 30f
+    bz R2, 20f
+    beq.r R2, 4n, 20f
+    bnz R1, 11f
+    mdel R6, I0
+    mset R5, I0, R2
+    ret
+11: bne.r R1, 4n, 12f
+    mdel R6, F0
+    mset R5, F0, R2
+    ret
+12: mdel R6, R1
+    mset R5, R1, R2
+    ret
+20: new R7, Box
+    mov R7->Box.i, I1
+    mov R7->Box.f, F1
+    mov R7->Box.r, R2
+    bnz R1, 21f
+    mdel R5, I0
+    mset R6, I0, R7
+    ret
+21: bne.r R1, 4n, 22f
+    mdel R5, F0
+    mset R6, F0, R7
+    ret
+22: mdel R5, R1
+    mset R6, R1, R7
+    ret
+30: bnz R1, 31f
+    mdel R5, I0
+    mdel R6, I0
+    ret
+31: bne.r R1, 4n, 32f
+    mdel R5, F0
+    mdel R6, F0
+    ret
+32: mdel R5, R1
+    mdel R6, R1
+    ret
+.endf
+
+; #t for a weak table: the first border from 0
+.func rt$wlen(ref t) -> i64
+    mov I0, 0
+1:  add I1, I0, 1
+    call rt$wget (R0, I1, 0.0, null) -> (I2, F2, R2)
+    beq.r R2, 1n, 9f
+    mov I0, I1
+    jmp 1b
+9:  ret I0
+.endf
+
+; Take a new snapshot of a weak table's keys, for next and pairs: they
+; stay in place while the table changes. Objects are held there by weak
+; references, so the snapshot keeps nothing alive.
+.func rt$wsnap(ref t)
+    mov R1, R0->Tab.wk
+    lnew R2
+    mnew R3
+    ncall "weak.map" (R3, 1)
+    mov R4, R1->Weak.r
+    call rt$wsnap1 (R2, R3, R4)
+    mov R4, R1->Weak.n
+    call rt$wsnap1 (R2, R3, R4)
+    mov R1->Weak.s, R2
+    mov R1->Weak.si, R3
+    ret
+.endf
+
+; Add map m's keys to snapshot s, and their indexes to si.
+.func rt$wsnap1(ref s, ref si, ref m)
+    mkeys R3, R2
+    len I0, R3
+    mov I1, 0
+1:  bge I1, I0, 9f
+    len I2, R0
+    div I2, 2
+    tagof I3, R3[I1]
+    beq I3, 6, 3f
+    beq I3, 12, 4f
+    mov R4, R3[I1]
+    mset R1, R4, I2
+    typeof I4, R4
+    beq I4, 1, 2f
+    beq I4, 8, 2f
+    ncall "weak.ref" (R4) -> (R4)
+2:  lpush R0, R4, 0.0
+    jmp 5f
+3:  mov I5, R3[I1]
+    mset R1, I5, I2
+    mov.r R5, null
+    lpush R0, R5, I5
+    jmp 5f
+4:  mov F5, R3[I1]
+    mset R1, F5, I2
+    mov.r R5, 4n
+    lpush R0, R5, F5
+5:  inc I1
+    jmp 1b
+9:  ret
+.endf
+
+; The index of key k in the snapshot whose index map is si, or -1.
+.func rt$wfind(ref si, i64 ki, f64 kf, ref kr) -> i64
+    bnz R1, 1f
+    mget I1, R0, I0, -1
+    ret I1
+1:  bne.r R1, 4n, 2f
+    mget I1, R0, F0, -1
+    ret I1
+2:  mget I1, R0, R1, -1
+    ret I1
+.endf
+
+; The first entry of a weak table at or after index i of its snapshot that
+; is still there: the index after it, its key and its value (a nil key at
+; the end).
+.func rt$wstep(ref t, i64 i) -> (i64, i64, f64, ref, i64, f64, ref)
+    mov R1, R0->Tab.wk
+    mov R2, R1->Weak.s
+    len I1, R2
+    div I1, 2
+1:  bge I0, I1, 9f
+    add I2, I0, I0
+    LOADV R2, I2, I3, I4, F4, R4
+    inc I0
+    typeof I5, R4
+    bne I5, 12, 2f
+    ncall "weak.get" (R4) -> (R4)
+    bz R4, 1b
+2:  call rt$wget (R0, I4, F4, R4) -> (I6, F6, R6)
+    beq.r R6, 1n, 1b
+    ret I0, I4, F4, R4, I6, F6, R6
+9:  ret I0, 0, 0.0, 1n, 0, 0.0, 1n
 .endf
 
 ; ------------------------------------------------------------- finalizers
@@ -1506,6 +1774,8 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 
 ; next(t, k): the key after k and its value (nil at the end).
 .func rt$next(ref t, i64 ki, f64 kf, ref kr) -> (i64, f64, ref, i64, f64, ref)
+    mov R10, R0->Tab.wk
+    bnz R10, 80f
     mov I1, 0               ; array position to start at
     beq.r R1, 1n, 10f
     bnz R1, 5f
@@ -1555,6 +1825,22 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 22: inc I6
     jmp 21b
 29: ret 0, 0.0, 1n, 0, 0.0, 1n
+80: ; a weak table: from the key's place in the snapshot
+    beq.r R1, 1n, 83f
+    mov R11, R10->Weak.si
+    bz R11, 81f
+    call rt$wfind (R11, I0, F0, R1) -> (I2)
+    bge I2, 0, 82f
+81: call rt$wsnap (R0)          ; a key added since: a new snapshot
+    mov R11, R10->Weak.si
+    call rt$wfind (R11, I0, F0, R1) -> (I2)
+    blt I2, 0, 90f
+82: inc I2
+    jmp 84f
+83: call rt$wsnap (R0)
+    mov I2, 0
+84: call rt$wstep (R0, I2) -> (I3, I4, F4, R4, I5, F5, R5)
+    ret I4, F4, R4, I5, F5, R5
 90: call rt$rterror ("invalid key to 'next'")
     ret 0, 0.0, 1n, 0, 0.0, 1n
 .endf
@@ -1564,6 +1850,8 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 ; slot j in Tab.hs), and the position after it; k is nil at the end. The
 ; compiler steps through the hash part inline, with the same positions.
 .func rt$nextpos(ref t, i64 pos) -> (i64, i64, f64, ref, i64, f64, ref)
+    mov R3, R0->Tab.wk
+    bnz R3, 80f
     mov I1, 1099511627776
     bge I0, I1, 20f
     mov I2, R0->Tab.n
@@ -1589,6 +1877,16 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     add I0, I8, I1
     ret I0, I10, F10, R10, I5, F5, R5
 29: ret I0, 0, 0.0, 1n, 0, 0.0, 1n
+80: ; a weak table: 2^41 + the index in its snapshot, taken at position 0
+    mov I1, 2199023255552
+    bge I0, I1, 81f
+    call rt$wsnap (R0)
+    mov I2, 0
+    jmp 82f
+81: sub I2, I0, I1
+82: call rt$wstep (R0, I2) -> (I3, I4, F4, R4, I5, F5, R5)
+    add I3, I1
+    ret I3, I4, F4, R4, I5, F5, R5
 .endf
 
 ; t[k] with metamethods.
@@ -1674,6 +1972,8 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 .func rt$method(i64, f64, ref, ref name, ref desc) -> (i64, f64, ref)
     mov R9, R2
     bnisa R0, Tab, 5f
+    mov R2, R0->Tab.wk
+    bnz R2, 6f
     mov R2, R0->Tab.hm
     bz R2, 3f
     mget I2, R2, R1, -1
@@ -1748,7 +2048,11 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     call rt$call1 (null, I3, F3, R3, I0, F0, R0) -> (I4, I5, F5, R5)
     ret I5, F5, R5
 2:  bnisa R0, Tab, 9f
+    mov R4, R0->Tab.wk
+    bnz R4, 3f
     mov I2, R0->Tab.n
+    ret I2, 0.0, null
+3:  call rt$wlen (R0) -> (I2)
     ret I2, 0.0, null
 9:  call rt$typeerror ("get length of", I0, F0, R0, R1)
     ret 0, 0.0, 1n

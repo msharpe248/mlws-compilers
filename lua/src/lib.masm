@@ -318,7 +318,11 @@
 
 .func B$rawlen(i64, f64, ref) -> (i64, i64, f64, ref)
     bnisa R0, Tab, 1f
+    mov R1, R0->Tab.wk
+    bnz R1, 3f
     mov I2, R0->Tab.n
+    ret 1, I2, 0.0, null
+3:  call rt$wlen (R0) -> (I2)
     ret 1, I2, 0.0, null
 1:  typeof I1, R0
     bne I1, 1, 2f
@@ -341,11 +345,20 @@
 2:  bne.r R1, 1n, 3f
     mov.r R1, null
 3:  mov R0->Tab.meta, R1
+    mov I3, 0
     bz R1, 4f
-    mov I3, R1->Tab.gc
-    bz I3, 4f
+    mov I3, R1->Tab.lib
+4:  shr I4, I3, 1               ; the weak mode mt asks for
+    mov I5, 0
+    mov R5, R0->Tab.wk
+    bz R5, 5f
+    mov I5, R5->Weak.mode
+5:  beq I4, I5, 6f
+    call rt$setweak (R0, I4)
+6:  and I6, I3, 1
+    bz I6, 7f
     call rt$markfin (R0)
-4:  ret 1, 0, 0.0, R0
+7:  ret 1, 0, 0.0, R0
 .endf
 
 .func B$getmetatable(i64, f64, ref) -> (i64, i64, f64, ref)

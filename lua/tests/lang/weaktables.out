@@ -1,0 +1,13 @@
+3	kept value	a string key stays	an integer key stays
+5	true	strings stay	42	1.5	false	nil
+1	true
+0
+5	5	30
+0,10,20,30,40,50,60,70	70	7
+1120	nil	2
+1=0 2=10 3=20 4=30 5=40 6=50 7=60
+one	nil	true
+nil
+hello weak
+1	2	2
+0

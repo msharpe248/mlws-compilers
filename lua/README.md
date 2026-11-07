@@ -42,8 +42,8 @@ mlws-vm-luac --library DIR
 ```
 
 The assembly is one self-contained file: the program, the runtime and the
-library, with no imports. It uses MLWSVM 0.17.0's `gc.finalize` and
-weak maps (for `__gc`), 0.14.0's `text.replace_n` (for `gsub` of a plain
+library, with no imports. It uses MLWSVM 0.17.0's `gc.finalize`,
+weak maps and weak references (for `__gc` and `__mode`), 0.14.0's `text.replace_n` (for `gsub` of a plain
 pattern by a plain string), M37's `text.ascii_upper` and
 `text.ascii_lower`, M34's `.loc` source positions, and M32's element
 offsets and `bisa`/`bnisa`, so it needs MLWSVM 0.17.0 or later. It can be assembled to a binary module
@@ -92,7 +92,7 @@ The whole language of Lua 5.5:
 * strings, tables with array and hash parts, metatables and every
   metamethod (`__index`, `__newindex`, `__call`, arithmetic and bitwise ones,
   `__eq`, `__lt`, `__le`, `__concat`, `__len`, `__unm`, `__close`,
-  `__tostring`, `__name`, `__metatable`, `__pairs`, `__gc`);
+  `__tostring`, `__name`, `__metatable`, `__pairs`, `__gc`, `__mode`);
 * closures with shared upvalues, varargs, multiple results and assignment,
   proper tail calls, `goto` and labels, integer and float `for` loops;
 * `local <const>` and `<close>` variables; Lua 5.5's `global` declarations
@@ -128,7 +128,11 @@ them, prefixed `mlws-vm-lua:`, with exit status 1.
   allocation instead. A table that a register of a running function last
   held stays alive until the register is reused, so it can outlive its
   last use there. Errors in a finalizer are dropped without a warning.
-* **No weak tables**: `__mode` is ignored.
+* **Weak tables** (`__mode`) follow the mode the metatable has when
+  `setmetatable` is called (as in Lua, changing `__mode` afterwards is not
+  seen), and `_G` never becomes weak. A table that a register of a running
+  function last held stays alive until the register is reused, as with
+  finalizers. `#t` of a weak table counts up from 1 to its first nil.
 * **To-be-closed variables** are closed when their block exits normally or
   by `break`, `goto` or `return`, but not when an error unwinds it.
 * **`#t` for a table with holes** returns a border, as Lua does, but not
