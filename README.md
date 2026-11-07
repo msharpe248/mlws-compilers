@@ -27,9 +27,15 @@ lox/mlws-vm-lox -S -o out.masm program.lox  # ... to out.masm
 lox/mlws-vm-lox -S -o - program.lox         # ... to standard output
 lox/mlws-vm-lox -k program.lox              # run it, and keep program.masm
 lox/mlws-vm-lox -o out.masm program.lox     # run it, and keep out.masm
+lox/mlws-vm-lox -b app program.lox          # write one executable, app; don't run
 ```
 
 (and the same for `bf/mlws-vm-bf`, `lua/mlws-vm-lua` and `erlang/mlws-vm-erl`). `-S` needs no VM.
+`-b` (MLWSVM 0.17.0's `mlwsvm bundle`) writes a copy of `mlwsvm` with the
+program after it, optimized at `--opt 3` and with the JIT on, so it runs
+anywhere the same kind of machine runs, with no MLWSVM installed. On macOS,
+don't give it a name ending in `.app`: macOS kills such a bundle as it
+starts (`Killed: 9`).
 The compilers themselves take `-o FILE`, defaulting to `program.masm` next
 to the source: `lox/mlws-vm-loxc program.lox`, `lua/mlws-vm-luac
 program.lua` and `bf/mlws-vm-bfc program.b` only compile.

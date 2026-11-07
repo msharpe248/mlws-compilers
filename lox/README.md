@@ -18,6 +18,9 @@ mlws-vm-lox [options] program.lox [args...]
   -k             keep the assembly after running the program
   -o FILE        the assembly file (default: program.masm next to the source);
                  with -S, '-' writes it to standard output
+  -b FILE        write one executable, FILE, instead of running: the VM and
+                 the program, optimized (--opt 3) with the JIT on, which runs
+                 with nothing beside it (MLWSVM 0.17.0's mlwsvm bundle)
   --version      print the compiler's version (lox/VERSION)
 ```
 

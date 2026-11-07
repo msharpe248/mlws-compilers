@@ -8,6 +8,7 @@ the VM's, so this is the compiler that puts the VM's concurrency to work.
 make                                   # builds mlws-vm-erlc
 ./mlws-vm-erl program.erl [args...]    # compile and run
 ./mlws-vm-erl -S program.erl           # write program.masm, don't run
+./mlws-vm-erl -b app program.erl       # write one executable, app (MLWSVM 0.17.0)
 ./mlws-vm-erlc -o out.masm program.erl # the compiler alone
 make test                              # the tests (needs python3)
 make bench                             # the benchmarks, against erl if installed

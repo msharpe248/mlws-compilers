@@ -6,21 +6,27 @@
 #     -k           keep the assembly after running it
 #     -o FILE      the assembly file (default: program.masm next to the
 #                  source); with -S, '-' writes it to standard output
+#     -b FILE, --bundle FILE
+#                  write one executable, FILE, holding the VM and the
+#                  program (optimized at --opt 3, the JIT on) instead of
+#                  running it; it runs with no MLWSVM beside it (MLWSVM
+#                  0.17.0 or later)
 #     --version    print the compiler's version
 #
 # The VM is found as $MLWSVM, then mlwsvm on PATH, then ../mlws-vm/mlwsvm
 # next to this repository.
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 usage() {
-    echo "usage: mlws-vm-lox [--version] [-S | -k] [-o FILE] program.lox [args...]" >&2
+    echo "usage: mlws-vm-lox [--version] [-b FILE] [-S | -k] [-o FILE] program.lox [args...]" >&2
     exit 64
 }
 
-compile_only= keep= out= prog=
+compile_only= keep= out= prog= bundle=
 while [ $# -gt 0 ]; do
     case "$1" in
         -S) compile_only=1; shift ;;
         -k) keep=1; shift ;;
+        -b|--bundle) [ $# -ge 2 ] || usage; bundle=$2; shift 2 ;;
         -o) [ $# -ge 2 ] || usage; out=$2; shift 2 ;;
         --version) exec "$here/mlws-vm-loxc" --version ;;
         -h|--help) usage ;;
@@ -29,6 +35,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 [ -n "$prog" ] || usage
+[ -z "$bundle" ] || { [ $# -eq 0 ] && [ -z "$compile_only" ]; } || usage
 
 if [ -n "$compile_only" ] || [ -n "$keep" ] || [ -n "$out" ]; then
     [ -n "$out" ] || out="${prog%.*}.masm"
@@ -45,4 +52,8 @@ fi
 [ -n "$compile_only" ] && exit 0
 
 . "$here/../tools/find-vm.sh"
+if [ -n "$bundle" ]; then
+    "$MLWSVM" bundle -o "$bundle" --opt 3 --jit on "$out"
+    exit $?
+fi
 "$MLWSVM" run "$out" "$@"

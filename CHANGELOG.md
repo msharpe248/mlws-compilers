@@ -5,6 +5,15 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
 ## Unreleased
 
+### Repository
+
+* Every driver takes `-b FILE` (`--bundle FILE`): compile the program and
+  write one executable, FILE, with MLWSVM 0.17.0's `mlwsvm bundle`, instead
+  of running it. The program is optimized at `--opt 3` when it is bundled,
+  so the bundle runs it at that level without the optimizer's start-up
+  cost (spectralnorm: 0.08 s run with the JIT, 0.04 s bundled), and the JIT
+  is on. tools/test-drivers.sh checks it on an MLWSVM that has `bundle`.
+
 ### Lua
 
 * `__gc`: a table whose metatable has a `__gc` field when `setmetatable`
