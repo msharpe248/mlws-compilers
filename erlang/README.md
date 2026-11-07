@@ -29,11 +29,12 @@ debug`, which reads its commands from standard input:
 
 ```
 $ ./mlws-vm-erl -d program.erl
-(mdb) break program.erl:6
+(mdb) break program.erl:16
 (mdb) run
 (mdb) locals
-W (I1, R1) = 2
 Shapes (I0, R0) = [{rect,2,3},{circle,1.5}]
+Name (I1, R1) = "shapes"
+M (I3, R3) = #{a => 1}
 ```
 
 A variable is named (`.local X, I1, R1`) from where it is bound, in the
