@@ -34,6 +34,7 @@ $ ./mlws-vm-erl -d program.erl
 (mdb) locals
 Shapes (I0, R0) = [{rect,2,3},{circle,1.5}]
 Name (I1, R1) = "shapes"
+Bin (I2, R2) = <<"bin">>
 M (I3, R3) = #{a => 1}
 ```
 
