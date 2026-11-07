@@ -129,8 +129,8 @@ them, prefixed `mlws-vm-lua:`, with exit status 1.
   held stays alive until the register is reused, so it can outlive its
   last use there. Errors in a finalizer are dropped without a warning.
 * **Weak tables** (`__mode`) follow the mode the metatable has when
-  `setmetatable` is called (as in Lua, changing `__mode` afterwards is not
-  seen), and `_G` never becomes weak. A table that a register of a running
+  `setmetatable` is called (Lua leaves a later change to `__mode`
+  undefined; here it is not seen), and `_G` never becomes weak. A table that a register of a running
   function last held stays alive until the register is reused, as with
   finalizers. `#t` of a weak table counts up from 1 to its first nil.
 * **To-be-closed variables** are closed when their block exits normally or

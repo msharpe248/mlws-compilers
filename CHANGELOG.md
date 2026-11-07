@@ -34,6 +34,19 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   inline caches miss and its accesses go to the runtime; `next` and
   `pairs` walk a snapshot of the keys that holds objects by weak
   references. Tables are one word larger (`Tab.wk`).
+* Programs say they need MLWSVM 0.17.0 (`.requires mlwsvm, ">=0.17.0"`),
+  so an older VM says so instead of failing to link a native.
+
+### Erlang
+
+* `re`: `run/2,3` (`global`, `{capture, Spec, Type}` with `all`,
+  `all_but_first`, `first`, `none` or group numbers, and `index`, `list`
+  or `binary`; `caseless`, `multiline`, `dotall`, `unicode`, `{offset,
+  N}`), `replace/3,4` (`&`, `\N`, `\g{N}`; `global`, `{return, T}`),
+  `split/2,3` (groups, `group`, `trim`, `{parts, N}`) and `compile/1,2`,
+  in Erlang on one runtime function over MLWSVM 0.17.0's `regex.find`.
+  Only a program that uses `re` gets that part of the runtime, and needs
+  MLWSVM 0.17.0 (its `.requires` says so); others still need 0.6.0.
 
 ## Release 0.7.1
 
