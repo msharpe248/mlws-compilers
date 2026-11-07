@@ -35,11 +35,12 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 * `__gc`: a table whose metatable has a `__gc` field when `setmetatable`
   is called is finalized after a collection finds nothing holds it, and
   the ones left when the program ends are finalized then, the last marked
-  first (MLWSVM 0.17.0's `gc.finalize` and weak maps; Lua programs now need
-  MLWSVM 0.17.0). The VM's finalizer only queues the table; `__gc` runs at
-  `collectgarbage()`, at the next `setmetatable` that marks a table and at
-  exit, where Lua code may run without breaking a table the runtime is in
-  the middle of changing.
+  first (MLWSVM 0.17.0's `gc.finalize` and weak maps). The program holds
+  its finalizers (MLWSVM 0.17.3's `gc.hold_finalizers`), so `__gc` runs
+  only when the runtime calls `gc.run_finalizers`: at `collectgarbage()`,
+  at the next `setmetatable` that marks a table and at exit, where Lua
+  code may run without breaking a table the runtime is in the middle of
+  changing.
 * Weak tables: `setmetatable` with a metatable whose `__mode` has `k`,
   `v` or both moves the table's entries into MLWSVM weak maps (one for
   references, made weak in that mode, and one for numbers, whose keys are
@@ -50,7 +51,7 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   inline caches miss and its accesses go to the runtime; `next` and
   `pairs` walk a snapshot of the keys that holds objects by weak
   references. Tables are one word larger (`Tab.wk`).
-* Programs say they need MLWSVM 0.17.0 (`.requires mlwsvm, ">=0.17.0"`),
+* Programs say they need MLWSVM 0.17.3 (`.requires mlwsvm, ">=0.17.3"`),
   so an older VM says so instead of failing to link a native.
 * `-g`: parameters, locals, loop variables and the upvalues a function with
   a loop copies to registers are named where they are in scope, shown by

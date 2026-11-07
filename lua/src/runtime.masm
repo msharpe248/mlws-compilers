@@ -90,7 +90,6 @@ rt$ipairs_aux: .zero 8
 rt$next_fn: .zero 8
 rt$setmt:   .zero 8     ; the library's setmetatable, for calls made inline
 rt$fins:    .zero 8     ; tables marked for finalization -> 1 (weak keys)
-rt$finq:    .zero 8     ; marked tables found dead, waiting for their __gc
 rt$closing: .i64 0      ; the program is ending: running the finalizers left
 rt$sqrt_fn: .zero 8     ; the library's math.sqrt, for calls made inline
 rt$sitesfn: .zero 8     ; the program's call sites (p$sites), for rt$argwho
@@ -300,6 +299,7 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
 .endf
 
 .func rt$init_done
+    ncall "gc.hold_finalizers" (1)  ; __gc runs only where rt$runfins asks
     mov R0, @rt$G
     call rt$setfield (R0, "_G", 0, 0.0, R0)
     call rt$setfield (R0, "_VERSION", 0, 0.0, "Lua 5.5")
@@ -1659,46 +1659,24 @@ rt$ctors:   .zero 8     ; the shape each table constructor makes
     mnew R1
     ncall "weak.map" (R1, 1)
     mov @rt$fins, R1
-    lnew R3
-    mov @rt$finq, R3
 1:  mhas I1, R1, R0
     bnz I1, 8f
     mset R1, R0, 1
-    closure rt$gcfound -> (R2)
+    closure rt$fin1 -> (R2)
     ncall "gc.finalize" (R0, R2)
 8:  call rt$runfins
 9:  ret
 .endf
 
-; The VM's finalizer: a marked table that nothing holds. It may run between
-; any two instructions, so it only queues the table; rt$runfins calls __gc
-; where Lua code may run.
-.func rt$gcfound(ref t)
-    mov R1, @rt$finq
-    lpush R1, R0
+; Call __gc for the marked tables found dead (and any found meanwhile). The
+; process holds its finalizers (rt$init_done), so the VM calls rt$fin1 only
+; here, where Lua code may run, never halfway through changing a table.
+.func rt$runfins
+    ncall "gc.run_finalizers" -> (I0)
     ret
 .endf
 
-; Call __gc for the tables queued (and any queued meanwhile), in order.
-.func rt$runfins
-    mov R0, @rt$finq
-    bz R0, 9f
-1:  len I0, R0
-    bz I0, 9f
-    lnew R1
-    mov @rt$finq, R1
-    mov I1, 0
-2:  bge I1, I0, 3f
-    mov R2, R0[I1]
-    call rt$fin1 (R2)
-    inc I1
-    jmp 2b
-3:  mov R0, @rt$finq
-    jmp 1b
-9:  ret
-.endf
-
-; Finalize t: call its metatable's __gc, if t is still marked. The results
+; The VM's finalizer for a marked table that nothing holds. Finalize t: call its metatable's __gc, if t is still marked. The results
 ; others have left in @rt$mv are kept, and errors are dropped.
 .func rt$fin1(ref t)
     mov R1, @rt$fins
