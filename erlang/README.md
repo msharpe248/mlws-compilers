@@ -44,9 +44,10 @@ clause binds keep their names. The formatter, `.debug_format rt$show`,
 calls `io_lib:print/1` in a process of its own, on copies. Variables on the
 stack (beyond the 29th slot) are not named, and the optimizer drops the
 names of a function it changes, so debug code that is not optimized. The
-output of `-g` says it needs MLWSVM 0.17.3 (`.requires`); `mlwsvm debug`
-takes no `--max-frames`, so a program run with `-d` has the VM's default
-limit on recursion.
+output of `-g` says it needs MLWSVM 0.17.3 (`.requires`). On MLWSVM 0.17.4
+and later, `-d` allows as many frames as a run does (`mlwsvm debug
+--max-frames`); 0.17.3's `mlwsvm debug` takes no VM options, so there a
+program run with `-d` has the VM's default limit on recursion.
 
 ## What it implements
 

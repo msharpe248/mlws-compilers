@@ -72,7 +72,9 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   0.17.3 (its `.requires` says so); others still need 0.6.0.
 * `-g`: variables are named from where they are bound; after a `case`,
   `receive` or `try`, only those every clause binds keep their names. They
-  are shown by `io_lib:print/1`, as `~p` prints them.
+  are shown by `io_lib:print/1`, as `~p` prints them. On MLWSVM 0.17.4 and
+  later, `-d` passes `--max-frames 50000000` to `mlwsvm debug`, as a run
+  does, so deep recursion works under the debugger too.
 
 ## Release 0.7.1
 
