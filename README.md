@@ -70,6 +70,7 @@ says what changed in each.
 | 0.6.1 | 0.4.1 | 0.5.0 | 0.4.3 | 0.2.1 |
 | 0.7.0 | 0.4.1 | 0.5.0 | 0.4.4 | 0.2.2 |
 | 0.7.1 | 0.4.1 | 0.5.1 | 0.4.5 | 0.2.3 |
+| 0.8.0 | 0.5.0 | 0.6.0 | 0.5.0 | 0.3.0 |
 
 ## Naming
 
@@ -155,7 +156,7 @@ The Lox benchmarks, with and without the JIT, are in
 [lox/README.md](lox/README.md#performance); there is no reference Lox
 to compare with.
 
-Every test suite passes with the JIT (tested on MLWSVM 0.8.0, 0.9.1, 0.10.0, 0.11.0, 0.12.0, 0.13.0, 0.14.0 and 0.15.0), and
+Every test suite passes with the JIT (tested on MLWSVM 0.8.0, 0.9.1, 0.10.0, 0.11.0, 0.12.0, 0.13.0, 0.14.0, 0.15.0, 0.17.3 and 0.17.4), and
 prints the same as without it, and with the generational collector of MLWSVM
 0.9.0 and later checked against a full heap walk at every minor collection
 (`MLWSVM_GC_VERIFY=1`). Use MLWSVM 0.9.1 or later with the JIT: 0.9.0's can

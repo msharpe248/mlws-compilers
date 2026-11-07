@@ -3,7 +3,20 @@
 Each compiler is versioned on its own (its `VERSION` file); a release of
 this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
-## Unreleased
+## Release 0.8.0
+
+Lox 0.6.0, Lua 0.5.0, Erlang 0.3.0 and bf 0.5.0. Every driver can bundle a
+program into one executable (`-b`, MLWSVM 0.17.0); Lox, Lua and Erlang
+name a program's variables for MLWSVM's debuggers (`-g`, and `-d` to run
+in `mlwsvm debug`, MLWSVM 0.17.3); Lua has `__gc` and weak tables, and
+Erlang the `re` module. Lua programs need MLWSVM 0.17.3 or later; Erlang
+programs that use `re`, and the output of `-g`, too; Lox, bf and other
+Erlang programs still run on MLWSVM 0.6.0 or later (tested on 0.6.1).
+Every suite passes on MLWSVM 0.17.3 and 0.17.4 with the JIT off, on and
+compiling everything, with `MLWSVM_OPT=3`, `MLWSVM_GC_STRESS=1` and
+`MLWSVM_GC_VERIFY=1`. Speed on MLWSVM 0.17.4 is as 0.7.1's, but for
+Lua's methods benchmark (0.53 s to 0.56 s interpreted; tables are a word
+larger).
 
 ### Repository
 
@@ -23,14 +36,18 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   drivers' `-d` compiles with `-g` and runs the program in `mlwsvm debug`.
   tools/test-drivers.sh checks both on MLWSVM 0.17.3 or later.
 
-### Lox
+### bf 0.5.0
+
+* The driver takes `-b FILE` (above).
+
+### Lox 0.6.0
 
 * `-g`: parameters, `this` and locals are named where they are in scope
   (a block's end ends its names and shows a variable it hid again), shown
   by `rt$show` as `print` shows them, with strings in quotes and a captured
   variable's box opened.
 
-### Lua
+### Lua 0.5.0
 
 * `__gc`: a table whose metatable has a `__gc` field when `setmetatable`
   is called is finalized after a collection finds nothing holds it, and
@@ -59,7 +76,7 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   and a table by its first entries (`{1, 2, x = 3, ...}`); it calls no
   `__tostring`. With `--shared` the formatter is the library's.
 
-### Erlang
+### Erlang 0.3.0
 
 * `re`: `run/2,3` (`global`, `{capture, Spec, Type}` with `all`,
   `all_but_first`, `first`, `none`, `all_names` or group numbers and
