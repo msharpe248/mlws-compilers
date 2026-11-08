@@ -1,7 +1,7 @@
 %% Runtime support for mlws-vm-erlc, in Erlang: exit reasons sent between
 %% processes as text (ser/deser), and crash reports.
 -module(erts).
--export([ser/1, deser/1, report/2, main_error/2]).
+-export([ser/1, deser/1, report/2, main_error/2, fname/3]).
 
 %% A term as text (~w), as an atom-like string for the VM.
 ser(T) -> '$rt':list_to_str(lists:flatten(io_lib:write(T))).
@@ -89,3 +89,18 @@ report(_Class, Reason) ->
 %% An exception left main.
 main_error(Class, Reason) ->
     '$rt':put_chars_err(io_lib:format("mlws-vm-erl: exception ~w: ~p~n", [Class, Reason])).
+
+%% The MLWSVM name of M:F/A (as the compiler's fn_name makes it), for
+%% apply/3 of a function of a program compiled with --modules.
+fname(M, F, A) ->
+    list_to_atom("E$" ++ mangle(atom_to_list(M)) ++ "$" ++ mangle(atom_to_list(F)) ++ "$" ++ integer_to_list(A)).
+
+mangle([]) -> [];
+mangle([C | T]) when C >= $a, C =< $z -> [C | mangle(T)];
+mangle([C | T]) when C >= $A, C =< $Z -> [C | mangle(T)];
+mangle([C | T]) when C >= $0, C =< $9 -> [C | mangle(T)];
+mangle([$_ | T]) -> [$_ | mangle(T)];
+mangle([C | T]) -> [$_, hex(C bsr 4), hex(C band 15), $_ | mangle(T)].
+
+hex(D) when D < 10 -> $0 + D;
+hex(D) -> $A + D - 10.

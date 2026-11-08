@@ -3,6 +3,28 @@
 Each compiler is versioned on its own (its `VERSION` file); a release of
 this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
+## Unreleased
+
+### Erlang
+
+* `--modules DIR` (on `mlws-vm-erlc` and the driver): each module of the
+  program is written to DIR as an MLWSVM module of its own, `M.masm`,
+  importing `erlrt.masm`, the runtime and the whole library, which is
+  written beside them. A call to another of the program's modules, and a
+  fully qualified call to its own (`?MODULE:loop(S)`), finds that
+  module's current version when it is made (loading the module the first
+  time), so modules may call each other both ways and a new version takes
+  over as in Erlang: code already running stays on the old one. Needs
+  MLWSVM 0.18.0. tests/modules has these programs.
+* `code`: `load_file/1` and `load_binary/3` (the module's assembly, as
+  `--modules` writes it) on MLWSVM's `module.load`, `module.reload` and
+  `module.reload_text`; `purge/1` and `soft_purge/1` on `module.purge_kill`
+  and `module.purge`; `ensure_loaded/1`, `is_loaded/1`. A program compiled
+  to one file has no module to replace: `load_file` says
+  `{error, embedded}`.
+* `file:read_file/1` and `file:write_file/2`, on `fs.read_file` and
+  `fs.write_file`.
+
 ## Release 0.8.0
 
 Lox 0.6.0, Lua 0.5.0, Erlang 0.3.0 and bf 0.5.0. Every driver can bundle a

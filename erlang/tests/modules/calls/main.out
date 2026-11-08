@@ -1,0 +1,11 @@
+42
+7
+10
+[2,4,6]
+{'EXIT',{undef,[]}}
+{'EXIT',{undef,[]}}
+hello
+{file,"helper.masm"}
+{module,helper}
+63 63
+{error,nofile}

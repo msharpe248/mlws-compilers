@@ -165,13 +165,17 @@ static char *read_file(const char *path, size_t *len) {
 }
 
 static void usage(void) {
-    fprintf(stderr, "usage: mlws-vm-erlc [--version] [-g] [-o FILE] program.erl [module.erl...]\n"
-                    "  -g        name the variables for debuggers (needs MLWSVM 0.17.3)\n");
+    fprintf(stderr, "usage: mlws-vm-erlc [--version] [-g] [-o FILE | --modules DIR] program.erl [module.erl...]\n"
+                    "  -g        name the variables for debuggers (needs MLWSVM 0.17.3)\n"
+                    "  --modules DIR\n"
+                    "            write each module to DIR as an MLWSVM module of its own, M.masm,\n"
+                    "            with the runtime and library as erlrt.masm, so that code:load_file\n"
+                    "            can replace one while the program runs (needs MLWSVM 0.18.0)\n");
     exit(64);
 }
 
 int main(int argc, char **argv) {
-    const char *out = NULL;
+    const char *out = NULL, *moddir = NULL;
     VEC(const char *) files = {0};
     for (int k = 1; k < argc; k++) {
         if (!strcmp(argv[k], "--version")) {
@@ -183,19 +187,27 @@ int main(int argc, char **argv) {
             if (++k >= argc)
                 usage();
             out = argv[k];
+        } else if (!strcmp(argv[k], "--modules")) {
+            if (++k >= argc)
+                usage();
+            moddir = argv[k];
         } else if (argv[k][0] == '-' && argv[k][1]) {
             usage();
         } else {
             vec_push(files, argv[k]);
         }
     }
-    if (!files.n)
+    if (!files.n || (out && moddir))
         usage();
     Module **mods = xcalloc((size_t)files.n, sizeof *mods);
     for (int k = 0; k < files.n; k++) {
         size_t len;
         char *src = read_file(files.v[k], &len);
         mods[k] = parse_module(files.v[k], src, len);
+    }
+    if (moddir) {
+        generate_modules(mods, files.n, moddir);
+        return 0;
     }
     char *outpath = NULL;
     if (!out) {

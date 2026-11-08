@@ -43,7 +43,11 @@ typedef struct {
     Buf consts;                     /* code that builds them: functions K$n */
     bool dispatch;                  /* apply/3 and M:F(...) with unknown M or F used */
     Names dyn_mods;     /* modules named by atoms (for dispatch) */
+    bool split;         /* --modules: each module its own MLWSVM module */
+    bool library;       /* ... and this is the runtime and library (erlrt) */
 } Prog;
+
+static bool is_prelude(const char *name);
 
 static Prog P;
 
@@ -2009,6 +2013,36 @@ static bool is_inline_bif(const char *name, int n) {
 
 static Val call_fun_value(Fn *g, Val f, Val *args, int n, bool tailpos);
 
+/* --modules: M:F(Args) of a program's module, whose current version the
+ * runtime finds (rt$rfun) when it is called, loading it if need be. */
+static Val remote_call(Fn *g, Node *e, const char *mod, const char *name, int n, bool tailpos) {
+    int res = tailpos ? -1 : temp(g);
+    Val *args = xmalloc(((size_t)n + 1) * sizeof *args);
+    for (int k = 0; k < n; k++)
+        args[k] = ev(g, e->kids.v[k]);
+    loc(g, e);
+    note_atom(mod);
+    note_atom(name);
+    const char *fname = fn_name(mod, name, n);
+    emit(g, "call rt$rfun (%d, %s, %s, %s) -> %s", n, quote(mod, (int)strlen(mod)), quote(name, (int)strlen(name)),
+         quote(fname, (int)strlen(fname)), XR1);
+    if (tailpos) {
+        emit(g, "tcalli %s (%s)", XR1, arglist(args, n));
+        free(args);
+        return vnil();
+    }
+    g->want = res + 1;
+    int t = temp(g);
+    Val tv = slot_val(t);
+    emit(g, "calli %s (%s) -> (%s, %s)", XR1, arglist(args, n), tv.i, tv.r);
+    /* let go of the version called, so that code:purge need not keep it */
+    emit(g, "mov.r %s, null", XR1);
+    g->want = 0;
+    g->top = res + 1;
+    free(args);
+    return tv;
+}
+
 /* A call. In tail position it is a tail call, and returns nothing useful. */
 static Val call(Fn *g, Node *e, bool tailpos) {
     Node *callee = e->a;
@@ -2052,6 +2086,8 @@ static Val call(Fn *g, Node *e, bool tailpos) {
         }
         if (!target && !strcmp(mod, "$rt"))
             target = S("rt$%s", mangle(name));
+        if (!target && P.split && !P.library && !is_prelude(mod))
+            return remote_call(g, e, mod, name, n, tailpos);
         if (!target) {
             target = resolve(mod, name, n);
             if (target) {
@@ -2270,6 +2306,11 @@ static Val funref(Fn *g, Node *e) {
     const char *name = e->b->s;
     int n = (int)e->i;
     const char *target = NULL;
+    if (P.split && !P.library && e->a && !is_prelude(mod)) {
+        /* --modules: it calls the module's current version */
+        P.dispatch = true;
+        return rt3(g, "make_fun", vatom(mod), vatom(name), vint(n));
+    }
     if (!e->a) {
         Function *f = find_function(g->mod, name, n);
         if (f)
@@ -3472,8 +3513,17 @@ static Module *get_module(const char *name) {
     return NULL;
 }
 
+static bool is_prelude(const char *name) {
+    for (int k = 0; prelude_names[k]; k++)
+        if (!strcmp(prelude_names[k], name))
+            return true;
+    return false;
+}
+
 static const char *request(Module *m, Function *f) {
     const char *name = fn_name(m->name, f->name, f->arity);
+    if (P.split && !P.library && is_prelude(m->name))
+        return name;    /* erlrt's */
     for (int k = 0; k < P.emitted.n; k++)
         if (!strcmp(P.emitted.v[k], name))
             return P.emitted.v[k];
@@ -3496,7 +3546,9 @@ static void gen_dispatch(void) {
         for (int j = 0; prelude_names[j]; j++)
             if (!strcmp(prelude_names[j], m->name))
                 user = false;
-        if (!user) {
+        if (user && P.library)
+            continue;   /* erlrt: the library's alone */
+        if (!user && !P.library) {
             bool named = false;
             for (int j = 0; j < P.atoms.n; j++)
                 if (P.atoms.v[j] == m->name)
@@ -3546,6 +3598,49 @@ static void gen_atoms(void) {
         buf_printf(&P.out, "    mset R0, %s, %s\n", q, q);
     }
     buf_puts(&P.out, "    ret R0\n.endf\n");
+}
+
+/* The program's main: the module's main/0, or main/1 given the arguments. */
+static void emit_main(FILE *out, const char *entry, int main_arity) {
+    fprintf(out, ".func main -> i64\n");
+    fprintf(out, "    call rt$main_start ()\n");
+    fprintf(out, ".try 1f\n");
+    if (main_arity == 0) {
+        fprintf(out, "    call %s () -> (I0, R0)\n", entry);
+    } else {
+        fprintf(out, "    call rt$args () -> (I1, R1)\n");
+        fprintf(out, "    call %s (I1, R1) -> (I0, R0)\n", entry);
+    }
+    fprintf(out, ".endtry\n    call rt$main_end ()\n    ret 0\n");
+    fprintf(out, "1:  catch R0\n    call rt$main_uncaught (R0) -> I0\n    ret I0\n.endf\n\n");
+}
+
+/* What differs between one file and --modules: whether code:load_file and
+ * friends work (rt$split), and what apply/3 of a function the table of
+ * exported functions lacks does: undef, or find it in the program's module. */
+static void gen_mode_fns(FILE *out) {
+    fprintf(out, "\n.func rt$split -> i64\n    ret %d\n.endf\n", P.split ? 1 : 0);
+    if (!P.split)       /* code: one file has no modules to load or replace */
+        fprintf(out, ".func rt$code_load(i64 mi, ref m) -> (i64, ref)\n    ret 0, \"embedded\"\n.endf\n"
+                     ".func rt$code_load_text(i64 mi, i64 bi, ref m, ref b) -> (i64, ref)\n"
+                     "    ret 0, \"embedded\"\n.endf\n"
+                     ".func rt$code_purge(i64 mi, ref m) -> (i64, ref)\n    ret 0, \"false\"\n.endf\n"
+                     ".func rt$code_soft_purge(i64 mi, ref m) -> (i64, ref)\n    ret 0, \"true\"\n.endf\n"
+                     ".func rt$code_loaded(i64 mi, ref m) -> (i64, ref)\n    ret 0, \"false\"\n.endf\n");
+    fprintf(out, ".func rt$apply_miss(i64 m, i64 f, i64 a, ref mr, ref fr, ref ar) -> (i64, ref)\n"
+                 "    call rt$length (a, ar) -> (I4, R4)\n");
+    if (!P.split) {
+        fprintf(out, "    tcall rt$undef (m, f, I4, mr, fr, null)\n.endf\n");
+        return;
+    }
+    fprintf(out, "    call %s (m, f, I4, mr, fr, null) -> (I5, R5)\n"
+                 "    call rt$rfun (I4, mr, fr, R5) -> R6\n"
+                 "    new R7, Fun\n"
+                 "    mov R7->Fun.arity, I4\n"
+                 "    mov.r R7->Fun.clo, R6\n"
+                 "    mov.r R7->Fun.name, R5\n"
+                 "    tcall rt$apply_fun (0, a, R7, ar)\n.endf\n",
+            fn_name("erts", "fname", 3));
 }
 
 void generate(Module **mods, int nmods, FILE *out, const char *source_name) {
@@ -3632,17 +3727,384 @@ void generate(Module **mods, int nmods, FILE *out, const char *source_name) {
         fprintf(out, "K%d: .zero 8\n", k);
     if (P.consts.n)
         fwrite(P.consts.s, 1, P.consts.n, out);
+    gen_mode_fns(out);
     fprintf(out, "\n; ---------------------------------------------------------------- program\n");
-    fprintf(out, ".func main -> i64\n");
-    fprintf(out, "    call rt$main_start ()\n");
-    fprintf(out, ".try 1f\n");
-    if (main_arity == 0) {
-        fprintf(out, "    call %s () -> (I0, R0)\n", entry);
-    } else {
-        fprintf(out, "    call rt$args () -> (I1, R1)\n");
-        fprintf(out, "    call %s (I1, R1) -> (I0, R0)\n", entry);
-    }
-    fprintf(out, ".endtry\n    call rt$main_end ()\n    ret 0\n");
-    fprintf(out, "1:  catch R0\n    call rt$main_uncaught (R0) -> I0\n    ret I0\n.endf\n\n");
+    emit_main(out, entry, main_arity);
     fwrite(P.out.s, 1, P.out.n, out);
+}
+
+/* ------------------------------------------------------------------ --modules */
+
+/* The names erlrt defines, which a program's module refers to as
+ * erlrt.name: a function, a struct, or data (a label outside functions,
+ * except the constants K<n>, which every module has of its own). */
+typedef struct {
+    char **slot;
+    int cap, n;
+    Names order;
+} SymSet;
+
+static unsigned sym_hash(const char *s, size_t n) {
+    unsigned h = 2166136261u;
+    for (size_t i = 0; i < n; i++)
+        h = (h ^ (unsigned char)s[i]) * 16777619u;
+    return h;
+}
+
+static char **sym_find(SymSet *set, const char *s, size_t n) {
+    for (unsigned i = sym_hash(s, n) & (unsigned)(set->cap - 1);; i = (i + 1) & (unsigned)(set->cap - 1)) {
+        char *e = set->slot[i];
+        if (!e || (strlen(e) == n && memcmp(e, s, n) == 0))
+            return &set->slot[i];
+    }
+}
+
+static bool sym_has(SymSet *set, const char *s, size_t n) { return set->cap && *sym_find(set, s, n); }
+
+static void sym_add(SymSet *set, const char *s, size_t n) {
+    if (2 * (set->n + 1) > set->cap) {
+        int cap = set->cap ? 2 * set->cap : 4096;
+        char **slot = xcalloc((size_t)cap, sizeof *slot);
+        SymSet big = {slot, cap, 0, {0}};
+        for (int i = 0; i < set->cap; i++)
+            if (set->slot[i])
+                *sym_find(&big, set->slot[i], strlen(set->slot[i])) = set->slot[i];
+        free(set->slot);
+        set->slot = slot;
+        set->cap = cap;
+    }
+    char **e = sym_find(set, s, n);
+    if (*e)
+        return;
+    *e = xstrndup(s, n);
+    set->n++;
+    vec_push(set->order, *e);
+}
+
+static bool ident_start(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$'; }
+static bool ident_char(char c) { return ident_start(c) || (c >= '0' && c <= '9'); }
+
+static bool is_const_name(const char *s, size_t n) {
+    size_t i = 1;
+    if (n < 2 || s[0] != 'K')
+        return false;
+    if (s[1] == '$')
+        i = 2;
+    if (i >= n)
+        return false;
+    for (; i < n; i++)
+        if (s[i] < '0' || s[i] > '9')
+            return false;
+    return true;
+}
+
+/* The macros that define a function, .func PREFIX\\arg: its name is PREFIX
+ * and the macro's first argument. */
+static struct {
+    char *macro, *prefix;
+} fmacros[16];
+static int nfmacros;
+static char *cur_macro;
+
+/* Add what a line defines. *in_fn: the line is inside a function (1), a
+ * struct (2) or a macro (3). */
+static void collect_symbols(SymSet *set, const char *t, int *in_fn) {
+    const char *p = NULL;
+    while (*t == ' ' || *t == '\t')
+        t++;
+    if (*in_fn == 2) {
+        if (!strncmp(t, ".ends", 5))
+            *in_fn = 0;
+        return;
+    }
+    if (*in_fn == 3) {
+        const char *bs = strchr(t, '\\');
+        if (!strncmp(t, ".endm", 5)) {
+            *in_fn = 0;
+        } else if (!strncmp(t, ".func ", 6) && bs && nfmacros < 16) {
+            fmacros[nfmacros].macro = cur_macro;
+            fmacros[nfmacros++].prefix = xstrndup(t + 6, (size_t)(bs - t - 6));
+        }
+        return;
+    }
+    if (!strncmp(t, ".macro ", 7)) {
+        size_t n = 0;
+        while (ident_char(t[7 + n]))
+            n++;
+        cur_macro = xstrndup(t + 7, n);
+        *in_fn = 3;
+        return;
+    }
+    if (!*in_fn)
+        for (int k = 0; k < nfmacros; k++) {
+            size_t n = strlen(fmacros[k].macro);
+            if (!strncmp(t, fmacros[k].macro, n) && t[n] == ' ') {
+                const char *a = t + n;
+                while (*a == ' ')
+                    a++;
+                size_t m = 0;
+                while (ident_char(a[m]))
+                    m++;
+                char *name = xprintf("%s%.*s", fmacros[k].prefix, (int)m, a);
+                sym_add(set, name, strlen(name));
+                free(name);
+                return;
+            }
+        }
+    if (!strncmp(t, ".func ", 6)) {
+        p = t + 6;
+        *in_fn = 1;
+    } else if (!strncmp(t, ".endf", 5)) {
+        *in_fn = 0;
+        return;
+    } else if (!strncmp(t, ".struct ", 8)) {
+        p = t + 8;
+        *in_fn = 2;
+    } else if (!*in_fn && ident_start(t[0])) {
+        size_t n = 0;
+        while (ident_char(t[n]))
+            n++;
+        if (t[n] == ':' && !is_const_name(t, n))
+            sym_add(set, t, n);
+        return;
+    }
+    if (p) {
+        while (*p == ' ')
+            p++;
+        size_t n = 0;
+        while (ident_char(p[n]))
+            n++;
+        if (!is_const_name(p, n) && !(n == 4 && !memcmp(p, "main", 4)))
+            sym_add(set, p, n);
+    }
+}
+
+/* Line t (of length n) with every name erlrt defines qualified as
+ * erlrt.name, except in strings and comments and after a '.' (a struct's
+ * fields). */
+static void qualify(Buf *o, const char *t, size_t len, SymSet *lib) {
+    for (size_t i = 0; i < len;) {
+        char c = t[i];
+        if (c == '"') {
+            size_t j = i + 1;
+            while (j < len && t[j] != '"')
+                j += t[j] == '\\' && j + 1 < len ? 2 : 1;
+            if (j < len)
+                j++;
+            buf_add(o, t + i, j - i);
+            i = j;
+        } else if (c == ';') {
+            buf_add(o, t + i, len - i);
+            return;
+        } else if (ident_start(c) && (i == 0 || !(ident_char(t[i - 1]) || t[i - 1] == '.'))) {
+            size_t j = i;
+            while (j < len && ident_char(t[j]))
+                j++;
+            if (sym_has(lib, t + i, j - i))
+                buf_puts(o, "erlrt.");
+            buf_add(o, t + i, j - i);
+            i = j;
+        } else {
+            buf_add(o, &c, 1);
+            i++;
+        }
+    }
+}
+
+static void reset_prog(void) {
+    P.queue.n = 0;
+    P.emitted.n = 0;
+    P.out = (Buf){0};
+    P.atoms.n = 0;
+    P.nconst = 0;
+    P.consts = (Buf){0};
+    P.dispatch = false;
+}
+
+static void write_text(const char *dir, const char *name, const char *text, size_t n) {
+    char *path = xprintf("%s/%s.masm", dir, name);
+    FILE *f = fopen(path, "w");
+    if (!f || fwrite(text, 1, n, f) != n || fclose(f) != 0) {
+        fprintf(stderr, "mlws-vm-erlc: cannot write %s\n", path);
+        exit(1);
+    }
+    free(path);
+}
+
+#define MIN_MLWSVM_MODULES ">=0.18.0"
+
+/* erlrt: the runtime and the whole library, as the program's module that
+ * every other imports. Its text, and what it defines, in *lib. */
+static char *gen_library(SymSet *lib, size_t *len) {
+    reset_prog();
+    P.library = true;
+    for (int k = 0; prelude_names[k]; k++) {
+        Module *m = get_module(intern(prelude_names[k], strlen(prelude_names[k])));
+        for (int j = 0; j < m->funcs.n; j++)
+            request(m, m->funcs.v[j]);
+    }
+    /* every library module is in the table of exported functions */
+    for (int k = 0; prelude_names[k]; k++)
+        note_atom(intern(prelude_names[k], strlen(prelude_names[k])));
+    for (int k = 0; k < P.queue.n; k++) {
+        FnReq r = P.queue.v[k];
+        gen_function(r.mod, r.fn, r.name);
+    }
+    gen_dispatch();
+    note_atom(intern("true", 4));
+    note_atom(intern("false", 5));
+    gen_atoms();
+
+    char *text = NULL;
+    size_t n = 0;
+    FILE *out = open_memstream(&text, &n);
+    fprintf(out, "; generated by mlws-vm-erlc %s: the runtime and library of a program\n"
+                 "; compiled with --modules\n.module erlrt\n.requires mlwsvm, \"%s\"\n\n",
+            VERSION, MIN_MLWSVM_MODULES);
+    fputs(runtime_masm, out);
+    fputs(runtime_re_masm, out);
+    fputs(runtime_mod_masm, out);
+    fprintf(out, "\n; -g: how the debuggers show a variable (.local): as ~p does.\n"
+                 ".func rt$show(i64 i, ref r) -> ref\n"
+                 "    call %s (i, r) -> (I1, R1)\n"
+                 "    bufnew R2, 0\n"
+                 "    call rt$iobuf (R2, I1, R1, 0) -> I3\n"
+                 "    tostr R3, R2\n"
+                 "    ret R3\n"
+                 ".endf\n", fn_name("io_lib", "print", 1));
+    gen_mode_fns(out);
+    fprintf(out, "\n; ---------------------------------------------------------------- constants\n");
+    for (int k = 0; k < P.nconst; k++)
+        fprintf(out, "K%d: .zero 8\n", k);
+    if (P.consts.n)
+        fwrite(P.consts.s, 1, P.consts.n, out);
+    fwrite(P.out.s, 1, P.out.n, out);
+    fclose(out);
+
+    int in_fn = 0;
+    for (const char *l = text; *l;) {
+        const char *e = strchr(l, '\n');
+        size_t ln = e ? (size_t)(e - l) : strlen(l);
+        char *line = xstrndup(l, ln);
+        collect_symbols(lib, line, &in_fn);
+        free(line);
+        l += ln + (e ? 1 : 0);
+    }
+    Buf b = {0};
+    buf_add(&b, text, n);
+    for (int i = 0; i < lib->order.n; i += 16) {
+        buf_puts(&b, "\n.export ");
+        for (int j = i; j < lib->order.n && j < i + 16; j++)
+            buf_printf(&b, "%s%s", j > i ? ", " : "", lib->order.v[j]);
+    }
+    buf_puts(&b, "\n");
+    free(text);
+    P.library = false;
+    *len = b.n;
+    return b.s;
+}
+
+static bool plain_name(const char *s) {
+    if (!*s || !ident_start(*s) || *s == '$')
+        return false;
+    for (; *s; s++)
+        if (!ident_char(*s) || *s == '$')
+            return false;
+    return true;
+}
+
+/* One of the program's modules, importing erlrt. */
+static char *gen_one(Module *m, SymSet *lib, size_t *len) {
+    reset_prog();
+    for (int j = 0; j < m->funcs.n; j++)
+        request(m, m->funcs.v[j]);
+    for (int k = 0; k < P.queue.n; k++) {
+        FnReq r = P.queue.v[k];
+        gen_function(r.mod, r.fn, r.name);
+    }
+    char *text = NULL;
+    size_t n = 0;
+    FILE *out = open_memstream(&text, &n);
+    for (int k = 0; k < P.nconst; k++)
+        fprintf(out, "K%d: .zero 8\n", k);
+    if (P.consts.n)
+        fwrite(P.consts.s, 1, P.consts.n, out);
+    fwrite(P.out.s, 1, P.out.n, out);
+    Function *mainf = find_function(m, intern("main", 4), 0);
+    int main_arity = 0;
+    if (!mainf) {
+        mainf = find_function(m, intern("main", 4), 1);
+        main_arity = 1;
+    }
+    if (mainf)
+        emit_main(out, fn_name(m->name, "main", main_arity), main_arity);
+    fclose(out);
+
+    Buf b = {0};
+    buf_printf(&b, "; generated by mlws-vm-erlc %s from %s\n.module %s\n.import erlrt\n"
+                   ".requires mlwsvm, \"%s\"\n",
+               VERSION, m->file, m->name, MIN_MLWSVM_MODULES);
+    if (debug_info)
+        buf_puts(&b, ".debug_format erlrt.rt$show\n");
+    buf_puts(&b, "\n");
+    for (const char *l = text; *l;) {
+        const char *e = strchr(l, '\n');
+        size_t ln = e ? (size_t)(e - l) : strlen(l);
+        qualify(&b, l, ln, lib);
+        buf_puts(&b, "\n");
+        l += ln + (e ? 1 : 0);
+    }
+    free(text);
+    /* what other modules, apply and spawn may call */
+    int nexp = 0;
+    for (int j = 0; j < m->funcs.n; j++) {
+        Function *f = m->funcs.v[j];
+        if (!exported(m, f->name, f->arity))
+            continue;
+        buf_printf(&b, "%s%s", nexp++ % 8 ? ", " : "\n.export ", fn_name(m->name, f->name, f->arity));
+    }
+    buf_puts(&b, "\n");
+    *len = b.n;
+    return b.s;
+}
+
+void generate_modules(Module **mods, int nmods, const char *dir) {
+    for (int k = 0; k < nmods; k++)
+        vec_push(P.mods, mods[k]);
+    const char *slash = strrchr(mods[0]->file, '/');
+    P.srcdir = slash ? xstrndup(mods[0]->file, (size_t)(slash - mods[0]->file)) : ".";
+    P.split = true;
+    SymSet lib = {0};
+    size_t liblen;
+    char *libtext = gen_library(&lib, &liblen);
+    /* the program's modules: those given, and those they name that are
+     * found next to the first (each written once) */
+    Names done = {0};
+    char **texts = NULL;
+    size_t *lens = NULL;
+    for (int k = 0; k < P.mods.n; k++) {
+        Module *m = P.mods.v[k];
+        if (is_prelude(m->name))
+            continue;
+        if (!plain_name(m->name) || !strcmp(m->name, "erlrt"))
+            fatal(m->file, 1, "--modules: module name '%s' cannot be a file of its own", m->name);
+        bool seen = false;
+        for (int j = 0; j < done.n; j++)
+            if (done.v[j] == m->name)
+                seen = true;
+        if (seen)
+            continue;
+        vec_push(done, m->name);
+        texts = xrealloc(texts, (size_t)done.n * sizeof *texts);
+        lens = xrealloc(lens, (size_t)done.n * sizeof *lens);
+        texts[done.n - 1] = gen_one(m, &lib, &lens[done.n - 1]);
+        /* the modules it names, found next to it */
+        for (int j = 0; j < P.atoms.n; j++)
+            if (!is_prelude(P.atoms.v[j]) && plain_name(P.atoms.v[j]))
+                get_module(P.atoms.v[j]);
+    }
+    /* everything compiled: now write */
+    write_text(dir, "erlrt", libtext, liblen);
+    for (int k = 0; k < done.n; k++)
+        write_text(dir, done.v[k], texts[k], lens[k]);
 }

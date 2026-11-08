@@ -2558,7 +2558,7 @@ c8: tcalli R9 (I10, I11, I12, I13, I14, I15, I16, I17, R10, R11, R12, R13, R14, 
     bz R8, undef
     tcalli R8 (ar)
 undef:
-    tcall rt$undef (m, f, I4, mr, fr, null)
+    tcall rt$apply_miss (m, f, a, mr, fr, ar)
 bad:
     tcall rt$badarg ()
 .endf
@@ -2853,3 +2853,69 @@ bad:
     tcall rt$fres (F2)
 .endf
 
+
+
+; ---------------------------------------------------------------- file
+
+; A file name (a string, a binary or an atom) as a string.
+.func rt$filename(i64 a, ref n) -> (i64, ref)
+    typeof I1, n
+    bne I1, 1, 1f
+    ret 0, n
+1:  bnisa n, Bin, 2f
+    tcall rt$bin_str (a, n)
+2:  tcall rt$list_to_str (a, n)
+.endf
+
+; file:read_file(Name): {ok, Binary}, or {error, Why}.
+.func rt$file_read(i64 a, ref n) -> (i64, ref)
+    call rt$filename (a, n) -> (I1, R1)
+.try 8f
+    ncall "fs.read_file" (R1) -> R2
+.endtry
+    call rt$bin_of (R2) -> R3
+    lnew R4, 4
+    lpush R4, "ok", 0
+    lpush R4, R3, 0
+    ret 0, R4
+8:  catch R5
+    tcall rt$file_error (R5)
+.endf
+
+; file:write_file(Name, Data): ok, or {error, Why}.
+.func rt$file_write(i64 a, i64 d, ref n, ref dr) -> (i64, ref)
+    call rt$filename (a, n) -> (I4, R4)
+    bufnew R2, 0
+    call rt$iobuf (R2, d, dr, 0) -> I3
+    bz I3, 9f
+.try 8f
+    ncall "fs.write_file" (R4, R2)
+.endtry
+    ret 0, "ok"
+8:  catch R5
+    tcall rt$file_error (R5)
+9:  tcall rt$badarg ()
+.endf
+
+; {error, Why} for an OS error, as file says it.
+.func rt$file_error(ref e) -> (i64, ref)
+    mov.r R1, "eio"
+    bnisa e, Error, 9f
+    mov.r R2, e->Error.code
+    strcmp I0, R2, "E_NOT_FOUND"
+    bnz I0, 1f
+    mov.r R1, "enoent"
+1:  strcmp I0, R2, "E_PERMISSION"
+    bnz I0, 2f
+    mov.r R1, "eacces"
+2:  strcmp I0, R2, "E_IS_DIR"
+    bnz I0, 3f
+    mov.r R1, "eisdir"
+3:  strcmp I0, R2, "E_NOT_DIR"
+    bnz I0, 9f
+    mov.r R1, "enotdir"
+9:  lnew R3, 4
+    lpush R3, "error", 0
+    lpush R3, R1, 0
+    ret 0, R3
+.endf

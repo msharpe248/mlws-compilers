@@ -17,6 +17,12 @@
 #                  program (optimized at --opt 3, the JIT on) instead of
 #                  running it; it runs with no MLWSVM beside it (MLWSVM
 #                  0.17.0 or later)
+#     --modules DIR
+#                  compile each module to DIR as an MLWSVM module of its own
+#                  (M.masm, and erlrt.masm, the runtime and library), and run
+#                  the program from there: code:load_file can then replace a
+#                  module while it runs (MLWSVM 0.18.0 or later); with -S,
+#                  only compile
 #     --version    print the compiler's version
 #
 # The program's main/0 runs (or main/1, given the arguments as strings).
@@ -25,11 +31,11 @@
 # next to this repository.
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 usage() {
-    echo "usage: mlws-vm-erl [--version] [-g] [-d | -b FILE] [-S | -k] [-o FILE] program.erl [args...]" >&2
+    echo "usage: mlws-vm-erl [--version] [-g] [-d | -b FILE] [-S | -k] [-o FILE | --modules DIR] program.erl [args...]" >&2
     exit 64
 }
 
-compile_only= keep= out= prog= bundle= debug= g=
+compile_only= keep= out= prog= bundle= debug= g= moddir=
 while [ $# -gt 0 ]; do
     case "$1" in
         -S) compile_only=1; shift ;;
@@ -38,6 +44,7 @@ while [ $# -gt 0 ]; do
         -d) debug=1; g=-g; shift ;;
         -b|--bundle) [ $# -ge 2 ] || usage; bundle=$2; shift 2 ;;
         -o) [ $# -ge 2 ] || usage; out=$2; shift 2 ;;
+        --modules) [ $# -ge 2 ] || usage; moddir=$2; shift 2 ;;
         --version) exec "$here/mlws-vm-erlc" --version ;;
         -h|--help) usage ;;
         -*) usage ;;
@@ -47,6 +54,14 @@ done
 [ -n "$prog" ] || usage
 [ -z "$bundle" ] || { [ $# -eq 0 ] && [ -z "$compile_only" ]; } || usage
 [ -z "$debug" ] || { [ $# -eq 0 ] && [ -z "$compile_only" ] && [ -z "$bundle" ]; } || usage
+if [ -n "$moddir" ]; then
+    { [ -z "$bundle" ] && [ -z "$debug" ] && [ -z "$keep" ] && [ -z "$out" ]; } || usage
+    mkdir -p "$moddir" && "$here/mlws-vm-erlc" $g --modules "$moddir" "$prog" || exit $?
+    [ -n "$compile_only" ] && exit 0
+    . "$here/../tools/find-vm.sh"
+    name=$(basename -- "$prog"); name=${name%.erl}
+    exec "$MLWSVM" run --max-frames 50000000 "$moddir/$name.masm" "$@"
+fi
 
 if [ -n "$compile_only" ] || [ -n "$keep" ] || [ -n "$out" ]; then
     [ -n "$out" ] || out="${prog%.*}.masm"

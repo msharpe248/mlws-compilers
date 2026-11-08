@@ -18,15 +18,18 @@ src/%.o: src/%.c src/erl.h
 src/main.o src/gen.o: VERSION
 src/main.o src/gen.o: CFLAGS += -DVERSION='"$(VERSION)"'
 
-# The runtime (runtime.masm, and runtime_re.masm for re) and the library's
-# modules (lib/*.erl), as C strings.
-src/embedded.c: src/runtime.masm src/runtime_re.masm $(LIBS)
+# The runtime (runtime.masm, runtime_re.masm for re and runtime_mod.masm for
+# --modules) and the library's modules (lib/*.erl), as C strings.
+src/embedded.c: src/runtime.masm src/runtime_re.masm src/runtime_mod.masm $(LIBS)
 	{ awk 'BEGIN { print "const char *runtime_masm =" } \
 	       { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); print "    \"" $$0 "\\n\"" } \
 	       END { print ";" }' src/runtime.masm; \
 	  awk 'BEGIN { print "const char *runtime_re_masm =" } \
 	       { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); print "    \"" $$0 "\\n\"" } \
 	       END { print ";" }' src/runtime_re.masm; \
+	  awk 'BEGIN { print "const char *runtime_mod_masm =" } \
+	       { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); print "    \"" $$0 "\\n\"" } \
+	       END { print ";" }' src/runtime_mod.masm; \
 	  for f in $(LIBS); do \
 	    n=$$(basename $$f .erl); \
 	    awk -v n=$$n 'BEGIN { print "static const char lib_" n "[] =" } \
@@ -46,6 +49,7 @@ src/embedded.o: src/embedded.c
 test: mlws-vm-erlc
 	../tools/run-tests.py erlang tests
 	../tools/test-drivers.sh ./mlws-vm-erl tests/drivers/hello.erl tests/drivers/hello.out 5
+	tests/modules/run.sh
 
 bench: mlws-vm-erlc
 	bench/run.sh

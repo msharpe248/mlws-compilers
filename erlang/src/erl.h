@@ -206,10 +206,14 @@ Node *new_node(NodeKind kind, int line, const char *file);
 /* Generate a program from its modules (the first one's main/0 or main/1 is
  * run), writing assembly to out. */
 void generate(Module **mods, int nmods, FILE *out, const char *source_name);
+/* --modules: write DIR/erlrt.masm (the runtime and library) and DIR/M.masm for
+ * each of the program's modules */
+void generate_modules(Module **mods, int nmods, const char *dir);
 
 extern const char *runtime_masm;      /* runtime.masm, built in */
 extern bool debug_info;               /* -g: .local names and a .debug_format formatter */
 extern const char *runtime_re_masm;   /* runtime_re.masm: for programs that use re */
+extern const char *runtime_mod_masm;  /* runtime_mod.masm: erlrt's, for --modules */
 extern const char *prelude_files[];   /* the library modules' Erlang source, NULL-terminated */
 extern const char *prelude_names[];
 
