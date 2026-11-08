@@ -47,6 +47,7 @@ test: mlws-vm-erlc
 	../tools/run-tests.py erlang tests
 	../tools/test-drivers.sh ./mlws-vm-erl tests/drivers/hello.erl tests/drivers/hello.out 5
 	tests/modules/run.sh
+	tests/dist/run.sh
 
 bench: mlws-vm-erlc
 	bench/run.sh

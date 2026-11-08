@@ -7,8 +7,8 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
 ### Repository
 
-* The compilers target the latest MLWSVM release only, now 0.20.1: every
-  compiler's output says `.requires mlwsvm, ">=0.20.1"`, and the drivers
+* The compilers target the latest MLWSVM release only, now 0.21.0: every
+  compiler's output says `.requires mlwsvm, ">=0.21.0"`, and the drivers
   and tests no longer check the VM's version (`-g`, `-d` and `-b` are
   always tested, and Erlang's `-d` always passes `--max-frames`). The
   READMEs say what a feature uses, not which VM it first needs.
@@ -41,6 +41,23 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   `{error, embedded}`.
 * `file:read_file/1` and `file:write_file/2`, on `fs.read_file` and
   `fs.write_file`.
+* Distribution, on MLWSVM's `std.node`, for programs compiled with
+  `--modules`: `net_kernel:start/1,2` makes the VM a node, `name@host`,
+  found through `mlwsvm names`; a registered `net_kernel` process keeps
+  the cookie and connects to other nodes. Pids are the VM's global pids
+  once it is a node. `node/0,1`, `nodes/0`, `is_alive/0`,
+  `{Name, Node} ! Msg`, `spawn/2,4` and `spawn_link` on another node (the
+  fun runs there in erlrt), `monitor_node/2` and
+  `net_kernel:monitor_nodes/1` (the VM's `NodeEvent` as `nodeup` and
+  `nodedown`), `net_adm:ping/1`, `rpc:call/4,5` and `cast/4`,
+  `set_cookie` and `get_cookie`. A process on a node that went is
+  `noconnection`, and a closure of code the other node does not have is
+  `badfun`. Atoms and `[]` match across nodes (MLWSVM 0.21.0).
+  tests/dist runs two nodes, with an `mlwsvm names` of its own.
+* Fixed: `monitor_node(N, true)` acted as `false` (its flag's register
+  held the runtime's map), and the same kind of slip in `demonitor/2`'s
+  `flush`, a `monitor` of a process that is gone, `code:load_binary`, and
+  the undef of a call to a module that is not there.
 
 ## Release 0.8.0
 

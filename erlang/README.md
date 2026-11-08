@@ -83,6 +83,42 @@ replace the old one while the program runs, as in Erlang:
 `tests/modules` has such programs: `hot` replaces a running server's
 module and purges a process left in the old code.
 
+## Distribution
+
+A program compiled with `--modules` can be a node, and its processes talk
+to processes on other nodes as in Erlang. Nodes find each other through
+`mlwsvm names`, which must be running on each machine (port 4368, or
+`$MLWSVM_NAMES_PORT`), and every node must run the same `erlrt.masm`
+(the same `mlws-vm-erlc`), since terms cross as its structs and funs as
+its closures:
+
+```sh
+mlwsvm names &                            # once per machine
+./mlws-vm-erl --modules out b.erl &       # net_kernel:start(b@localhost, #{})
+./mlws-vm-erl --modules out a.erl         # ... rpc:call(b@localhost, b, square, [7])
+```
+
+* `net_kernel:start/1,2` makes the VM the node `name@host` (MLWSVM's
+  `std.node`, `start_named`, its number given by `mlwsvm names`); a
+  registered `net_kernel` process keeps the cookie (`erlang:set_cookie`,
+  or `~/.erlang.cookie`) and connects to other nodes when a process first
+  sends to them. Pids are then the VM's global pids, which work with `!`,
+  `link`, `monitor` and `exit` on any node, and print as `<N.x.0>`.
+* `node/0,1`, `nodes/0`, `is_alive/0`, `{Name, Node} ! Msg`, `spawn/2,4`
+  and `spawn_link` on another node (the fun, closure and all, runs there),
+  `monitor_node/2` and `net_kernel:monitor_nodes/1` (`{nodeup, N}` and
+  `{nodedown, N}`, from the VM's `NodeEvent`), `net_adm:ping/1`,
+  `rpc:call/4,5` and `rpc:cast/4`. A process on a node that went is
+  `noconnection`.
+* Atoms and `[]` are the same on every node (MLWSVM 0.21.0 sends interned
+  strings as interned, and numeric literals as literals), so they match
+  and compare as they do on one; a module a message needs is loaded on
+  the node that gets it.
+
+`tests/dist` runs two nodes on one machine, with an `mlwsvm names` of its
+own: messages, rpc, a fun spawned on the other node, a remote kill and
+`monitor_node`.
+
 ## What it implements
 
 * Modules, `-export`, `-import`, `-record` (and `#r{}`, `R#r.f`,
@@ -122,7 +158,7 @@ module and purges a process left in the old code.
   (`read_file`, `write_file`), and the BIFs of `erlang`.
 
 Not implemented: `maybe`, bit strings that are not whole bytes, bitwise
-operations on BigInts, distribution (nodes), ports,
+operations on BigInts, ports,
 OTP's behaviours (`gen_server`, `supervisor`, ...), `ets`, and most of
 the library beyond the modules above.
 
@@ -238,5 +274,6 @@ what its machine code could not run itself: here, only `send` and `recv`.
 (which needs `erlc` and `erl`). A module without `main/0` is a helper that
 a test calls. `tests/modules` (run by `tests/modules/run.sh`) holds
 programs compiled with `--modules`, their new versions of modules in
-`v2/`, and what each prints (`main.out`). The tests pass with `MLWSVM_GC_STRESS=1` and `MLWSVM_OPT=3`, and with
+`v2/`, and what each prints (`main.out`); `tests/dist` (run by
+`tests/dist/run.sh`) two nodes, above. The tests pass with `MLWSVM_GC_STRESS=1` and `MLWSVM_OPT=3`, and with
 `MLWSVM_GC_VERIFY=1`.

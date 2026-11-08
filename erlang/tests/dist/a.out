@@ -1,0 +1,11 @@
+nonode@nohost false
+a@localhost pong
+nodes: [b@localhost]
+echoed hello from b@localhost
+rpc: 49
+rpc of nothing: undef
+a fun on b@localhost: 20 (spawned there: true)
+is_process_alive of b's: {'EXIT',{badarg,[]}}
+killed there: killed
+nodedown b@localhost
+nodes: []

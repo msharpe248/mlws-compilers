@@ -1607,11 +1607,11 @@ timeout:
 
 .func rt$monitor(i64 a, i64 b, ref kind, ref p) -> (i64, ref)
     call rt$make_ref () -> (I2, R2)
-    call rt$pid_id (p) -> I1
-    bz I1, 1f
-    monitor I1
+    call rt$pid_id (p) -> I3
+    bz I3, 1f
+    monitor I3
     call rt$monitors () -> R3
-    mset R3, I1, R2
+    mset R3, I3, R2
     ret 0, R2
 1:  ; no such process: 'DOWN' at once, with noproc
     lnew R5, 10
@@ -1640,13 +1640,13 @@ timeout:
 ; demonitor(Ref, [flush]): also drop its 'DOWN' if it came
 .func rt$demonitor2(i64 a, i64 o, ref r, ref opts) -> (i64, ref)
     call rt$demonitor (a, r) -> (I2, R2)
-    mov.r R0, @g$mbox
-    bz R0, 9f
-    mov.r R0, R0->Mbox.saved
-    len I1, R0
+    mov.r R5, @g$mbox
+    bz R5, 9f
+    mov.r R5, R5->Mbox.saved
+    len I1, R5
     mov I2, 0
 1:  bge I2, I1, 9f
-    mov.r R3, R0[I2]
+    mov.r R3, R5[I2]
     call rt$tsize (R3) -> I3
     bne I3, 5, 2f
     mov.r R4, R3[0]
@@ -1654,8 +1654,8 @@ timeout:
     mov.r R4, R3[2]
     call rt$eqx (0, 0, R4, r) -> I4
     bz I4, 2f
-    ldel R0, I2
-    ldel R0, I2
+    ldel R5, I2
+    ldel R5, I2
     jmp 9f
 2:  add I2, 2
     jmp 1b
@@ -3062,11 +3062,11 @@ g$handles:  .zero 8      ; module.handle closures: a map MLWSVM name -> closure
 ; loading the module the first time; kept for the process. fname is its
 ; MLWSVM name. A module or function that is not there: error undef.
 .func rt$rfun(i64 n, ref m, ref f, ref fname) -> ref
-    mov.r R1, @g$handles
-    bnz R1, 1f
-    mnew R1
-    mov.r @g$handles, R1
-1:  mget.r R4, R1, fname, null
+    mov.r R3, @g$handles
+    bnz R3, 1f
+    mnew R3
+    mov.r @g$handles, R3
+1:  mget.r R4, R3, fname, null
     bz R4, 2f
     ret R4
 2:
@@ -3074,7 +3074,7 @@ g$handles:  .zero 8      ; module.handle closures: a map MLWSVM name -> closure
     ncall "module.load" (m)
     ncall "module.handle" (m, fname) -> (R4)
 .endtry
-    mset R1, fname, R4
+    mset R3, fname, R4
     ret R4
 8:  catch R5
     call rt$undef (0, 0, n, m, f, null) -> (I6, R6)
@@ -3104,8 +3104,8 @@ g$handles:  .zero 8      ; module.handle closures: a map MLWSVM name -> closure
 
 ; code:load_binary(M, File, Bin): a new version of M from its assembly.
 .func rt$code_load_text(i64 mi, i64 bi, ref m, ref b) -> (i64, ref)
-    call rt$split -> I1
-    bz I1, 7f
+    call rt$split -> I4
+    bz I4, 7f
     call rt$bin_str (bi, b) -> (I2, R2)
 .try 8f
     ncall "module.loaded" (m) -> (I3)
@@ -3223,14 +3223,14 @@ g$handles:  .zero 8      ; module.handle closures: a map MLWSVM name -> closure
 
 ; monitor_node(Node, Flag): watch for Node's connection going.
 .func rt$node_monitor(i64 ni, i64 fi, ref n, ref f) -> (i64, ref)
-    mov.r R1, @g$nodemon
-    bnz R1, 1f
-    mnew R1
-    mov.r @g$nodemon, R1
+    mov.r R2, @g$nodemon
+    bnz R2, 1f
+    mnew R2
+    mov.r @g$nodemon, R2
 1:  beq.r f, "true", 2f
-    mdel R1, n
+    mdel R2, n
     ret 0, "true"
-2:  mset R1, n, 1
+2:  mset R2, n, 1
     ncall "node.watch" (1)
     ret 0, "true"
 .endf
