@@ -1,0 +1,11 @@
+before: 1 {0,1} {0,1}
+load: {module,counter}
+new calls: 2
+server: {1,1} then {200,2}
+local: {1,1} then {2,1}
+soft_purge: false
+purge: true
+local loop: killed
+soft_purge: true
+server: {300,2}
+is_loaded: {file,"counter.masm"}, other: {error,nofile}

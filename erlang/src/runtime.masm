@@ -66,6 +66,7 @@ g$trap:     .i64 0       ; trap_exit
 g$refn:     .i64 0       ; references made
 g$pdict:    .zero 8      ; the process dictionary (a Map term)
 g$atomtab:  .zero 8      ; atoms made at run time: a map string -> the atom
+g$start:    .zero 8      ; the closure a new process runs, for rt$proc_start
 g$dispatch: .zero 8      ; apply/3: "m:f/n" -> adapter closure
 g$uniq:     .i64 0
 
@@ -1366,9 +1367,12 @@ timeout:
 ; The body of every process: run the fun; if it fails, end with an Error
 ; whose message is the exit reason, written as a term.
 .func rt$proc_entry(ref f)
-.try 1f
     mov.r R1, f->Fun.clo
-    calli R1 () -> (I0, R0)
+    mov.r @g$start, R1
+    mov.r f, null
+    mov.r R1, null
+.try 1f
+    call rt$proc_start () -> (I0, R0)
 .endtry
     ret
 1:  catch R2
@@ -1382,6 +1386,15 @@ timeout:
     mov.r R8->Error.message, R7
     throw R8
 2:  ret
+.endf
+
+; Run the process's fun with nothing below holding it: once it has made
+; its first call, a fun of a replaced version is not kept, and code:purge
+; does not kill the process for it.
+.func rt$proc_start -> (i64, ref)
+    mov.r R0, @g$start
+    mov.r @g$start, null
+    tcalli R0 ()
 .endf
 
 ; The exit reason of an exception: exit's reason, {Reason, Stack} for an
