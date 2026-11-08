@@ -3616,6 +3616,8 @@ static void emit_main(FILE *out, const char *entry, int main_arity) {
  * exported functions lacks does: undef, or find it in the program's module. */
 static void gen_mode_fns(FILE *out) {
     fprintf(out, "\n.func rt$split -> i64\n    ret %d\n.endf\n", P.split ? 1 : 0);
+    /* the module a process spawned on another node starts in (rt$remote_start) */
+    fprintf(out, ".func rt$rt_module -> ref\n    ret %s\n.endf\n", P.split ? "\"erlrt\"" : "null");
     fprintf(out, ".func rt$apply_miss(i64 m, i64 f, i64 a, ref mr, ref fr, ref ar) -> (i64, ref)\n"
                  "    call rt$length (a, ar) -> (I4, R4)\n");
     if (!P.split) {
@@ -3657,6 +3659,7 @@ void generate(Module **mods, int nmods, FILE *out, const char *source_name) {
         {"erts", "ser", "1"},
         {"erts", "deser", "1"},
         {"erts", "report", "2"},
+        {"erts", "connect", "1"},
     };
     for (size_t k = 0; k < sizeof rt_roots / sizeof *rt_roots; k++) {
         Module *rm = get_module(intern(rt_roots[k][0], strlen(rt_roots[k][0])));

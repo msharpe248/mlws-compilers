@@ -9,6 +9,8 @@
 ; return (i64, ref).
 ; ======================================================================
 
+.import std.node as node
+
 .struct Cons
     hi: i64
     hr: ref
@@ -66,6 +68,8 @@ g$trap:     .i64 0       ; trap_exit
 g$refn:     .i64 0       ; references made
 g$pdict:    .zero 8      ; the process dictionary (a Map term)
 g$start:    .zero 8      ; the closure a new process runs, for rt$proc_start
+g$nodemon:  .zero 8      ; monitor_node: a map node name -> 1
+g$nodeall:  .i64 0       ; net_kernel:monitor_nodes(true)
 g$dispatch: .zero 8      ; apply/3: "m:f/n" -> adapter closure
 g$uniq:     .i64 0
 
@@ -141,8 +145,11 @@ g$uniq:     .i64 0
     bnz I0, 5f
     ret 0, "system_limit", "error"
 5:  strcmp I0, code, "E_NOPROC"
-    bnz I0, 6f
+    bnz I0, 51f
     ret 0, "noproc", "exit"
+51: strcmp I0, code, "E_NODE_DOWN"    ; its node went, or was never there
+    bnz I0, 6f
+    ret 0, "noconnection", "exit"
 6:  strcmp I0, code, "E_LINK_UNDEF"   ; a handle whose function a reload dropped
     bnz I0, 7f
     ret 0, "undef", "error"
@@ -1185,9 +1192,40 @@ bad:
 ; ---------------------------------------------------------------- processes
 
 .func rt$pid(i64 id) -> ref
+    call rt$gid (id) -> I0
     new R0, Pid
-    mov R0->Pid.id, id
+    mov R0->Pid.id, I0
     ret R0
+.endf
+
+; A pid as the runtime keeps it: once this VM is a node, the global form,
+; which names the node, so that it means the same process anywhere.
+.func rt$gid(i64 id) -> i64
+    ncall "node.self" () -> I1
+    bz I1, 1f
+    ncall "node.global" (id) -> I0
+1:  ret I0
+.endf
+
+; ... and as this VM's alive and proc.register want one of its own: plain.
+.func rt$lid(i64 id) -> i64
+    ncall "node.self" () -> I1
+    bz I1, 1f
+    ncall "node.of" (id) -> I2
+    bne I1, I2, 1f
+    shl I0, 16
+    shr I0, 16
+1:  ret I0
+.endf
+
+; Whether a pid is another node's.
+.func rt$remote(i64 id) -> i64
+    ncall "node.of" (id) -> I1
+    bz I1, 1f
+    ncall "node.self" () -> I2
+    beq I1, I2, 1f
+    ret 1
+1:  ret 0
 .endf
 
 .func rt$self -> (i64, ref)
@@ -1215,11 +1253,39 @@ bad:
     call rt$pid_id (pr) -> I2
     bnz I2, 1f
     bisa pr, Pid, 1f
+    call rt$tsize (pr) -> I3
+    beq I3, 2, 2f
     tcall rt$badarg ()
+2:  call rt$named_pid (pr) -> I2      ; {Name, Node}
+    bz I2, 3f
 1:  lnew R2, 2
     lpush R2, mr, m
     send I2, R2
-    ret m, mr
+3:  ret m, mr
+.endf
+
+; The pid of {Name, Node}: registered as Name on Node, connecting to it if
+; need be; 0 if there is none (the message is dropped, as in Erlang).
+.func rt$named_pid(ref t) -> i64
+    mov.r R1, t[0]
+    mov.r R2, t[2]
+    typeof I0, R1
+    bne I0, 1, 9f
+    typeof I0, R2
+    bne I0, 1, 9f
+    call rt$node () -> (I3, R3)
+    bne.r R2, R3, 1f
+    ncall "proc.whereis" (R1) -> I4
+    ret I4
+1:  call E$erts$connect$1 (0, R2) -> (I5, R5)
+    bne.r R5, "true", 8f
+    ncall "node.number" (R2) -> I6
+.try 8f
+    call node.whereis (I6, R1) -> (I4)
+.endtry
+    ret I4
+8:  ret 0
+9:  tcall rt$badarg ()
 .endf
 
 .func rt$mbox_new -> ref
@@ -1290,9 +1356,18 @@ inf:
     recv R2
 got:
     bisa R2, Down, down
+    bisa R2, NodeEvent, nodeev
     mov.r R1, R2[0]
     mov I5, R2[1]
     ret 2, I5, R1
+nodeev:
+    call rt$node_msg (R2) -> (I8, I5, R1)
+    bz I8, wait
+    lpush R6, R1, I5
+    mov I2, R0->Mbox.scan
+    inc I2
+    mov R0->Mbox.scan, I2
+    ret 1, I5, R1
 down:
     call rt$down_msg (R2) -> (I8, I5, R1)
     bz I8, wait
@@ -1322,6 +1397,7 @@ timeout:
 ; exits. (0, ...) if nobody asked for it.
 .func rt$down_msg(ref d) -> (i64, i64, ref)
     mov I0, d->Down.pid
+    call rt$gid (I0) -> I0
     call rt$pid (I0) -> R1
     call rt$down_reason (d) -> (I1, R2)
     mov.r R3, @g$monitors
@@ -1341,6 +1417,32 @@ timeout:
     lpush R5, "EXIT", 0, R1, 0, R2, I1
     ret 1, 0, R5
 2:  ret 0, 0, null
+.endf
+
+; A NodeEvent from the VM as an Erlang message: {nodeup, Node} for
+; monitor_nodes, {nodedown, Node} for it and for monitor_node (which it
+; ends). (0, ...) if nobody asked for it.
+.func rt$node_msg(ref e) -> (i64, i64, ref)
+    mov.r R1, e->NodeEvent.name
+    ncall "text.intern" (R1) -> R1
+    mov I1, e->NodeEvent.up
+    mov I2, @g$nodeall
+    bz I1, 1f
+    bz I2, 9f
+    lnew R5, 4
+    lpush R5, "nodeup", 0, R1, 0
+    ret 1, 0, R5
+1:  mov.r R3, @g$nodemon
+    bz R3, 2f
+    mhas I3, R3, R1
+    bz I3, 2f
+    mdel R3, R1
+    jmp 3f
+2:  bz I2, 9f
+3:  lnew R5, 4
+    lpush R5, "nodedown", 0, R1, 0
+    ret 1, 0, R5
+9:  ret 0, 0, null
 .endf
 
 ; Why a process ended, from its Down.
@@ -1596,6 +1698,7 @@ timeout:
     bne I2, 1, 9f
     call rt$pid_id (pr) -> I3
     bz I3, 9f
+    call rt$lid (I3) -> I3
 .try 9f
     ncall "proc.register" (nr, I3)
 .endtry
@@ -1618,10 +1721,14 @@ timeout:
 
 .func rt$is_process_alive(i64 a, ref p) -> (i64, ref)
     call rt$pid_id (p) -> I1
+    call rt$remote (I1) -> I3
+    bnz I3, 9f
+    call rt$lid (I1) -> I1
     alive I2, I1
     bz I2, 1f
     ret 0, "true"
 1:  ret 0, "false"
+9:  tcall rt$badarg ()
 .endf
 
 .func rt$make_ref -> (i64, ref)
@@ -1633,11 +1740,26 @@ timeout:
 .endf
 
 .func rt$node -> (i64, ref)
-    ret 0, "nonode@nohost"
+    ncall "node.name" (0) -> R0
+    len I0, R0
+    bz I0, 1f
+    ncall "text.intern" (R0) -> R0
+    ret 0, R0
+1:  ret 0, "nonode@nohost"
 .endf
 
+; node(Pid): the node it is on.
 .func rt$node1(i64 a, ref r) -> (i64, ref)
-    ret 0, "nonode@nohost"
+    bnisa r, Pid, 9f
+    mov I1, r->Pid.id
+    call rt$remote (I1) -> I2
+    bz I2, 1f
+    ncall "node.of" (I1) -> I2
+    ncall "node.name" (I2) -> R0
+    ncall "text.intern" (R0) -> R0
+    ret 0, R0
+1:  tcall rt$node ()
+9:  tcall rt$badarg ()
 .endf
 
 .func rt$sleep(i64 t, ref tr) -> (i64, ref)
@@ -2741,7 +2863,18 @@ bad:
 
 .func rt$pid_num(i64 a, ref p) -> (i64, ref)
     mov I1, p->Pid.id
+    shl I1, 16
+    shr I1, 16
     ret I1, null
+.endf
+
+; The node part of a pid as Erlang writes it: 0 for this node's.
+.func rt$pid_node(i64 a, ref p) -> (i64, ref)
+    mov I1, p->Pid.id
+    call rt$remote (I1) -> I2
+    bz I2, 1f
+    ncall "node.of" (I1) -> I2
+1:  ret I2, null
 .endf
 
 .func rt$make_pid(i64 n, ref nr) -> (i64, ref)
@@ -3043,4 +3176,122 @@ g$handles:  .zero 8      ; module.handle closures: a map MLWSVM name -> closure
     bz I2, 7f
     ret 0, "true"
 7:  ret 0, "false"
+.endf
+
+; ---------------------------------------------------------------- distribution
+
+; net_kernel:start: this VM becomes the node Name (name@host), registered
+; with this machine's `mlwsvm names`, its number made from its name. ok,
+; or {error, Why}.
+.func rt$node_start(i64 ni, i64 ci, ref name, ref cookie) -> (i64, ref)
+.try 8f
+    call node.start_named (name, 0, cookie, 0) -> (I2)
+.endtry
+    mov.r @g$self, null        ; self() is now the global form
+    ret 0, "ok"
+8:  catch R3
+    mov.r R4, "error"
+    bnisa R3, Error, 9f
+    mov.r R4, R3->Error.message
+9:  call rt$str_to_list (R4) -> (I5, R5)
+    lnew R6, 4
+    lpush R6, "error", 0, R5, I5
+    ret 0, R6
+.endf
+
+; Connect to Node (name@host), through host's `mlwsvm names`: true or false.
+.func rt$node_connect(i64 ni, i64 ci, ref n, ref cookie) -> (i64, ref)
+    ncall "node.self" () -> I1
+    bz I1, 7f
+    ncall "node.number" (n) -> I2
+    bz I2, 1f
+    beq I1, I2, 6f
+    call node.connected (I2) -> (I3)
+    bnz I3, 6f
+1:
+.try 7f
+    call node.connect_named (n, cookie) -> (I4)
+.endtry
+6:  ret 0, "true"
+7:  ret 0, "false"
+.endf
+
+; nodes(): the connected nodes' names.
+.func rt$node_list -> (i64, ref)
+    call node.nodes () -> (R1)
+    len I1, R1
+    mov.r R2, 0d
+1:  bz I1, 2f
+    dec I1
+    mov I3, R1[I1]
+    ncall "node.name" (I3) -> R4
+    ncall "text.intern" (R4) -> R4
+    new R5, Cons
+    mov.r R5->Cons.hr, R4
+    mov.r R5->Cons.tr, R2
+    mov.r R2, R5
+    jmp 1b
+2:  ret 0, R2
+.endf
+
+; monitor_node(Node, Flag): watch for Node's connection going.
+.func rt$node_monitor(i64 ni, i64 fi, ref n, ref f) -> (i64, ref)
+    mov.r R1, @g$nodemon
+    bnz R1, 1f
+    mnew R1
+    mov.r @g$nodemon, R1
+1:  beq.r f, "true", 2f
+    mdel R1, n
+    ret 0, "true"
+2:  mset R1, n, 1
+    ncall "node.watch" (1)
+    ret 0, "true"
+.endf
+
+; net_kernel:monitor_nodes(Flag): {nodeup, N} and {nodedown, N} for all.
+.func rt$node_monitor_all(i64 fi, ref f) -> (i64, ref)
+    mov I1, 0
+    bne.r f, "true", 1f
+    mov I1, 1
+    ncall "node.watch" (1)
+1:  mov @g$nodeall, I1
+    ret 0, "ok"
+.endf
+
+; spawn(Node, Fun): run Fun there, in a process of the same erlrt.
+.func rt$node_spawn(i64 ni, i64 fi, ref n, ref f) -> (i64, ref)
+    ncall "node.number" (n) -> I1
+    bz I1, 9f
+    call rt$rt_module () -> R2
+    bz R2, 9f
+.try 9f
+    call node.spawn (I1, R2, "rt$remote_start", f) -> (I3)
+.endtry
+    bz I3, 9f
+    call rt$pid (I3) -> R4
+    ret 0, R4
+9:  tcall rt$raise (0, "error", "noconnection")
+.endf
+
+; A process spawned from another node: its fun, as spawn's.
+.func rt$remote_start(ref f)
+    tcall rt$proc_entry (f)
+.endf
+
+; The host name, for net_kernel's name@host.
+.func rt$hostname -> (i64, ref)
+    lnew R1
+    lpush R1, "hostname"
+    ncall "os.run" (R1) -> (I2, R2)
+    strcat R3, R2
+    tcall rt$str_to_list (R3)
+.endf
+
+; os:getenv(Name) as a string, "" if unset.
+.func rt$getenv(i64 a, ref n) -> (i64, ref)
+    call rt$list_to_str (a, n) -> (I1, R1)
+    ncall "os.env" (R1) -> R2
+    bnz R2, 1f
+    mov.r R2, ""
+1:  tcall rt$str_to_list (R2)
 .endf

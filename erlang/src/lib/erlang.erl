@@ -5,7 +5,8 @@
          integer_to_list/2, list_to_integer/2, integer_to_binary/2, binary_to_integer/2,
          atom_to_binary/2, binary_to_atom/2, binary_to_existing_atom/2,
          list_to_existing_atom/1, halt/2, unique_integer/1, '--'/2, '++'/2,
-         is_alive/0, display/1, error/3, raise/3, nif_error/1, send/2, send/3,
+         is_alive/0, nodes/0, nodes/1, monitor_node/2, set_cookie/1, set_cookie/2,
+         get_cookie/0, get_cookie/1, display/1, error/3, raise/3, nif_error/1, send/2, send/3,
          float_to_list/2, float_to_binary/2, append_element/2, delete_element/2,
          insert_element/3, list_to_bitstring/1, bitstring_to_list/1, binary_to_list/3,
          monotonic_time/1, system_time/1, convert_time_unit/3, timestamp/0, now/0,
@@ -118,7 +119,34 @@ delete1(_, []) -> [].
 
 '++'(A, B) -> A ++ B.
 
-is_alive() -> false.
+is_alive() -> node() =/= nonode@nohost.
+
+%% Distribution (a program compiled with --modules, every node running the
+%% same erlrt): see net_kernel.
+nodes() -> '$rt':node_list().
+nodes(_) -> nodes().
+
+monitor_node(Node, true) ->
+    '$rt':node_monitor(Node, true),
+    case erts:connect(Node) of
+        true -> true;
+        false ->
+            '$rt':node_monitor(Node, false),
+            self() ! {nodedown, Node},
+            true
+    end;
+monitor_node(Node, false) -> '$rt':node_monitor(Node, false).
+
+set_cookie(C) -> set_cookie(node(), C).
+set_cookie(_Node, C) when is_atom(C) ->
+    case whereis(net_kernel) of
+        undefined -> put('$cookie', C);
+        K -> K ! {set_cookie, C}
+    end,
+    true.
+
+get_cookie() -> erts:cookie().
+get_cookie(_Node) -> erts:cookie().
 
 display(T) -> io:format("~w~n", [T]), true.
 
@@ -209,10 +237,24 @@ now() -> timestamp().
 apply(F, Args) -> erlang:apply(F, Args).
 apply(M, F, Args) -> erlang:apply(M, F, Args).
 
-spawn(_Node, F) -> spawn(F).
-spawn(_Node, M, F, A) -> spawn(M, F, A).
-spawn_link(_Node, F) -> spawn_link(F).
-spawn_link(_Node, M, F, A) -> spawn_link(M, F, A).
+spawn(Node, F) ->
+    case Node =:= node() of
+        true -> spawn(F);
+        false ->
+            true = erts:connect(Node) orelse error(noconnection),
+            '$rt':node_spawn(Node, F)
+    end.
+spawn(Node, M, F, A) ->
+    case Node =:= node() of
+        true -> spawn(M, F, A);
+        false -> spawn(Node, fun() -> apply(M, F, A) end)
+    end.
+spawn_link(Node, F) ->
+    case Node =:= node() of
+        true -> spawn_link(F);
+        false -> P = spawn(Node, F), link(P), P
+    end.
+spawn_link(Node, M, F, A) -> spawn_link(Node, fun() -> apply(M, F, A) end).
 spawn_monitor(M, F, A) -> spawn_monitor(fun() -> apply(M, F, A) end).
 
 monitor(Type, Item, _Opts) -> monitor(Type, Item).

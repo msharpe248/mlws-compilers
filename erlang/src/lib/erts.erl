@@ -1,7 +1,7 @@
 %% Runtime support for mlws-vm-erlc, in Erlang: exit reasons sent between
 %% processes as text (ser/deser), and crash reports.
 -module(erts).
--export([ser/1, deser/1, report/2, main_error/2, fname/3]).
+-export([ser/1, deser/1, report/2, main_error/2, fname/3, connect/1, cookie/0]).
 
 %% A term as text (~w), as an atom-like string for the VM.
 ser(T) -> '$rt':list_to_str(lists:flatten(io_lib:write(T))).
@@ -104,3 +104,38 @@ mangle([C | T]) -> [$_, hex(C bsr 4), hex(C band 15), $_ | mangle(T)].
 
 hex(D) when D < 10 -> $0 + D;
 hex(D) -> $A + D - 10.
+
+%% Connect to Node (name@host) through net_kernel, which holds the cookie:
+%% true if it is this node or now connected.
+connect(Node) ->
+    case node() of
+        nonode@nohost -> false;
+        Node -> true;
+        _ ->
+            case whereis(net_kernel) of
+                undefined -> false;
+                K ->
+                    K ! {connect, Node, self()},
+                    receive {net_kernel, connected, Node, R} -> R end
+            end
+    end.
+
+%% The cookie: net_kernel's, set_cookie's, or ~/.erlang.cookie's (nocookie
+%% without one).
+cookie() ->
+    case whereis(net_kernel) of
+        undefined ->
+            case get('$cookie') of
+                undefined -> file_cookie();
+                C -> C
+            end;
+        K ->
+            K ! {get_cookie, self()},
+            receive {net_kernel, cookie, C} -> C end
+    end.
+
+file_cookie() ->
+    case file:read_file('$rt':getenv("HOME") ++ "/.erlang.cookie") of
+        {ok, B} -> list_to_atom(string:trim(binary_to_list(B)));
+        _ -> nocookie
+    end.

@@ -271,7 +271,8 @@ write(T, _Depth) when is_map(T) -> write_map(T, fun write/1);
 write(T, _Depth) when is_binary(T) -> write_binary(T);
 write(T, _Depth) -> write_other(T).
 
-write_other(T) when is_pid(T) -> "<0." ++ integer_to_list('$rt':pid_num(T)) ++ ".0>";
+write_other(T) when is_pid(T) ->
+    "<" ++ integer_to_list('$rt':pid_node(T)) ++ "." ++ integer_to_list('$rt':pid_num(T)) ++ ".0>";
 write_other(T) when is_reference(T) -> "#Ref<0." ++ '$rt':ref_str(T) ++ ">";
 write_other(T) when is_function(T) -> "#Fun<" ++ '$rt':fun_str(T) ++ ">";
 write_other(_) -> "?".
