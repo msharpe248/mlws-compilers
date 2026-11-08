@@ -23,7 +23,7 @@
 #define NR 29           /* slots kept in registers (the 3 above are scratch) */
 
 /* the MLWSVM the output needs: the latest release */
-#define MIN_MLWSVM ">=0.20.0"
+#define MIN_MLWSVM ">=0.20.1"
 
 /* ------------------------------------------------------------------ program state */
 
@@ -1912,8 +1912,8 @@ static bool inline_bif(Fn *g, Node *e, const char *name, int n, Val *out) {
 }
 
 /* BIFs written in assembly, with the value convention. */
-static const char *rt_bif(const char *name, int n) {
-    static const struct { const char *name; int arity; const char *rt; } bifs[] = {
+/* erlang's BIFs that runtime.masm implements: name, arity, rt$ function */
+static const struct { const char *name; int arity; const char *rt; } bifs[] = {
         {"length", 1, "length"}, {"tuple_size", 1, "tuple_size"}, {"size", 1, "size"},
         {"setelement", 3, "setelement"}, {"element", 2, "element"},
         {"abs", 1, "abs"}, {"float", 1, "float"}, {"trunc", 1, "trunc"}, {"round", 1, "round"},
@@ -1948,7 +1948,9 @@ static const char *rt_bif(const char *name, int n) {
         {"halt", 0, "halt"}, {"halt", 1, "halt1"},
         {"put_chars", 1, "put_chars"},
         {"unique_integer", 0, "unique_integer"},
-    };
+};
+
+static const char *rt_bif(const char *name, int n) {
     for (size_t k = 0; k < sizeof bifs / sizeof *bifs; k++)
         if (strcmp(bifs[k].name, name) == 0 && bifs[k].arity == n)
             return bifs[k].rt;
@@ -3537,6 +3539,30 @@ static const char *request(Module *m, Function *f) {
     return name;
 }
 
+/* An entry of apply/3's table, "m:f/n", and its adapter, which unpacks the
+ * list of arguments for target. */
+static void add_adapter(Buf *b, Buf *adapters, int *nadapt, const char *mod, const char *name, int n,
+                        const char *target) {
+    const char *ad = S("A$%d", (*nadapt)++);
+    const char *key = S("%s:%s/%d", mod, name, n);
+    buf_printf(b, "    closure %s -> R1\n    mset R0, %s, R1\n", ad, quote(key, (int)strlen(key)));
+    buf_printf(adapters, ".func %s(ref args) -> (i64, ref)\n", ad);
+    for (int q = 0; q < n; q++)
+        buf_printf(adapters, "    mov I%d, R0->Cons.hi\n    mov.r R%d, R0->Cons.hr\n    mov.r R0, R0->Cons.tr\n", q,
+                   q + 1, q + 1);
+    /* move R1..Rn down to R0..R(n-1) */
+    for (int q = 0; q < n; q++)
+        buf_printf(adapters, "    mov.r R%d, R%d\n", q, q + 1);
+    Buf a = {0};
+    for (int q = 0; q < n; q++)
+        buf_printf(&a, "%sI%d", a.n ? ", " : "", q);
+    for (int q = 0; q < n; q++)
+        buf_printf(&a, "%sR%d", a.n ? ", " : "", q);
+    buf_add(&a, "", 0);
+    buf_printf(adapters, "    tcall %s (%s)\n.endf\n", target, a.s ? a.s : "");
+    free(a.s);
+}
+
 /* apply/3 and friends: a table from module, name and arity to a closure
  * taking the arguments as a list, built on first use in each process. */
 static void gen_dispatch(void) {
@@ -3564,29 +3590,14 @@ static void gen_dispatch(void) {
             Function *f = m->funcs.v[j];
             if (!exported(m, f->name, f->arity))
                 continue;
-            const char *target = request(m, f);
-            const char *ad = S("A$%d", nadapt++);
-            const char *key = S("%s:%s/%d", m->name, f->name, f->arity);
-            buf_printf(&b, "    closure %s -> R1\n    mset R0, %s, R1\n", ad, quote(key, (int)strlen(key)));
-            /* the adapter: unpack the list into arguments */
-            buf_printf(&adapters, ".func %s(ref args) -> (i64, ref)\n", ad);
-            int n = f->arity;
-            for (int q = 0; q < n; q++) {
-                buf_printf(&adapters, "    mov I%d, R0->Cons.hi\n    mov.r R%d, R0->Cons.hr\n    mov.r R0, R0->Cons.tr\n",
-                           q, q + 1, q + 1);
-            }
-            /* move R1..Rn down to R0..R(n-1) */
-            for (int q = 0; q < n; q++)
-                buf_printf(&adapters, "    mov.r R%d, R%d\n", q, q + 1);
-            Buf a = {0};
-            for (int q = 0; q < n; q++)
-                buf_printf(&a, "%sI%d", a.n ? ", " : "", q);
-            for (int q = 0; q < n; q++)
-                buf_printf(&a, "%sR%d", a.n ? ", " : "", q);
-            buf_add(&a, "", 0);
-            buf_printf(&adapters, "    tcall %s (%s)\n.endf\n", target, a.s ? a.s : "");
-            free(a.s);
+            add_adapter(&b, &adapters, &nadapt, m->name, f->name, f->arity, request(m, f));
         }
+        /* and erlang's BIFs that the runtime implements */
+        if (!strcmp(m->name, "erlang"))
+            for (size_t k = 0; k < sizeof bifs / sizeof *bifs; k++)
+                if (!exported(m, intern(bifs[k].name, strlen(bifs[k].name)), bifs[k].arity))
+                    add_adapter(&b, &adapters, &nadapt, "erlang", bifs[k].name, bifs[k].arity,
+                                S("rt$%s", bifs[k].rt));
     }
     buf_puts(&b, "    ret R0\n.endf\n");
     buf_add(&b, "", 0);
@@ -3594,7 +3605,6 @@ static void gen_dispatch(void) {
     buf_puts(&P.out, b.s);
     buf_puts(&P.out, adapters.s ? adapters.s : "");
 }
-
 
 /* The program's main: the module's main/0, or main/1 given the arguments. */
 static void emit_main(FILE *out, const char *entry, int main_arity) {

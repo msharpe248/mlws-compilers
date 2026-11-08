@@ -1207,17 +1207,6 @@ bad:
 1:  ret I0
 .endf
 
-; ... and as this VM's alive and proc.register want one of its own: plain.
-.func rt$lid(i64 id) -> i64
-    ncall "node.self" () -> I1
-    bz I1, 1f
-    ncall "node.of" (id) -> I2
-    bne I1, I2, 1f
-    shl I0, 16
-    shr I0, 16
-1:  ret I0
-.endf
-
 ; Whether a pid is another node's.
 .func rt$remote(i64 id) -> i64
     ncall "node.of" (id) -> I1
@@ -1698,7 +1687,6 @@ timeout:
     bne I2, 1, 9f
     call rt$pid_id (pr) -> I3
     bz I3, 9f
-    call rt$lid (I3) -> I3
 .try 9f
     ncall "proc.register" (nr, I3)
 .endtry
@@ -1723,7 +1711,6 @@ timeout:
     call rt$pid_id (p) -> I1
     call rt$remote (I1) -> I3
     bnz I3, 9f
-    call rt$lid (I1) -> I1
     alive I2, I1
     bz I2, 1f
     ret 0, "true"
