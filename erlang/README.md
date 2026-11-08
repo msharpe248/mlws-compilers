@@ -8,10 +8,10 @@ the VM's, so this is the compiler that puts the VM's concurrency to work.
 make                                   # builds mlws-vm-erlc
 ./mlws-vm-erl program.erl [args...]    # compile and run
 ./mlws-vm-erl -S program.erl           # write program.masm, don't run
-./mlws-vm-erl -b app program.erl       # write one executable, app (MLWSVM 0.17.0)
-./mlws-vm-erl -d program.erl           # run it in the debugger, variables named (0.17.3)
-./mlws-vm-erl --modules out program.erl  # each module a file of its own in out/, for
-                                       # hot code loading (0.18.1)
+./mlws-vm-erl -b app program.erl       # write one executable, app
+./mlws-vm-erl -d program.erl           # run it in the debugger, variables named
+./mlws-vm-erl --modules out program.erl  # each module a file of its own in out/,
+                                       # for hot code loading
 ./mlws-vm-erlc -o out.masm program.erl # the compiler alone
 make test                              # the tests (needs python3)
 make bench                             # the benchmarks, against erl if installed
@@ -22,7 +22,7 @@ command-line arguments as a list of strings. Other modules it calls are
 compiled with it when they are found as `NAME.erl` next to it, or can be
 named on the compiler's command line. The output is one self-contained
 `.masm` file holding the program, the runtime and the part of the library
-that the program uses. It needs MLWSVM 0.6.0 or later.
+that the program uses.
 
 With `-g` (on `mlws-vm-erlc` and the driver) the debuggers (`mlwsvm debug`,
 and editors through `mlwsvm dap`) show the program's variables by name, as
@@ -45,11 +45,8 @@ hot code; after a `case`, `receive` or `try`, only the variables every
 clause binds keep their names. The formatter, `.debug_format rt$show`,
 calls `io_lib:print/1` in a process of its own, on copies. Variables on the
 stack (beyond the 29th slot) are not named, and the optimizer drops the
-names of a function it changes, so debug code that is not optimized. The
-output of `-g` says it needs MLWSVM 0.17.3 (`.requires`). On MLWSVM 0.17.4
-and later, `-d` allows as many frames as a run does (`mlwsvm debug
---max-frames`); 0.17.3's `mlwsvm debug` takes no VM options, so there a
-program run with `-d` has the VM's default limit on recursion.
+names of a function it changes, so debug code that is not optimized.
+`-d` allows as many frames as a run does (`mlwsvm debug --max-frames`).
 
 ## Hot code loading
 
@@ -69,7 +66,7 @@ replace the old one while the program runs, as in Erlang:
   to its own (`?MODULE:loop(State)`), goes to the module's current
   version: a server loop that calls itself so moves to the new code at its
   next message, while one that calls itself locally stays on the old. The
-  calls go through MLWSVM 0.18.1's `module.handle`, kept for each process,
+  calls go through MLWSVM's `module.handle`, kept for each process,
   so modules may call each other both ways, and a module is loaded the
   first time it is called.
 * `code:load_file/1` loads the new version from its file
@@ -147,11 +144,9 @@ the library beyond the modules above.
 * `re` patterns are RE2's syntax, which is Perl's without backreferences,
   lookaround, possessive quantifiers and recursion, and match in time
   linear in the subject. Named groups (`(?<name>...)`, `(?P<name>...)`)
-  are captured by name and with `all_names` (MLWSVM 0.17.3's
-  `regex.names`), and `inspect(MP, namelist)` lists them; a replacement
+  are captured by name and with `all_names` (MLWSVM's `regex.names`), and `inspect(MP, namelist)` lists them; a replacement
   cannot be a fun, and `{return, iodata}` gives a binary. A subject or
-  pattern is matched as UTF-8 text with or without `unicode`. A program
-  that uses `re` needs MLWSVM 0.17.3; others still run on 0.6.0.
+  pattern is matched as UTF-8 text with or without `unicode`.
 
 ## How it works
 
@@ -221,7 +216,7 @@ exit reason written as a term, which the VM hands to the monitors in its
 Erlang/OTP 29 (whose BEAM compiles to machine code, and whose time includes
 starting it, about 0.07 s), on an Apple M5 Pro, in seconds, the best of
 three runs, on MLWSVM 0.15.0. MLWSVM is run interpreting, and with its JIT
-(MLWSVM 0.8.0 and later, `MLWSVM_JIT=on`):
+(`MLWSVM_JIT=on`):
 
 | Benchmark | MLWSVM | MLWSVM JIT | erl |
 |---|---|---|---|
@@ -231,9 +226,8 @@ three runs, on MLWSVM 0.15.0. MLWSVM is run interpreting, and with its JIT
 | nbody (100,000 steps, floats in tuples) | 0.46 | 0.17 | 0.16 |
 | sorting (200,000 integers, maps) | 0.35 | 0.20 | 0.11 |
 
-These need MLWSVM 0.7.0 or later, whose fast forms for `bitcast`,
-`typeof` and comparisons of list elements came from these programs'
-profiles. Calls and integer arithmetic are as fast as BEAM's; tuples and
+MLWSVM's fast forms for `bitcast`, `typeof` and comparisons of list
+elements came from these programs' profiles. Calls and integer arithmetic are as fast as BEAM's; tuples and
 allocation are where the time goes. With the JIT, `--jit-report -` shows
 what its machine code could not run itself: here, only `send` and `recv`.
 
@@ -245,4 +239,4 @@ what its machine code could not run itself: here, only `send` and `recv`.
 a test calls. `tests/modules` (run by `tests/modules/run.sh`) holds
 programs compiled with `--modules`, their new versions of modules in
 `v2/`, and what each prints (`main.out`). The tests pass with `MLWSVM_GC_STRESS=1` and `MLWSVM_OPT=3`, and with
-MLWSVM 0.9.0's `MLWSVM_GC_VERIFY=1`.
+`MLWSVM_GC_VERIFY=1`.

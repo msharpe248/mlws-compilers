@@ -31,14 +31,14 @@ lox/mlws-vm-lox -b app program.lox          # write one executable, app; don't r
 ```
 
 (and the same for `bf/mlws-vm-bf`, `lua/mlws-vm-lua` and `erlang/mlws-vm-erl`). `-S` needs no VM.
-`-b` (MLWSVM 0.17.0's `mlwsvm bundle`) writes a copy of `mlwsvm` with the
+`-b` (`mlwsvm bundle`) writes a copy of `mlwsvm` with the
 program after it, optimized at `--opt 3` and with the JIT on, so it runs
 anywhere the same kind of machine runs, with no MLWSVM installed. On macOS,
 don't give it a name ending in `.app`: macOS kills any plain executable
 with such a name as it starts (`Killed: 9`).
 For Lox, Lua and Erlang, `-g` names the program's local variables for
-MLWSVM's debuggers, which then show them in the language's own terms
-(MLWSVM 0.17.3), and `-d` runs the program in `mlwsvm debug` with them:
+MLWSVM's debuggers, which then show them in the language's own terms,
+and `-d` runs the program in `mlwsvm debug` with them:
 
 ```sh
 lua/mlws-vm-lua -d program.lua              # (mdb) break program.lua:12, run, locals
@@ -106,13 +106,17 @@ the Erlang tests' from Erlang/OTP (`erlang/tests/expect.sh`).
 
 ## Finding the VM
 
+The compilers target the latest MLWSVM release (now 0.19.0): what they
+write says so (`.requires mlwsvm, ">=0.19.0"`), and older VMs are not
+supported.
+
 The driver scripts (`bf/mlws-vm-bf`, `lox/mlws-vm-lox`, `lua/mlws-vm-lua`, `erlang/mlws-vm-erl`) and the test runner
 use the `mlwsvm` executable given by `$MLWSVM`, else `mlwsvm` on the `PATH`, else
 `../mlws-vm/mlwsvm` next to this repository.
 
 ## Optimizing
 
-MLWSVM 0.6.0 and later have an optimizer, off by default, which works on any
+MLWSVM has an optimizer, off by default, which works on any
 of these compilers' output: `mlwsvm run --opt 3 program.masm`, or
 `MLWSVM_OPT=3` in the environment, which the driver scripts and the test
 runner pass on (`MLWSVM_OPT=3 lua/mlws-vm-lua program.lua`,
@@ -126,8 +130,8 @@ Lua counts to find an error's position. See the VM's
 
 The Lua and Erlang benchmarks (`make -C lua bench`, `make -C erlang bench`),
 in seconds, the best of three runs, on an Apple M5 Pro with MLWSVM 0.15.0.
-MLWSVM is run interpreting, and with its JIT (MLWSVM 0.8.0 and later:
-`mlwsvm run --jit on`, or `MLWSVM_JIT=on` in the environment, which works
+MLWSVM is run interpreting, and with its JIT (`mlwsvm run
+--jit on`, or `MLWSVM_JIT=on` in the environment, which works
 with the driver scripts and `make test` too). The references are the
 interpreter `lua` 5.5.1, and Erlang/OTP 29.1.2, whose BEAM compiles to
 machine code (its times include starting it, about 0.07 s):
@@ -156,12 +160,9 @@ The Lox benchmarks, with and without the JIT, are in
 [lox/README.md](lox/README.md#performance); there is no reference Lox
 to compare with.
 
-Every test suite passes with the JIT (tested on MLWSVM 0.8.0, 0.9.1, 0.10.0, 0.11.0, 0.12.0, 0.13.0, 0.14.0, 0.15.0, 0.17.3 and 0.17.4), and
-prints the same as without it, and with the generational collector of MLWSVM
-0.9.0 and later checked against a full heap walk at every minor collection
-(`MLWSVM_GC_VERIFY=1`). Use MLWSVM 0.9.1 or later with the JIT: 0.9.0's can
-crash while compiling a large function. Lua programs now need MLWSVM 0.17.3
-or later, for its finalizers (see [lua/README.md](lua/README.md)).
+Every test suite passes with the JIT, and prints the same as without it,
+and with the generational collector checked against a full heap walk at
+every minor collection (`MLWSVM_GC_VERIFY=1`).
 The JIT does least for code that spends its time in the runtime: string
 operations, and sending and receiving messages.
 

@@ -5,6 +5,14 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
 ## Unreleased
 
+### Repository
+
+* The compilers target the latest MLWSVM release only, now 0.19.0: every
+  compiler's output says `.requires mlwsvm, ">=0.19.0"`, and the drivers
+  and tests no longer check the VM's version (`-g`, `-d` and `-b` are
+  always tested, and Erlang's `-d` always passes `--max-frames`). The
+  READMEs say what a feature uses, not which VM it first needs.
+
 ### Erlang
 
 * `--modules DIR` (on `mlws-vm-erlc` and the driver): each module of the
@@ -20,8 +28,11 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   the old code among them) afresh, and atoms made at run time are
   `text.intern`'s, the same as every module's literals. A new process runs
   its fun from a frame that does not keep it, so `code:purge` does not
-  kill a process that has moved to the new code. Needs MLWSVM 0.18.1.
-  tests/modules has these programs.
+  kill a process that has moved to the new code. tests/modules has these
+  programs, among them one whose new version drops a function that was
+  called: calls to it are undef.
+* Atoms made at run time are `text.intern`'s in every program, so the
+  table of the program's atom literals is gone.
 * `code`: `load_file/1` and `load_binary/3` (the module's assembly, as
   `--modules` writes it) on MLWSVM's `module.load`, `module.reload` and
   `module.reload_text`; `purge/1` and `soft_purge/1` on `module.purge_kill`

@@ -84,13 +84,7 @@ if [ -n "$bundle" ]; then
     exit $?
 fi
 if [ -n "$debug" ]; then
-    # mlwsvm debug takes run's VM options from MLWSVM 0.17.4 on
-    frames=
-    if "$MLWSVM" version |
-           awk '{ split($2, v, "."); exit !(v[1] * 1000000 + v[2] * 1000 + v[3] >= 17004) }'; then
-        frames="--max-frames 50000000"
-    fi
-    MLWSVM_OPT=0 "$MLWSVM" debug $frames "$out"
+    MLWSVM_OPT=0 "$MLWSVM" debug --max-frames 50000000 "$out"
     exit $?
 fi
 "$MLWSVM" run --max-frames 50000000 "$out" "$@"

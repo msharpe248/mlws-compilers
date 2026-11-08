@@ -1,6 +1,6 @@
 #!/bin/sh
 # Check a compiler driver's ways of producing assembly (-S, -o, -k), of
-# debugging (-g, -d) and an executable (-b, on an MLWSVM with bundle).
+# debugging (-g, -d) and an executable (-b).
 #   test-drivers.sh DRIVER PROGRAM EXPECTED_STDOUT [LINE]
 # PROGRAM is copied to a scratch directory; EXPECTED_STDOUT is what running
 # it prints. LINE, if given, is a line of PROGRAM that the assembly's .loc
@@ -47,10 +47,9 @@ check "a plain run" same_output "$driver" "$src"
 check "... leaves no assembly behind" absent "$masm"
 check "-o - without -S is refused" sh -c '! "$1" -o - "$2"' _ "$driver" "$src"
 # -g and -d, where PROGRAM.debug gives debugger commands and PROGRAM.locals
-# the variables they show, on an MLWSVM with .debug_format (0.17.3)
+# the variables they show
 dbg=${prog%.*}.debug
-if [ -f "$dbg" ] && "$MLWSVM" version |
-       awk '{ split($2, v, "."); exit !(v[1] * 1000000 + v[2] * 1000 + v[3] >= 17003) }'; then
+if [ -f "$dbg" ]; then
     check "-g runs the program" same_output "$driver" -g "$src"
     check "... and leaves no assembly behind" absent "$masm"
     check "-d runs it in the debugger, which shows its variables" \
@@ -58,13 +57,11 @@ if [ -f "$dbg" ] && "$MLWSVM" version |
         _ "$driver" "$src" "$dbg" "$tmp/got" "${prog%.*}.locals"
     check "-d with arguments for the program is refused" sh -c '! "$1" -d "$2" x </dev/null' _ "$driver" "$src"
 fi
-if "$MLWSVM" bundle 2>&1 | grep -q "usage: mlwsvm bundle"; then
-    check "-b writes an executable that runs on its own" \
-        sh -c '"$1" -b "$2" "$3" >/dev/null && (cd / && "$2") >"$4" 2>&1 && cmp -s "$4" "$5"' \
-        _ "$driver" "$tmp/app" "$src" "$tmp/got" "$expect"
-    check "... and leaves no assembly behind" absent "$masm"
-    check "-b with arguments for the program is refused" sh -c '! "$1" -b "$2" "$3" x' _ "$driver" "$tmp/app2" "$src"
-fi
+check "-b writes an executable that runs on its own" \
+    sh -c '"$1" -b "$2" "$3" >/dev/null && (cd / && "$2") >"$4" 2>&1 && cmp -s "$4" "$5"' \
+    _ "$driver" "$tmp/app" "$src" "$tmp/got" "$expect"
+check "... and leaves no assembly behind" absent "$masm"
+check "-b with arguments for the program is refused" sh -c '! "$1" -b "$2" "$3" x' _ "$driver" "$tmp/app2" "$src"
 
 echo "drivers: $passed passed, $failed failed"
 [ "$failed" -eq 0 ]

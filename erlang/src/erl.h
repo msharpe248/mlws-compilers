@@ -213,7 +213,6 @@ void generate_modules(Module **mods, int nmods, const char *dir);
 extern const char *runtime_masm;      /* runtime.masm, built in */
 extern bool debug_info;               /* -g: .local names and a .debug_format formatter */
 extern const char *runtime_re_masm;   /* runtime_re.masm: for programs that use re */
-extern const char *runtime_mod_masm;  /* runtime_mod.masm: erlrt's, for --modules */
 extern const char *prelude_files[];   /* the library modules' Erlang source, NULL-terminated */
 extern const char *prelude_names[];
 

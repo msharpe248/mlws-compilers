@@ -17,7 +17,7 @@ mlws-vm-bf [options] program.b [args...]
                  with -S, '-' writes it to standard output
   -b FILE        write one executable, FILE, instead of running: the VM and
                  the program, optimized (--opt 3) with the JIT on, which runs
-                 with nothing beside it (MLWSVM 0.17.0's mlwsvm bundle)
+                 with nothing beside it (mlwsvm bundle)
   --tape N, --eof MODE, -O0   as for mlws-vm-bfc
   --version      print the compiler's version (bf/VERSION)
 ```

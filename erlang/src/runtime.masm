@@ -65,7 +65,6 @@ g$links:    .zero 8      ; a map: pid -> 1, links made while trapping exits
 g$trap:     .i64 0       ; trap_exit
 g$refn:     .i64 0       ; references made
 g$pdict:    .zero 8      ; the process dictionary (a Map term)
-g$atomtab:  .zero 8      ; atoms made at run time: a map string -> the atom
 g$start:    .zero 8      ; the closure a new process runs, for rt$proc_start
 g$dispatch: .zero 8      ; apply/3: "m:f/n" -> adapter closure
 g$uniq:     .i64 0
@@ -1057,19 +1056,6 @@ bad:
 9:  tcall rt$badarg ()
 .endf
 
-; The atom with a name: the program's literal one if there is one. (erlrt's
-; is text.intern, in runtime_mod.masm.)
-.func rt$intern_table(ref s) -> (i64, ref)
-    mov.r R1, @g$atomtab
-    bnz R1, 1f
-    call rt$atoms_init () -> R1
-    mov.r @g$atomtab, R1
-1:  mget.r R2, R1, s, null
-    bz R2, 2f
-    ret 0, R2
-2:  mset R1, s, s
-    ret 0, s
-.endf
 
 .func rt$list_to_atom(i64 a, ref l) -> (i64, ref)
     call rt$list_to_str (a, l) -> (I1, R1)
@@ -2935,4 +2921,123 @@ bad:
     lpush R3, "error", 0
     lpush R3, R1, 0
     ret 0, R3
+.endf
+
+; ---------------------------------------------------------------- --modules
+
+g$handles:  .zero 8      ; module.handle closures: a map MLWSVM name -> closure
+
+; The atom with a name: the VM's one string with that text, the same object
+; as every module's literal of it (MLWSVM 0.18.1's text.intern).
+.func rt$intern(ref s) -> (i64, ref)
+    ncall "text.intern" (s) -> R1
+    ret 0, R1
+.endf
+
+; M:F/N of a program's module (compiled with --modules): a handle that
+; always calls its current version (MLWSVM 0.18.1's module.handle),
+; loading the module the first time; kept for the process. fname is its
+; MLWSVM name. A module or function that is not there: error undef.
+.func rt$rfun(i64 n, ref m, ref f, ref fname) -> ref
+    mov.r R1, @g$handles
+    bnz R1, 1f
+    mnew R1
+    mov.r @g$handles, R1
+1:  mget.r R4, R1, fname, null
+    bz R4, 2f
+    ret R4
+2:
+.try 8f
+    ncall "module.load" (m)
+    ncall "module.handle" (m, fname) -> (R4)
+.endtry
+    mset R1, fname, R4
+    ret R4
+8:  catch R5
+    call rt$undef (0, 0, n, m, f, null) -> (I6, R6)
+    ret null
+.endf
+
+; code:load_file(M): load M, or a new version of it, from its file: ok, or
+; why not.
+.func rt$code_load(i64 mi, ref m) -> (i64, ref)
+    call rt$split -> I1
+    bz I1, 7f
+    ncall "module.loaded" (m) -> (I2)
+    bnz I2, 1f
+.try 8f
+    ncall "module.load" (m)
+.endtry
+    ret 0, "ok"
+1:
+.try 8f
+    ncall "module.reload" (m)
+.endtry
+    ret 0, "ok"
+7:  ret 0, "embedded"
+8:  catch R3
+    tcall rt$code_why (R3)
+.endf
+
+; code:load_binary(M, File, Bin): a new version of M from its assembly.
+.func rt$code_load_text(i64 mi, i64 bi, ref m, ref b) -> (i64, ref)
+    call rt$split -> I1
+    bz I1, 7f
+    call rt$bin_str (bi, b) -> (I2, R2)
+.try 8f
+    ncall "module.loaded" (m) -> (I3)
+    bnz I3, 1f
+    ncall "module.load" (m)
+1:  ncall "module.reload_text" (m, R2)
+.endtry
+    ret 0, "ok"
+7:  ret 0, "embedded"
+8:  catch R3
+    tcall rt$code_why (R3)
+.endf
+
+; Why a load failed, as code says it.
+.func rt$code_why(ref e) -> (i64, ref)
+    bnisa e, Error, 9f
+    strcmp I0, e->Error.code, "E_LOAD_NOT_FOUND"
+    bz I0, 1f
+9:  ret 0, "badfile"
+1:  ret 0, "nofile"
+.endf
+
+; code:purge(M): true if it killed a process still running old code.
+.func rt$code_purge(i64 mi, ref m) -> (i64, ref)
+    call rt$split -> I1
+    bz I1, 7f
+.try 8f
+    ncall "module.purge_kill" (m) -> (I2, I3, I4)
+.endtry
+    bz I4, 7f
+    ret 0, "true"
+7:  ret 0, "false"
+8:  catch R5
+    ret 0, "false"
+.endf
+
+; code:soft_purge(M): false if a process still runs M's old code.
+.func rt$code_soft_purge(i64 mi, ref m) -> (i64, ref)
+    call rt$split -> I1
+    bz I1, 6f
+.try 8f
+    ncall "module.purge" (m) -> (I2, I3)
+.endtry
+    bnz I3, 7f
+6:  ret 0, "true"
+7:  ret 0, "false"
+8:  catch R5
+    ret 0, "true"
+.endf
+
+.func rt$code_loaded(i64 mi, ref m) -> (i64, ref)
+    call rt$split -> I1
+    bz I1, 7f
+    ncall "module.loaded" (m) -> (I2)
+    bz I2, 7f
+    ret 0, "true"
+7:  ret 0, "false"
 .endf

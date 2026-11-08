@@ -17,14 +17,13 @@ mlws-vm-lox [options] program.lox [args...]
   -S             only compile: write the assembly and do not run it
   -k             keep the assembly after running the program
   -g             name the program's local variables for the debuggers
-                 (MLWSVM 0.17.3 or later)
   -d             run the program in the debugger (mlwsvm debug), which reads
                  its commands from standard input; implies -g
   -o FILE        the assembly file (default: program.masm next to the source);
                  with -S, '-' writes it to standard output
   -b FILE        write one executable, FILE, instead of running: the VM and
                  the program, optimized (--opt 3) with the JIT on, which runs
-                 with nothing beside it (MLWSVM 0.17.0's mlwsvm bundle)
+                 with nothing beside it (mlwsvm bundle)
   --version      print the compiler's version (lox/VERSION)
 ```
 
@@ -32,7 +31,7 @@ mlws-vm-lox [options] program.lox [args...]
 
 ```
 mlws-vm-loxc [-g] [-o FILE] program.lox
-  -g             name the local variables for debuggers (needs MLWSVM 0.17.3)
+  -g             name the local variables for debuggers
   -o FILE        write the assembly to FILE (default: program.masm; '-' for stdout)
   --version      print the version
 ```
@@ -66,8 +65,7 @@ formatter (`.debug_format rt$show`) shows its two registers. Parameters,
 globals, captured variables seen from a closure, and locals beyond the 24th of
 a function (on the stack) are not. The optimizer renames registers and
 drops the names of a function it changes, so debug code that is not
-optimized. The output of `-g` says it needs MLWSVM 0.17.3 (`.requires`);
-without `-g` it is as before.
+optimized. Without `-g` the output is as before.
 
 It implements the whole language (closures, classes, inheritance, `super`,
 initializers, `clock()`) and behaves like jlox: it passes all 241 applicable

@@ -20,14 +20,13 @@ mlws-vm-lua [options] program.lua [args...]
   -S             only compile: write the assembly and do not run it
   -k             keep the assembly after running the program
   -g             name the program's local variables for the debuggers
-                 (MLWSVM 0.17.3 or later)
   -d             run the program in the debugger (mlwsvm debug), which reads
                  its commands from standard input; implies -g
   -o FILE        the assembly file (default: program.masm next to the source);
                  with -S, '-' writes it to standard output
   -b FILE        write one executable, FILE, instead of running: the VM and
                  the program, optimized (--opt 3) with the JIT on, which runs
-                 with nothing beside it (MLWSVM 0.17.0's mlwsvm bundle)
+                 with nothing beside it (mlwsvm bundle)
   --shared       compile the program alone, importing the runtime from the
                  library lib/lua-VERSION.mlwsl (see below)
   --version      print the compiler's version (lua/VERSION)
@@ -38,7 +37,7 @@ mlws-vm-lua [options] program.lua [args...]
 ```
 mlws-vm-luac [-g] [--shared] [-o FILE] [-n NAME] program.lua
 mlws-vm-luac --library DIR
-  -g             name the local variables for debuggers (needs MLWSVM 0.17.3)
+  -g             name the local variables for debuggers
   -o FILE        write the assembly to FILE (default: program.masm; '-' for stdout)
   -n NAME        the chunk name in error messages (default: the path as given)
   --shared       import the runtime from the MLWSVM library lua (see below)
@@ -47,12 +46,11 @@ mlws-vm-luac --library DIR
 ```
 
 The assembly is one self-contained file: the program, the runtime and the
-library, with no imports. It uses MLWSVM 0.17.3's `gc.hold_finalizers`
-and `gc.run_finalizers` and 0.17.0's `gc.finalize`, weak maps and weak
-references (for `__gc` and `__mode`), 0.14.0's `text.replace_n` (for `gsub` of a plain
-pattern by a plain string), M37's `text.ascii_upper` and
-`text.ascii_lower`, M34's `.loc` source positions, and M32's element
-offsets and `bisa`/`bnisa`, so it needs MLWSVM 0.17.3 or later. It can be assembled to a binary module
+library, with no imports. It uses MLWSVM's `gc.hold_finalizers`,
+`gc.run_finalizers` and `gc.finalize`, weak maps and weak references (for
+`__gc` and `__mode`), `text.replace_n` (for `gsub` of a plain pattern by a
+plain string), `text.ascii_upper` and `text.ascii_lower`, `.loc` source
+positions, and element offsets and `bisa`/`bnisa`. It can be assembled to a binary module
 (`mlwsvm asm program.masm -o program.mlwso`), or run under `mlwsvm debug`,
 `--profile` or `--trace`; each function is named `L<n>$name` after the Lua
 function it came from, and its code carries the Lua lines it came from
@@ -83,8 +81,7 @@ variables and the upvalues a function with a loop copies to registers are
 named; other upvalues, locals on the stack (beyond the 28th) and the
 prelude's are not, and slow paths (code out of line) show only what the
 function's end has. The optimizer drops the names of a function it changes,
-so debug code that is not optimized. The output of `-g` says it needs MLWSVM
-0.17.3 (`.requires`).
+so debug code that is not optimized.
 
 ### The runtime as a library
 
@@ -112,8 +109,7 @@ makes the table constructors it expects. Such a program is assembled in
 a few milliseconds instead of about 30, and runs as fast. Its output must
 not be named `lua.masm`, which would be found instead of the library.
 The runtime tells nil, false and true apart by the identity of constants
-(`1n`, `2n`, `3n`), so the VM must make one object of each constant for
-all modules: MLWSVM 0.4.1 or later, which the library requires.
+(`1n`, `2n`, `3n`), which the VM makes one object each for all modules.
 
 ## What it implements
 
@@ -381,7 +377,7 @@ VM's fast paths; what remains is instruction count, mostly type checks on
 values whose type is not known statically (anything read from a table or
 passed as an argument), bounds checks on array accesses and allocation.
 
-With MLWSVM's optimizer (`MLWSVM_OPT=3`, MLWSVM 0.6.0 or later; see the
+With MLWSVM's optimizer (`MLWSVM_OPT=3`; see the
 top-level README), the same benchmarks on MLWSVM 0.6.0, cache warm, run
 from 0% to 27% faster: spectralnorm 0.22 → 0.16, loop 0.19 → 0.17,
 iterate 0.09 → 0.08, binarytrees 0.57 → 0.54, nbody 0.99 → 0.95,
