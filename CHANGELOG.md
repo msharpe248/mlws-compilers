@@ -11,11 +11,17 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   program is written to DIR as an MLWSVM module of its own, `M.masm`,
   importing `erlrt.masm`, the runtime and the whole library, which is
   written beside them. A call to another of the program's modules, and a
-  fully qualified call to its own (`?MODULE:loop(S)`), finds that
-  module's current version when it is made (loading the module the first
-  time), so modules may call each other both ways and a new version takes
-  over as in Erlang: code already running stays on the old one. Needs
-  MLWSVM 0.18.0. tests/modules has these programs.
+  fully qualified call to its own (`?MODULE:loop(S)`), goes through a
+  `module.handle` (MLWSVM 0.18.1) kept for the process, which calls the
+  module's current version (loading the module the first time), so modules
+  may call each other both ways and a new version takes over as in
+  Erlang: code already running stays on the old one. Each module says
+  `.reload fresh`, so a new version starts its cached constants (funs of
+  the old code among them) afresh, and atoms made at run time are
+  `text.intern`'s, the same as every module's literals. A new process runs
+  its fun from a frame that does not keep it, so `code:purge` does not
+  kill a process that has moved to the new code. Needs MLWSVM 0.18.1.
+  tests/modules has these programs.
 * `code`: `load_file/1` and `load_binary/3` (the module's assembly, as
   `--modules` writes it) on MLWSVM's `module.load`, `module.reload` and
   `module.reload_text`; `purge/1` and `soft_purge/1` on `module.purge_kill`

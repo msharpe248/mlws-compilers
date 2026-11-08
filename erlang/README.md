@@ -10,6 +10,8 @@ make                                   # builds mlws-vm-erlc
 ./mlws-vm-erl -S program.erl           # write program.masm, don't run
 ./mlws-vm-erl -b app program.erl       # write one executable, app (MLWSVM 0.17.0)
 ./mlws-vm-erl -d program.erl           # run it in the debugger, variables named (0.17.3)
+./mlws-vm-erl --modules out program.erl  # each module a file of its own in out/, for
+                                       # hot code loading (0.18.1)
 ./mlws-vm-erlc -o out.masm program.erl # the compiler alone
 make test                              # the tests (needs python3)
 make bench                             # the benchmarks, against erl if installed
@@ -49,6 +51,41 @@ and later, `-d` allows as many frames as a run does (`mlwsvm debug
 --max-frames`); 0.17.3's `mlwsvm debug` takes no VM options, so there a
 program run with `-d` has the VM's default limit on recursion.
 
+## Hot code loading
+
+With `--modules DIR` (on `mlws-vm-erlc` and the driver), each module of
+the program is written to DIR as an MLWSVM module of its own, `M.masm`,
+with the runtime and the whole library beside them in `erlrt.masm`, and
+the driver runs the program from there. A new version of a module can then
+replace the old one while the program runs, as in Erlang:
+
+```sh
+./mlws-vm-erl --modules out server.erl &   # runs out/server.masm
+./mlws-vm-erlc --modules out counter.erl   # a new out/counter.masm
+                                           # ... and the program calls code:load_file(counter)
+```
+
+* A call to another of the program's modules, and a fully qualified call
+  to its own (`?MODULE:loop(State)`), goes to the module's current
+  version: a server loop that calls itself so moves to the new code at its
+  next message, while one that calls itself locally stays on the old. The
+  calls go through MLWSVM 0.18.1's `module.handle`, kept for each process,
+  so modules may call each other both ways, and a module is loaded the
+  first time it is called.
+* `code:load_file/1` loads the new version from its file
+  (`module.reload`), and `code:load_binary/3` from its assembly
+  (`module.reload_text`), as `--modules` writes it; `code:purge/1` frees
+  the old version, killing the processes still running it
+  (`module.purge_kill`), and `code:soft_purge/1` frees it only if none is
+  (`module.purge`).
+* A new version keeps none of the old one's globals (`.reload fresh`): an
+  Erlang module has no state of its own, only its processes do.
+* A program compiled to one file has no modules to replace:
+  `code:load_file` says `{error, embedded}`.
+
+`tests/modules` has such programs: `hot` replaces a running server's
+module and purges a process left in the old code.
+
 ## What it implements
 
 * Modules, `-export`, `-import`, `-record` (and `#r{}`, `R#r.f`,
@@ -84,10 +121,11 @@ program run with `-d` has the VM's default limit on recursion.
   out as OTP's pretty printer does, `write`, `print`), `lists`, `maps`,
   `string` (both the old and the new functions), `proplists`, `math`,
   `timer`, `unicode`, `re` (`run`, `replace`, `split`, `compile` and
-  `inspect`, on MLWSVM's regular expressions), and the BIFs of `erlang`.
+  `inspect`, on MLWSVM's regular expressions), `code` (above), `file`
+  (`read_file`, `write_file`), and the BIFs of `erlang`.
 
 Not implemented: `maybe`, bit strings that are not whole bytes, bitwise
-operations on BigInts, hot code loading, distribution (nodes), ports,
+operations on BigInts, distribution (nodes), ports,
 OTP's behaviours (`gen_server`, `supervisor`, ...), `ets`, and most of
 the library beyond the modules above.
 
@@ -204,5 +242,7 @@ what its machine code could not run itself: here, only `send` and `recv`.
 `tests/lang` and `tests/programs` hold modules with a `main/0`; each
 `NAME.out` is what Erlang/OTP prints for it, made by `tests/expect.sh`
 (which needs `erlc` and `erl`). A module without `main/0` is a helper that
-a test calls. The tests pass with `MLWSVM_GC_STRESS=1` and `MLWSVM_OPT=3`, and with
+a test calls. `tests/modules` (run by `tests/modules/run.sh`) holds
+programs compiled with `--modules`, their new versions of modules in
+`v2/`, and what each prints (`main.out`). The tests pass with `MLWSVM_GC_STRESS=1` and `MLWSVM_OPT=3`, and with
 MLWSVM 0.9.0's `MLWSVM_GC_VERIFY=1`.

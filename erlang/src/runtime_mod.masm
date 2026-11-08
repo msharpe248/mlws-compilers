@@ -2,14 +2,33 @@
 ; module.* natives): only erlrt has it.
 ; ---------------------------------------------------------------- --modules
 
-; M:F/N of a program's module (compiled with --modules): the closure for
-; its current version, loading the module if need be. fname is its MLWSVM
-; name. A module or function that is not there: error undef.
+g$handles:  .zero 8      ; module.handle closures: a map MLWSVM name -> closure
+
+; The atom with a name: the VM's one string with that text, the same object
+; as every module's literal of it (MLWSVM 0.18.1's text.intern).
+.func rt$intern(ref s) -> (i64, ref)
+    ncall "text.intern" (s) -> R1
+    ret 0, R1
+.endf
+
+; M:F/N of a program's module (compiled with --modules): a handle that
+; always calls its current version (MLWSVM 0.18.1's module.handle),
+; loading the module the first time; kept for the process. fname is its
+; MLWSVM name. A module or function that is not there: error undef.
 .func rt$rfun(i64 n, ref m, ref f, ref fname) -> ref
+    mov.r R1, @g$handles
+    bnz R1, 1f
+    mnew R1
+    mov.r @g$handles, R1
+1:  mget.r R4, R1, fname, null
+    bz R4, 2f
+    ret R4
+2:
 .try 8f
     ncall "module.load" (m)
-    ncall "module.function" (m, fname) -> (R4)
+    ncall "module.handle" (m, fname) -> (R4)
 .endtry
+    mset R1, fname, R4
     ret R4
 8:  catch R5
     call rt$undef (0, 0, n, m, f, null) -> (I6, R6)

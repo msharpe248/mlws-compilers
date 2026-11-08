@@ -1054,8 +1054,9 @@ bad:
 9:  tcall rt$badarg ()
 .endf
 
-; The atom with a name: the program's literal one if there is one.
-.func rt$intern(ref s) -> (i64, ref)
+; The atom with a name: the program's literal one if there is one. (erlrt's
+; is text.intern, in runtime_mod.masm.)
+.func rt$intern_table(ref s) -> (i64, ref)
     mov.r R1, @g$atomtab
     bnz R1, 1f
     call rt$atoms_init () -> R1

@@ -10,8 +10,8 @@ if [ -z "$MLWSVM" ] && ! command -v mlwsvm >/dev/null 2>&1; then
 fi
 . "$here/../../../tools/find-vm.sh"
 if ! "$MLWSVM" version |
-       awk '{ split($2, v, "."); exit !(v[1] * 1000000 + v[2] * 1000 + v[3] >= 18000) }'; then
-    echo "modules: skipped (they need MLWSVM 0.18.0)"
+       awk '{ split($2, v, "."); exit !(v[1] * 1000000 + v[2] * 1000 + v[3] >= 18001) }'; then
+    echo "modules: skipped (they need MLWSVM 0.18.1)"
     exit 0
 fi
 pass=0 fail=0
