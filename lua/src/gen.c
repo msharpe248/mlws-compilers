@@ -5634,7 +5634,7 @@ typedef struct {
 
 /* The MLWSVM that the output needs: 0.17.0, for gc.finalize and weak maps
    (__gc and __mode) */
-#define MIN_MLWSVM ">=0.22.0"   /* the latest release */
+#define MIN_MLWSVM ">=0.23.0"   /* the latest release */
 
 /* Add a formatted line (with no Lua line) to b. */
 static void bufl(Buf *b, const char *fmt, ...) {

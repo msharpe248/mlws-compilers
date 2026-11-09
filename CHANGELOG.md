@@ -7,8 +7,8 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
 ### Repository
 
-* The compilers target the latest MLWSVM release only, now 0.22.0: every
-  compiler's output says `.requires mlwsvm, ">=0.22.0"`, and the drivers
+* The compilers target the latest MLWSVM release only, now 0.23.0: every
+  compiler's output says `.requires mlwsvm, ">=0.23.0"`, and the drivers
   and tests no longer check the VM's version (`-g`, `-d` and `-b` are
   always tested, and Erlang's `-d` always passes `--max-frames`). The
   READMEs say what a feature uses, not which VM it first needs.
