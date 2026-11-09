@@ -12,6 +12,7 @@ make                                   # builds mlws-vm-erlc
 ./mlws-vm-erl -d program.erl           # run it in the debugger, variables named
 ./mlws-vm-erl --modules out program.erl  # each module a file of its own in out/,
                                        # for hot code loading
+./mlws-vm-erl --env app.env program.erl  # application:get_env from app.env
 ./mlws-vm-erlc -o out.masm program.erl # the compiler alone
 make test                              # the tests (needs python3)
 make bench                             # the benchmarks, against erl if installed
@@ -173,7 +174,17 @@ back, a remote kill, global names, a disconnect and a reconnect, and
   `timer`, `unicode`, `re` (`run`, `replace`, `split`, `compile` and
   `inspect`, on MLWSVM's regular expressions), `code` (above), `file`
   (`read_file`, `write_file`), `net_kernel`, `net_adm`, `rpc` and
-  `global` (Distribution, above), and the BIFs of `erlang`.
+  `global` (Distribution, above), `application`'s environment (below),
+  and the BIFs of `erlang`.
+* `application:get_env/2,3`, `set_env/1-4`, `unset_env/2,3` and
+  `get_all_env/1`, on MLWSVM's environments: App's Key is the VM's value
+  `App.Key`, which every process of the program sees at once, and a term
+  set reads back as it was. `mlws-vm-erl --env FILE` fills it before the
+  program starts, as Erlang's `-config` does, from lines of
+  `app.key = JSON` (`${VAR}`: an OS environment variable): a string is an
+  atom, an array a list, an object a map with atom keys, and `true`,
+  `false` and `null` atoms, except that `true` and `false` alone read as 1
+  and 0. Apps and keys are atoms.
 
 Not implemented: `maybe`, bit strings that are not whole bytes, bitwise
 operations on BigInts, ports,

@@ -1,0 +1,11 @@
+8080 8081
+{ok,0.25}
+true
+{ok,[db1,db2,3,4.5,true,null,[false]]}
+localhost 5432
+#{host => localhost,opts => #{ssl => true},port => 5432}
+{ok,123456789012345678901234567890}
+{ok,'hello, "world"'}
+[db,greeting,huge,mode,port,rate,servers]
+{ok,9090}
+[{x,1}]

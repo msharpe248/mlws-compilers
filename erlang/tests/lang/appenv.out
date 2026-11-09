@@ -1,0 +1,22 @@
+undefined
+80
+int: true
+neg: true
+big: true
+float: true
+atom: true
+tuple: true
+empty: true
+nil: true
+list: true
+string: true
+bin: true
+map: true
+nested: true
+bool: true
+{ok,{a,1,"s"}}
+[{a,1},{b,{2}}]
+[{b,{2}}]
+gone
+{ok,yes}
+[]

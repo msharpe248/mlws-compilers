@@ -3304,6 +3304,169 @@ g$handles:  .zero 8      ; module.handle closures: a map MLWSVM name -> closure
 9:  tcall rt$badarg ()
 .endf
 
+; ---- application env, on MLWSVM's environments (env.*) ----
+; App's Key is the VM's value 'App.Key', which every process of the program
+; sees, and `mlwsvm run --env FILE` fills. Kept as the VM's own values where
+; there are some: a small integer an i64, a float an f64, an atom a string;
+; a tuple in an EnvTerm, so that it is not taken for a list from a file; any
+; other term as erlrt keeps it. A value from a file is made a term: a string
+; an atom, an array a list, an object a map (keys atoms), true and false
+; atoms in an array or an object (alone, 1 and 0: env.get_i's), null null.
+
+.struct EnvTerm
+    t: ref
+.ends
+
+.func rt$env_set(i64 ni, i64 v, ref n, ref vr) -> (i64, ref)
+    bz vr, 1f
+    beq.r vr, 1d, 2f
+    typeof I2, vr
+    beq I2, 5, 3f
+.try 9f
+    ncall "env.set" (n, vr)
+.endtry
+    ret 0, "ok"
+1:
+.try 9f
+    ncall "env.set_i" (n, v)
+.endtry
+    ret 0, "ok"
+2:  bitcast.f64.i64 F0, v
+.try 9f
+    ncall "env.set_f" (n, F0)
+.endtry
+    ret 0, "ok"
+3:  new R3, EnvTerm
+    mov.r R3->EnvTerm.t, vr
+.try 9f
+    ncall "env.set" (n, R3)
+.endtry
+    ret 0, "ok"
+9:  catch R4
+    tcall rt$badarg ()
+.endf
+
+; {ok, Value}, or undefined.
+.func rt$env_get(i64 ni, ref n) -> (i64, ref)
+.try 9f
+    ncall "env.has" (n) -> I1
+.endtry
+    bz I1, 7f
+.try 1f
+    ncall "env.get" (n, null) -> R2
+.endtry
+    call rt$env_term (R2) -> (I3, R3)
+    jmp 6f
+1:  catch R4                           ; a number
+.try 2f
+    ncall "env.get_i" (n, 0) -> I3
+.endtry
+    mov.r R3, null
+    jmp 6f
+2:  catch R4
+    ncall "env.get_f" (n, 0.0) -> F0
+    bitcast.i64.f64 I3, F0
+    mov.r R3, 1d
+6:  lnew R6, 4
+    lpush R6, "ok", 0, R3, I3
+    ret 0, R6
+7:  ret 0, "undefined"
+9:  catch R4
+    tcall rt$badarg ()
+.endf
+
+.func rt$env_unset(i64 ni, ref n) -> (i64, ref)
+.try 9f
+    ncall "env.delete" (n)
+.endtry
+    ret 0, "ok"
+9:  catch R4
+    tcall rt$badarg ()
+.endf
+
+; The names of the program's values, as atoms.
+.func rt$env_keys -> (i64, ref)
+    ncall "env.keys" () -> R1
+    len I1, R1
+    mov.r R2, 0d
+1:  bz I1, 2f
+    dec I1
+    mov.r R4, R1[I1]
+    ncall "text.intern" (R4) -> R4
+    new R5, Cons
+    mov.r R5->Cons.hr, R4
+    mov.r R5->Cons.tr, R2
+    mov.r R2, R5
+    jmp 1b
+2:  ret 0, R2
+.endf
+
+; A value of the environment as a term.
+.func rt$env_term(ref v) -> (i64, ref)
+    bz v, 8f
+    bisa v, EnvTerm, 1f
+    typeof I1, v
+    beq I1, 5, 2f
+    beq I1, 6, 3f
+    beq I1, 1, 4f
+    ret 0, v
+1:  mov.r R2, v->EnvTerm.t
+    ret 0, R2
+4:  ncall "text.intern" (v) -> R2
+    ret 0, R2
+2:  len I2, v                          ; an array: a list
+    mov.r R3, 0d
+5:  bz I2, 6f
+    dec I2
+    call rt$env_slot (v, I2) -> (I4, R4)
+    new R5, Cons
+    mov R5->Cons.hi, I4
+    mov.r R5->Cons.hr, R4
+    mov.r R5->Cons.tr, R3
+    mov.r R3, R5
+    jmp 5b
+6:  ret 0, R3
+3:  mkeys R6, v                        ; an object: a map, by maps:from_list
+    len I6, R6
+    lnew R7, 1
+    lpush R7, null
+    mov.r R3, 0d
+7:  bz I6, 9f
+    dec I6
+    mov.r R8, R6[I6]
+    mget R7[0], v, R8
+    call rt$env_slot (R7, 0) -> (I4, R4)
+    ncall "text.intern" (R8) -> R8
+    lnew R9, 4
+    lpush R9, R8, 0, R4, I4
+    new R5, Cons
+    mov.r R5->Cons.hr, R9
+    mov.r R5->Cons.tr, R3
+    mov.r R3, R5
+    jmp 7b
+9:  tcall rt$map_from_list (0, R3)
+8:  ret 0, "null"
+.endf
+
+; A list's element, of whatever type it is, as a term.
+.func rt$env_slot(ref l, i64 i) -> (i64, ref)
+    tagof I2, l[i]
+    beq I2, 6, 1f
+    beq I2, 12, 2f
+    beq I2, 1, 3f
+    mov.r R3, l[i]
+    tcall rt$env_term (R3)
+1:  mov I3, l[i]
+    ret I3, null
+2:  mov F0, l[i]
+    bitcast.i64.f64 I3, F0
+    ret I3, 1d
+3:  mov I3, l[i]
+    bz I3, 4f
+    ret 0, "true"
+4:  ret 0, "false"
+.endf
+
 ; ---- global: names across the cluster, on std.node's (as Erlang's global)
 ; Names are atoms; the VM must be a node (net_kernel:start).
 

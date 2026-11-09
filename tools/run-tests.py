@@ -29,7 +29,8 @@ NAME.args the arguments, one per line.
 Erlang: NAME.erl, a module with main/0, runs (from its own directory) and
 NAME.out is the expected stdout, as Erlang/OTP prints it
 (erlang/tests/expect.sh makes it). Modules without main/0 are helpers that
-tests call, not tests. NAME.in is stdin.
+tests call, not tests. NAME.in is stdin, and NAME.env, if present, fills
+the program's environment (the driver's --env).
 
 Options: -v prints the output of failing tests, -j N runs N tests at once,
 and a FILTER argument (substring of the path) after the directories selects
@@ -280,7 +281,8 @@ def erlang_test(path, tmp):
     if want_out is None:
         return ["no " + os.path.basename(stem) + ".out (run erlang/tests/expect.sh)"]
     driver = os.path.join(ROOT, "erlang", "mlws-vm-erl")
-    code, out, err = run([driver] + ERL_FLAGS + [os.path.basename(path)], opt(".in") or b"",
+    env = ["--env", os.path.basename(stem) + ".env"] if os.path.exists(stem + ".env") else []
+    code, out, err = run([driver] + ERL_FLAGS + env + [os.path.basename(path)], opt(".in") or b"",
                          cwd=os.path.dirname(path) or ".")
     if code is None:
         return ["timeout"]

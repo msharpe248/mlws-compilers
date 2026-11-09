@@ -7,8 +7,8 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
 ### Repository
 
-* The compilers target the latest MLWSVM release only, now 0.25.0: every
-  compiler's output says `.requires mlwsvm, ">=0.25.0"`, and the drivers
+* The compilers target the latest MLWSVM release only, now 0.26.0: every
+  compiler's output says `.requires mlwsvm, ">=0.26.0"`, and the drivers
   and tests no longer check the VM's version (`-g`, `-d` and `-b` are
   always tested, and Erlang's `-d` always passes `--max-frames`). The
   READMEs say what a feature uses, not which VM it first needs.
@@ -80,6 +80,15 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   auto-connect); only the first contact with a node goes through
   net_kernel. tests/dist registers names both ways, disconnects b and
   sends to it again.
+* `application:get_env/2,3`, `set_env/1-4`, `unset_env/2,3` and
+  `get_all_env/1`, on MLWSVM 0.26.0's environments (`env.*`): App's Key is
+  the VM's value `App.Key`, shared by every process of the program, and a
+  term set reads back as it was (an integer, a float and an atom as the
+  VM's own values). `mlws-vm-erl --env FILE` (the VM's `run --env`) fills
+  it from lines of `app.key = JSON`, in which a string is an atom, an array
+  a list and an object a map with atom keys. tests/lang/appenv (against
+  OTP) and appfile (with appfile.env, which the test runner passes as
+  NAME.env).
 * Fixed: `monitor_node(N, true)` acted as `false` (its flag's register
   held the runtime's map), and the same kind of slip in `demonitor/2`'s
   `flush`, a `monitor` of a process that is gone, `code:load_binary`, and
