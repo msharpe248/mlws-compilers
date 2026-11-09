@@ -1274,9 +1274,14 @@ bad:
     bne.r R2, R3, 1f
     ncall "proc.whereis" (R1) -> I4
     ret I4
-1:  call E$erts$connect$1 (0, R2) -> (I5, R5)
+1:  ncall "node.number" (R2) -> I6     ; connected already: no need to ask net_kernel
+    bz I6, 2f
+    call node.connected (I6) -> (I5)
+    bnz I5, 3f
+2:  call E$erts$connect$1 (0, R2) -> (I5, R5)
     bne.r R5, "true", 8f
     ncall "node.number" (R2) -> I6
+3:
 .try 8f
     call node.whereis (I6, R1) -> (I4)
 .endtry
