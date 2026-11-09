@@ -106,8 +106,8 @@ the Erlang tests' from Erlang/OTP (`erlang/tests/expect.sh`).
 
 ## Finding the VM
 
-The compilers target the latest MLWSVM release (now 0.21.0): what they
-write says so (`.requires mlwsvm, ">=0.21.0"`), and older VMs are not
+The compilers target the latest MLWSVM release (now 0.22.0): what they
+write says so (`.requires mlwsvm, ">=0.22.0"`), and older VMs are not
 supported.
 
 The driver scripts (`bf/mlws-vm-bf`, `lox/mlws-vm-lox`, `lua/mlws-vm-lua`, `erlang/mlws-vm-erl`) and the test runner

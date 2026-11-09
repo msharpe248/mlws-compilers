@@ -2,6 +2,15 @@ nonode@nohost false
 a@localhost pong
 nodes: [b@localhost]
 echoed hello from b@localhost
+a long list: true
+a long string: true
+{S, S, S}: true
+nested tuples: true
+a deep list: true
+a big map: true
+a big binary: true
+bigints: true
+rpc length: true
 rpc: 49
 rpc of nothing: undef
 a fun on b@localhost: 20 (spawned there: true)

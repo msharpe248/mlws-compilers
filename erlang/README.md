@@ -110,14 +110,16 @@ mlwsvm names &                            # once per machine
   `{nodedown, N}`, from the VM's `NodeEvent`), `net_adm:ping/1`,
   `rpc:call/4,5` and `rpc:cast/4`. A process on a node that went is
   `noconnection`.
-* Atoms and `[]` are the same on every node (MLWSVM 0.21.0 sends interned
+* Atoms and `[]` are the same on every node (MLWSVM sends interned
   strings as interned, and numeric literals as literals), so they match
   and compare as they do on one; a module a message needs is loaded on
-  the node that gets it.
+  the node that gets it. A term of any size or depth crosses, its shared
+  parts still shared: a list of a million cells, a tuple nested 100,000
+  deep.
 
 `tests/dist` runs two nodes on one machine, with an `mlwsvm names` of its
-own: messages, rpc, a fun spawned on the other node, a remote kill and
-`monitor_node`.
+own: messages, rpc, a fun spawned on the other node, big terms there and
+back, a remote kill and `monitor_node`.
 
 ## What it implements
 
