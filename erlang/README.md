@@ -183,8 +183,8 @@ back, a remote kill, global names, a disconnect and a reconnect, and
   program starts, as Erlang's `-config` does, from lines of
   `app.key = JSON` (`${VAR}`: an OS environment variable): a string is an
   atom, an array a list, an object a map with atom keys, and `true`,
-  `false` and `null` atoms, except that `true` and `false` alone read as 1
-  and 0. Apps and keys are atoms.
+  `false` and `null` atoms; a `secret` line reads as any other (the VM's
+  monitor never shows it). Apps and keys are atoms.
 
 Not implemented: `maybe`, bit strings that are not whole bytes, bitwise
 operations on BigInts, ports,

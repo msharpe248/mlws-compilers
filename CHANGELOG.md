@@ -7,8 +7,8 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
 ### Repository
 
-* The compilers target the latest MLWSVM release only, now 0.26.0: every
-  compiler's output says `.requires mlwsvm, ">=0.26.0"`, and the drivers
+* The compilers target the latest MLWSVM release only, now 0.27.0: every
+  compiler's output says `.requires mlwsvm, ">=0.27.0"`, and the drivers
   and tests no longer check the VM's version (`-g`, `-d` and `-b` are
   always tested, and Erlang's `-d` always passes `--max-frames`). The
   READMEs say what a feature uses, not which VM it first needs.
@@ -89,6 +89,8 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   a list and an object a map with atom keys. tests/lang/appenv (against
   OTP) and appfile (with appfile.env, which the test runner passes as
   NAME.env).
+  A value is read with MLWSVM 0.27.0's `env.get_any`, keeping its type,
+  so a file's `true` and `false` are atoms wherever they are.
 * Fixed: `monitor_node(N, true)` acted as `false` (its flag's register
   held the runtime's map), and the same kind of slip in `demonitor/2`'s
   `flush`, a `monitor` of a process that is gone, `code:load_binary`, and

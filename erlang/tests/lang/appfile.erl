@@ -16,6 +16,7 @@ main() ->
     io:format("~p~n", [Db]),
     io:format("~p~n", [application:get_env(shop, huge)]),
     io:format("~p~n", [application:get_env(shop, greeting)]),
+    io:format("~p~n", [[application:get_env(shop, K) || K <- [open, closed, none, key]]]),
     io:format("~p~n", [[K || {K, _} <- application:get_all_env(shop)]]),
     application:set_env(shop, port, 9090),
     io:format("~p~n", [application:get_env(shop, port)]),

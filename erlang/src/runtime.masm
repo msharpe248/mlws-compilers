@@ -3311,7 +3311,7 @@ g$handles:  .zero 8      ; module.handle closures: a map MLWSVM name -> closure
 ; a tuple in an EnvTerm, so that it is not taken for a list from a file; any
 ; other term as erlrt keeps it. A value from a file is made a term: a string
 ; an atom, an array a list, an object a map (keys atoms), true and false
-; atoms in an array or an object (alone, 1 and 0: env.get_i's), null null.
+; atoms, null null.
 
 .struct EnvTerm
     t: ref
@@ -3346,28 +3346,15 @@ g$handles:  .zero 8      ; module.handle closures: a map MLWSVM name -> closure
     tcall rt$badarg ()
 .endf
 
-; {ok, Value}, or undefined.
+; {ok, Value}, or undefined: env.get_any gives the value with its own type.
 .func rt$env_get(i64 ni, ref n) -> (i64, ref)
 .try 9f
-    ncall "env.has" (n) -> I1
+    ncall "env.get_any" (n) -> R2
 .endtry
+    len I1, R2
     bz I1, 7f
-.try 1f
-    ncall "env.get" (n, null) -> R2
-.endtry
-    call rt$env_term (R2) -> (I3, R3)
-    jmp 6f
-1:  catch R4                           ; a number
-.try 2f
-    ncall "env.get_i" (n, 0) -> I3
-.endtry
-    mov.r R3, null
-    jmp 6f
-2:  catch R4
-    ncall "env.get_f" (n, 0.0) -> F0
-    bitcast.i64.f64 I3, F0
-    mov.r R3, 1d
-6:  lnew R6, 4
+    call rt$env_slot (R2, 0) -> (I3, R3)
+    lnew R6, 4
     lpush R6, "ok", 0, R3, I3
     ret 0, R6
 7:  ret 0, "undefined"

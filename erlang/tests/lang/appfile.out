@@ -6,6 +6,7 @@ localhost 5432
 #{host => localhost,opts => #{ssl => true},port => 5432}
 {ok,123456789012345678901234567890}
 {ok,'hello, "world"'}
-[db,greeting,huge,mode,port,rate,servers]
+[{ok,true},{ok,false},{ok,null},{ok,s3cret}]
+[closed,db,greeting,huge,key,mode,none,open,port,rate,servers]
 {ok,9090}
 [{x,1}]
