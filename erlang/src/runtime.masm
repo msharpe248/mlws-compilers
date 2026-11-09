@@ -1277,11 +1277,9 @@ bad:
     bne.r R2, R3, 1f
     ncall "proc.whereis" (R1) -> I4
     ret I4
-1:  ncall "node.number" (R2) -> I6     ; connected already: no need to ask net_kernel
-    bz I6, 2f
-    call node.connected (I6) -> (I5)
-    bnz I5, 3f
-2:  call E$erts$connect$1 (0, R2) -> (I5, R5)
+1:  ncall "node.number" (R2) -> I6     ; known: the VM connects again if it must
+    bnz I6, 3f
+    call E$erts$connect$1 (0, R2) -> (I5, R5)   ; first contact: net_kernel, with the cookie
     bne.r R5, "true", 8f
     ncall "node.number" (R2) -> I6
 3:
@@ -3272,6 +3270,102 @@ g$handles:  .zero 8      ; module.handle closures: a map MLWSVM name -> closure
     ncall "node.watch" (1)
 1:  mov @g$nodeall, I1
     ret 0, "ok"
+.endf
+
+; net_kernel:get_net_ticktime / set_net_ticktime: std.node's, in seconds.
+.func rt$node_ticktime -> (i64, ref)
+    call node.ticktime () -> (I1)
+    div I1, I1, 1000
+    ret I1, null
+.endf
+
+.func rt$node_set_ticktime(i64 s, ref sr) -> (i64, ref)
+    mul I1, s, 1000
+    call node.set_ticktime (I1)
+    ret 0, "ok"
+.endf
+
+; erlang:disconnect_node(Node): true, false if it is not connected, ignored
+; if this VM is not a node. A message to it later connects again.
+.func rt$node_disconnect(i64 ni, ref n) -> (i64, ref)
+    typeof I1, n
+    bne I1, 1, 9f
+    ncall "node.self" () -> I1
+    bz I1, 7f
+    ncall "node.number" (n) -> I2
+    bz I2, 6f
+    beq I1, I2, 6f
+    call node.connected (I2) -> (I3)
+    bz I3, 6f
+    call node.disconnect (I2)
+    ret 0, "true"
+6:  ret 0, "false"
+7:  ret 0, "ignored"
+9:  tcall rt$badarg ()
+.endf
+
+; ---- global: names across the cluster, on std.node's (as Erlang's global)
+; Names are atoms; the VM must be a node (net_kernel:start).
+
+; global:register_name(Name, Pid): yes, or no if the name is taken.
+.func rt$global_register(i64 ni, i64 pi, ref n, ref p) -> (i64, ref)
+    typeof I2, n
+    bne I2, 1, 9f
+    bnisa p, Pid, 9f
+    mov I3, p->Pid.id
+    ncall "node.self" () -> I4
+    bz I4, 8f
+    call node.register_global (n, I3) -> (I5)
+    bz I5, 1f
+    ret 0, "yes"
+1:  ret 0, "no"
+8:  tcall rt$raise (0, "error", "notalive")
+9:  tcall rt$badarg ()
+.endf
+
+.func rt$global_unregister(i64 ni, ref n) -> (i64, ref)
+    typeof I1, n
+    bne I1, 1, 9f
+    ncall "node.self" () -> I2
+    bz I2, 1f
+    call node.unregister_global (n)
+1:  ret 0, "ok"
+9:  tcall rt$badarg ()
+.endf
+
+; global:whereis_name(Name): its pid, or undefined.
+.func rt$global_whereis(i64 ni, ref n) -> (i64, ref)
+    typeof I1, n
+    bne I1, 1, 9f
+    ncall "node.self" () -> I2
+    bz I2, 7f
+    call node.whereis_global (n) -> (I3)
+    bz I3, 7f
+    new R2, Pid
+    mov R2->Pid.id, I3
+    ret 0, R2
+7:  ret 0, "undefined"
+9:  tcall rt$badarg ()
+.endf
+
+; global:registered_names(): the names, as atoms.
+.func rt$global_names -> (i64, ref)
+    mov.r R2, 0d
+    ncall "node.self" () -> I1
+    bz I1, 2f
+    call node.globals () -> (R1)
+    len I1, R1
+1:  bz I1, 2f
+    dec I1
+    mov.r R3, R1[I1]
+    mov.r R4, R3[0]
+    ncall "text.intern" (R4) -> R4
+    new R5, Cons
+    mov.r R5->Cons.hr, R4
+    mov.r R5->Cons.tr, R2
+    mov.r R2, R5
+    jmp 1b
+2:  ret 0, R2
 .endf
 
 ; spawn(Node, Fun): run Fun there, in a process of the same erlrt.

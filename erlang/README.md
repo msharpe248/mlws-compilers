@@ -112,6 +112,18 @@ mlwsvm names &                            # once per machine
   `noconnection`. `{Name, Node} ! Msg` goes one way, to the VM's pid for
   the name there (`node.name_pid`), which the other node delivers to
   whoever has the name when the message arrives, as Erlang does.
+* `global:register_name/2`, `whereis_name/1`, `send/2`, `unregister_name/1`
+  and `registered_names/0`, on the VM's names across the cluster: every
+  node connected agrees to a registration, a name goes when its process or
+  its node does, and when two nodes that each have a name for a different
+  process connect, the lower pid keeps it and the other process is killed,
+  as `global`'s default resolver does. Names are atoms, and the VM must be
+  a node.
+* `net_kernel:get_net_ticktime/0` and `set_net_ticktime/1`: a connection
+  that hears nothing for the ticktime (60 s at first) is down, as in
+  Erlang. `erlang:disconnect_node/1` closes one; a message to a node that
+  was connected, to a pid or a name, connects to it again (the VM's
+  auto-connect), so only the first contact goes through net_kernel.
 * Atoms and `[]` are the same on every node (MLWSVM sends interned
   strings as interned, and numeric literals as literals), so they match
   and compare as they do on one; a module a message needs is loaded on
@@ -121,7 +133,8 @@ mlwsvm names &                            # once per machine
 
 `tests/dist` runs two nodes on one machine, with an `mlwsvm names` of its
 own: messages, rpc, a fun spawned on the other node, big terms there and
-back, a remote kill and `monitor_node`.
+back, a remote kill, global names, a disconnect and a reconnect, and
+`monitor_node`.
 
 ## What it implements
 
@@ -159,7 +172,8 @@ back, a remote kill and `monitor_node`.
   `string` (both the old and the new functions), `proplists`, `math`,
   `timer`, `unicode`, `re` (`run`, `replace`, `split`, `compile` and
   `inspect`, on MLWSVM's regular expressions), `code` (above), `file`
-  (`read_file`, `write_file`), and the BIFs of `erlang`.
+  (`read_file`, `write_file`), `net_kernel`, `net_adm`, `rpc` and
+  `global` (Distribution, above), and the BIFs of `erlang`.
 
 Not implemented: `maybe`, bit strings that are not whole bytes, bitwise
 operations on BigInts, ports,

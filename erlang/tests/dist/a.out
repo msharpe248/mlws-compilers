@@ -16,5 +16,20 @@ rpc of nothing: undef
 a fun on b@localhost: 20 (spawned there: true)
 is_process_alive of b's: {'EXIT',{badarg,[]}}
 killed there: killed
+global taken: no
+global seen there: true
+global names: [a_main,gecho]
+echoed via_global from b@localhost
+global gone: undefined
+global send to none: {'EXIT',{badarg,{a_main,x}}}
+ticktime: 60
+set 60: unchanged
+set 30: change_initiated
+ticktime: 30
+disconnect: true
+nodes: []
+disconnect again: false
+echoed reconnected from b@localhost
+nodes: [b@localhost]
 nodedown b@localhost
 nodes: []

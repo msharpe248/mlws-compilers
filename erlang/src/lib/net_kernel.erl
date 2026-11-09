@@ -1,5 +1,6 @@
 -module(net_kernel).
--export([start/1, start/2, stop/0, connect_node/1, monitor_nodes/1, monitor_nodes/2]).
+-export([start/1, start/2, stop/0, connect_node/1, monitor_nodes/1, monitor_nodes/2,
+         get_net_ticktime/0, set_net_ticktime/1, set_net_ticktime/2]).
 
 %% Distribution, on MLWSVM's std.node: this VM becomes a node named
 %% name@host, registered with this machine's `mlwsvm names` (which must be
@@ -45,6 +46,23 @@ connect_node(Node) when is_atom(Node) -> erts:connect(Node).
 
 monitor_nodes(Flag) -> '$rt':node_monitor_all(Flag).
 monitor_nodes(Flag, _Opts) -> monitor_nodes(Flag).
+
+%% How long, in seconds, a connection may hear nothing before its node is
+%% taken as down (std.node's ticktime: an idle connection ticks every quarter
+%% of it). For connections made from now on.
+get_net_ticktime() ->
+    case is_alive() of
+        true -> '$rt':node_ticktime();
+        false -> ignored
+    end.
+
+set_net_ticktime(T) when is_integer(T), T > 0 ->
+    case get_net_ticktime() of
+        ignored -> ignored;
+        T -> unchanged;
+        _ -> '$rt':node_set_ticktime(T), change_initiated
+    end.
+set_net_ticktime(T, _TransitionPeriod) -> set_net_ticktime(T).
 
 loop(Cookie) ->
     receive

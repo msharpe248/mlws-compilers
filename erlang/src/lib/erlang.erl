@@ -5,7 +5,7 @@
          integer_to_list/2, list_to_integer/2, integer_to_binary/2, binary_to_integer/2,
          atom_to_binary/2, binary_to_atom/2, binary_to_existing_atom/2,
          list_to_existing_atom/1, halt/2, unique_integer/1, '--'/2, '++'/2,
-         is_alive/0, nodes/0, nodes/1, monitor_node/2, set_cookie/1, set_cookie/2,
+         is_alive/0, disconnect_node/1, nodes/0, nodes/1, monitor_node/2, set_cookie/1, set_cookie/2,
          get_cookie/0, get_cookie/1, display/1, error/3, raise/3, nif_error/1, send/2, send/3,
          float_to_list/2, float_to_binary/2, append_element/2, delete_element/2,
          insert_element/3, list_to_bitstring/1, bitstring_to_list/1, binary_to_list/3,
@@ -124,6 +124,7 @@ is_alive() -> node() =/= nonode@nohost.
 %% Distribution (a program compiled with --modules, every node running the
 %% same erlrt): see net_kernel.
 nodes() -> '$rt':node_list().
+disconnect_node(Node) -> '$rt':node_disconnect(Node).
 nodes(_) -> nodes().
 
 monitor_node(Node, true) ->

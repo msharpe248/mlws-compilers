@@ -7,8 +7,8 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
 ### Repository
 
-* The compilers target the latest MLWSVM release only, now 0.24.0: every
-  compiler's output says `.requires mlwsvm, ">=0.24.0"`, and the drivers
+* The compilers target the latest MLWSVM release only, now 0.25.0: every
+  compiler's output says `.requires mlwsvm, ">=0.25.0"`, and the drivers
   and tests no longer check the VM's version (`-g`, `-d` and `-b` are
   always tested, and Erlang's `-d` always passes `--max-frames`). The
   READMEs say what a feature uses, not which VM it first needs.
@@ -66,6 +66,20 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   when the message arrives (or drops, if no one has it), as Erlang's
   REG_SEND: one way, about 480 ns a send (a pid: 270), where it was a
   `node.whereis` round trip and a call of net_kernel each time (80 us).
+* `global`: `register_name/2,3`, `re_register_name/2,3`,
+  `unregister_name/1`, `whereis_name/1`, `send/2` and
+  `registered_names/0`, on MLWSVM 0.25.0's names across the cluster
+  (`std.node`'s `register_global`): a registration is agreed by every node
+  connected, a name goes with its process or its node, and of two
+  processes with one name when nodes connect, the lower pid keeps it and
+  the other is killed. Names are atoms.
+* `net_kernel:get_net_ticktime/0` and `set_net_ticktime/1,2`, on the VM's
+  ticks (a node that is silent for the ticktime is down), and
+  `erlang:disconnect_node/1`. A message to a node that was connected, by
+  `!` to a pid or to `{Name, Node}`, connects to it again (MLWSVM's
+  auto-connect); only the first contact with a node goes through
+  net_kernel. tests/dist registers names both ways, disconnects b and
+  sends to it again.
 * Fixed: `monitor_node(N, true)` acted as `false` (its flag's register
   held the runtime's map), and the same kind of slip in `demonitor/2`'s
   `flush`, a `monitor` of a process that is gone, `code:load_binary`, and

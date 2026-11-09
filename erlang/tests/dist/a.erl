@@ -25,6 +25,8 @@ main(Args) ->
     MRef = monitor(process, W),
     exit(W, kill),
     receive {'DOWN', MRef, process, W, Why} -> io:format("killed there: ~p~n", [Why]) end,
+    globals(B),
+    ticks_and_reconnect(B),
     monitor_node(B, true),
     {b_main, B} ! stop,
     receive {nodedown, B} -> io:format("nodedown ~p~n", [B]) end,
@@ -49,6 +51,34 @@ big(B, N) ->
          receive {echoed, _, V2} -> io:format("~s: ~p~n", [Name, V2 =:= V]) end
      end || {Name, V} <- Terms],
     io:format("rpc length: ~p~n", [rpc:call(B, erlang, length, [lists:seq(1, N)]) =:= N]).
+
+%% Names across the cluster: one registered here is seen there, one for a
+%% process there is used here.
+globals(B) ->
+    yes = global:register_name(a_main, self()),
+    io:format("global taken: ~p~n", [global:register_name(a_main, spawn(fun() -> ok end))]),
+    io:format("global seen there: ~p~n", [rpc:call(B, global, whereis_name, [a_main]) =:= self()]),
+    Echo = rpc:call(B, erlang, whereis, [echo]),
+    yes = global:register_name(gecho, Echo),
+    io:format("global names: ~p~n", [lists:sort(global:registered_names())]),
+    Echo = global:send(gecho, {self(), via_global}),
+    receive {echoed, N, M} -> io:format("echoed ~p from ~p~n", [M, N]) end,
+    ok = global:unregister_name(a_main),
+    io:format("global gone: ~p~n", [global:whereis_name(a_main)]),
+    io:format("global send to none: ~p~n", [catch global:send(a_main, x)]).
+
+%% net_ticktime, and a node disconnected that a message connects to again.
+ticks_and_reconnect(B) ->
+    io:format("ticktime: ~p~n", [net_kernel:get_net_ticktime()]),
+    io:format("set 60: ~p~n", [net_kernel:set_net_ticktime(60)]),
+    io:format("set 30: ~p~n", [net_kernel:set_net_ticktime(30)]),
+    io:format("ticktime: ~p~n", [net_kernel:get_net_ticktime()]),
+    io:format("disconnect: ~p~n", [erlang:disconnect_node(B)]),
+    io:format("nodes: ~p~n", [nodes()]),
+    io:format("disconnect again: ~p~n", [erlang:disconnect_node(B)]),
+    {echo, B} ! {self(), reconnected},
+    receive {echoed, N, M} -> io:format("echoed ~p from ~p~n", [M, N]) end,
+    io:format("nodes: ~p~n", [nodes()]).
 
 %% b may not be up yet
 wait(B, 0) -> net_adm:ping(B);
