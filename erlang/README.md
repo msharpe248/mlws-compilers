@@ -109,7 +109,9 @@ mlwsvm names &                            # once per machine
   `monitor_node/2` and `net_kernel:monitor_nodes/1` (`{nodeup, N}` and
   `{nodedown, N}`, from the VM's `NodeEvent`), `net_adm:ping/1`,
   `rpc:call/4,5` and `rpc:cast/4`. A process on a node that went is
-  `noconnection`.
+  `noconnection`. `{Name, Node} ! Msg` goes one way, to the VM's pid for
+  the name there (`node.name_pid`), which the other node delivers to
+  whoever has the name when the message arrives, as Erlang does.
 * Atoms and `[]` are the same on every node (MLWSVM sends interned
   strings as interned, and numeric literals as literals), so they match
   and compare as they do on one; a module a message needs is loaded on

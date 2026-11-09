@@ -7,8 +7,8 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
 
 ### Repository
 
-* The compilers target the latest MLWSVM release only, now 0.23.0: every
-  compiler's output says `.requires mlwsvm, ">=0.23.0"`, and the drivers
+* The compilers target the latest MLWSVM release only, now 0.24.0: every
+  compiler's output says `.requires mlwsvm, ">=0.24.0"`, and the drivers
   and tests no longer check the VM's version (`-g`, `-d` and `-b` are
   always tested, and Erlang's `-d` always passes `--max-frames`). The
   READMEs say what a feature uses, not which VM it first needs.
@@ -61,6 +61,11 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   which by `tagof` of the list of one it takes messages into: ring 0.22 s
   to 0.13 s (0.20 to 0.11 with the JIT). From the VM session's
   measurements. tests/lang/messages sends every kind of term.
+* `{Name, Node} ! Msg` to another node sends to MLWSVM 0.24.0's pid for
+  the name (`node.name_pid`), which the other node delivers by the name
+  when the message arrives (or drops, if no one has it), as Erlang's
+  REG_SEND: one way, about 480 ns a send (a pid: 270), where it was a
+  `node.whereis` round trip and a call of net_kernel each time (80 us).
 * Fixed: `monitor_node(N, true)` acted as `false` (its flag's register
   held the runtime's map), and the same kind of slip in `demonitor/2`'s
   `flush`, a `monitor` of a process that is gone, `code:load_binary`, and

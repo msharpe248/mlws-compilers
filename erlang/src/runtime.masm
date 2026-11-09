@@ -1262,7 +1262,10 @@ bad:
 .endf
 
 ; The pid of {Name, Node}: registered as Name on Node, connecting to it if
-; need be; 0 if there is none (the message is dropped, as in Erlang).
+; need be; 0 if there is none (the message is dropped, as in Erlang). On
+; another node it is the VM's pid for the name (node.name_pid), which the
+; message is delivered by when it arrives there, or dropped if no one has
+; the name.
 .func rt$named_pid(ref t) -> i64
     mov.r R1, t[0]
     mov.r R2, t[2]
@@ -1283,7 +1286,7 @@ bad:
     ncall "node.number" (R2) -> I6
 3:
 .try 8f
-    call node.whereis (I6, R1) -> (I4)
+    ncall "node.name_pid" (I6, R1) -> (I4)
 .endtry
     ret I4
 8:  ret 0
