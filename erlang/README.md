@@ -239,7 +239,11 @@ arity and a closure whose captures are the variables it uses.
 
 ### Processes and messages
 
-A message travels as a two-element list (its `R` and `I`). `receive`
+A message travels as the one value it is: an `i64` for a small integer,
+an `f64` for a float, and its `R` for anything else, so sending one makes
+nothing new. The receiver takes it into a list of one it keeps, which
+holds the message's type, and `tagof` tells it which of the three it got
+(and a `Down` or `NodeEvent` from the VM from a term). `receive`
 looks first at the messages an earlier `receive` left (each process keeps
 them in a list), then waits with `recv` or `recvt` until a message
 matches or the timeout passes. A new message joins that list only if the
@@ -253,16 +257,16 @@ exit reason written as a term, which the VM hands to the monitors in its
 `bench/run.sh` (`make bench`) times five programs on MLWSVM and on
 Erlang/OTP 29 (whose BEAM compiles to machine code, and whose time includes
 starting it, about 0.07 s), on an Apple M5 Pro, in seconds, the best of
-three runs, on MLWSVM 0.15.0. MLWSVM is run interpreting, and with its JIT
+three runs, on MLWSVM 0.22.0. MLWSVM is run interpreting, and with its JIT
 (`MLWSVM_JIT=on`):
 
 | Benchmark | MLWSVM | MLWSVM JIT | erl |
 |---|---|---|---|
-| fib (fib(30)) | 0.03 | 0.01 | 0.08 |
-| ring (1,000 processes, 1,000,000 messages) | 0.22 | 0.20 | 0.26 |
-| binarytrees (depth 16) | 0.54 | 0.18 | 0.12 |
-| nbody (100,000 steps, floats in tuples) | 0.46 | 0.17 | 0.16 |
-| sorting (200,000 integers, maps) | 0.35 | 0.20 | 0.11 |
+| fib (fib(30)) | 0.04 | 0.01 | 0.08 |
+| ring (1,000 processes, 1,000,000 messages) | 0.13 | 0.11 | 0.25 |
+| binarytrees (depth 16) | 0.56 | 0.19 | 0.12 |
+| nbody (100,000 steps, floats in tuples) | 0.48 | 0.18 | 0.14 |
+| sorting (200,000 integers, maps) | 0.37 | 0.21 | 0.11 |
 
 MLWSVM's fast forms for `bitcast`, `typeof` and comparisons of list
 elements came from these programs' profiles. Calls and integer arithmetic are as fast as BEAM's; tuples and

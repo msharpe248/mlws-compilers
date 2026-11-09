@@ -1,0 +1,27 @@
+0 true
+-1 true
+big true
+bigger true
+1.5 true
+'-0.0' true
+'0.0' true
+nil true
+foo true
+str true
+'{}' true
+pair true
+improper true
+map true
+bin true
+'fun' true
+pid true
+ref true
+nils true
+huge true
+x first
+[] next
+float 2.5
+int 7
+empty
+1.25 true
+an int it did not take: skipped

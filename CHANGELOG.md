@@ -56,6 +56,11 @@ this repository (`vX.Y.Z`, the top-level `VERSION`) collects them.
   size or depth, sharing kept (MLWSVM 0.22.0).
   tests/dist runs two nodes, with an `mlwsvm names` of its own, and sends
   terms of a million cells and 100,000 deep there and back.
+* A message travels as the one value it is (an `i64`, an `f64`, or its
+  `R`), not as a list of two made for each send, and the receiver tells
+  which by `tagof` of the list of one it takes messages into: ring 0.22 s
+  to 0.13 s (0.20 to 0.11 with the JIT). From the VM session's
+  measurements. tests/lang/messages sends every kind of term.
 * Fixed: `monitor_node(N, true)` acted as `false` (its flag's register
   held the runtime's map), and the same kind of slip in `demonitor/2`'s
   `flush`, a `monitor` of a process that is gone, `code:load_binary`, and

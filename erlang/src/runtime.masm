@@ -27,6 +27,7 @@
 .struct Mbox
     saved: ref      ; a list, R and I each
     scan: i64       ; the next saved message a receive looks at
+    slot: ref       ; a list of one, that recv takes a message into
 .ends
 
 .struct Ref
@@ -1237,7 +1238,9 @@ bad:
 2:  ret 0
 .endf
 
-; Pid ! Msg: messages travel as a list [R, I].
+; Pid ! Msg: a message travels as the one value it is: an i64 for a small
+; integer, an f64 for a float, else its R (rt$recv_next tells them apart
+; by their type).
 .func rt$send(i64 p, i64 m, ref pr, ref mr) -> (i64, ref)
     call rt$pid_id (pr) -> I2
     bnz I2, 1f
@@ -1247,10 +1250,15 @@ bad:
     tcall rt$badarg ()
 2:  call rt$named_pid (pr) -> I2      ; {Name, Node}
     bz I2, 3f
-1:  lnew R2, 2
-    lpush R2, mr, m
-    send I2, R2
+1:  bz mr, 4f
+    beq.r mr, 1d, 5f
+    send I2, mr
 3:  ret m, mr
+4:  send I2, m
+    ret m, mr
+5:  bitcast.f64.i64 F0, m
+    send I2, F0
+    ret m, mr
 .endf
 
 ; The pid of {Name, Node}: registered as Name on Node, connecting to it if
@@ -1281,6 +1289,9 @@ bad:
     new R0, Mbox
     lnew R1
     mov.r R0->Mbox.saved, R1
+    lnew R1, 1
+    lpush R1, null
+    mov.r R0->Mbox.slot, R1
     mov.r @g$mbox, R0
     ret R0
 .endf
@@ -1333,22 +1344,32 @@ bad:
     mov R0->Mbox.scan, I2
     ret 1, I5, R1
 wait:
+    mov.r R5, R0->Mbox.slot
     beq deadline, -1, inf
     ncall "time.monotonic" () -> I6
     div I6, 1000000
     sub I7, deadline, I6
     bge I7, 0, 2f
     mov I7, 0
-2:  recvt R2, I7, timeout
+2:  recvt R5[0], I7, timeout
     jmp got
 inf:
-    recv R2
+    recv R5[0]
 got:
+    tagof I8, R5[0]
+    beq I8, 6, int
+    beq I8, 12, flt
+    mov.r R2, R5[0]
     bisa R2, Down, down
     bisa R2, NodeEvent, nodeev
-    mov.r R1, R2[0]
-    mov I5, R2[1]
-    ret 2, I5, R1
+    ret 2, 0, R2
+int:
+    mov I5, R5[0]
+    ret 2, I5, null
+flt:
+    mov F0, R5[0]
+    bitcast.i64.f64 I5, F0
+    ret 2, I5, 1d
 nodeev:
     call rt$node_msg (R2) -> (I8, I5, R1)
     bz I8, wait
