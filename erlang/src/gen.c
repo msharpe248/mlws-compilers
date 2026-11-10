@@ -23,7 +23,7 @@
 #define NR 29           /* slots kept in registers (the 3 above are scratch) */
 
 /* the MLWSVM the output needs: the latest release */
-#define MIN_MLWSVM ">=0.27.1"
+#define MIN_MLWSVM ">=0.28.0"
 
 /* ------------------------------------------------------------------ program state */
 
